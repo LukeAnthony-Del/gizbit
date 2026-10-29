@@ -2,7 +2,9 @@
 const TOPIC = "gizbit-net-m3p8k2w7q9n4";
 const LEDGER = "gizbit-terminal-ledger";
 const CURSOR = "gizbit-terminal-cursor";
-const MAX = 1000000000;
+const MAX = 10n ** 18n;
+const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000000000", "1000000000000", "2000000000000"];
+const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 
 let ledger = loadLedger();
 let sessionPh = "";
@@ -23,6 +25,7 @@ function loadLedger() {
       rev: Number.isInteger(data.rev) ? data.rev : 0,
       ts: Number(data.ts) || 0,
       accounts: data.accounts.map(sanitize).filter(Boolean),
+      settings: normalizeSettings(data.settings),
     };
   } catch {
     return null;
@@ -32,14 +35,32 @@ function loadLedger() {
 function sanitize(account) {
   if (!account || typeof account.id !== "string") return null;
   if (!/^[0-9a-f]{64}$/.test(account.ph || "")) return null;
-  if (!Number.isInteger(account.bal)) return null;
+  const bal = moneyText(account.bal, typeof account.bal === "number");
+  if (bal == null) return null;
   return {
     id: account.id,
     name: String(account.name || "").slice(0, 40),
     type: String(account.type || "Account").slice(0, 24),
-    bal: account.bal,
+    bal,
     ph: account.ph,
   };
+}
+
+function defaultSettings() {
+  return { presets: DEFAULT_PRESETS.slice(), terms: DEFAULT_TERMS };
+}
+
+function normalizeSettings(value) {
+  const presets = Array.isArray(value?.presets) ? value.presets.map((item) => moneyText(item, false)).filter(Boolean) : [];
+  while (presets.length < 6) presets.push(DEFAULT_PRESETS[presets.length]);
+  return {
+    presets: presets.slice(0, 6),
+    terms: String(value?.terms || DEFAULT_TERMS).slice(0, 800),
+  };
+}
+
+function activeSettings() {
+  return normalizeSettings(ledger?.settings);
 }
 
 function uid() {
@@ -51,21 +72,36 @@ async function sha256(text) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function parseAmount(value) {
-  let text = String(value || "").trim().replace(/\s/g, "");
-  if (/^\d+,\d{1,2}$/.test(text)) text = text.replace(",", ".");
-  if (!/^\d+(\.\d{1,2})?$/.test(text)) return null;
-  const [whole, frac = ""] = text.split(".");
-  const cents = Number(whole) * 100 + Number(frac.padEnd(2, "0"));
-  if (!Number.isSafeInteger(cents) || cents <= 0 || cents > MAX) return null;
-  return cents;
+function moneyText(value, fromCents) {
+  const raw = String(value ?? "").replace(/[,\s]/g, "");
+  if (!/^\d+$/.test(raw)) return null;
+  let amount = BigInt(raw);
+  if (fromCents) amount = amount / 100n;
+  if (amount < 0n || amount > MAX) return null;
+  return amount.toString();
 }
 
-function formatAmount(cents) {
-  const amount = Math.abs(Number(cents) || 0);
-  const whole = Math.floor(amount / 100);
-  const frac = amount % 100;
-  return frac ? `${whole}.${String(frac).padStart(2, "0")}` : String(whole);
+function parseAmount(value) {
+  const amount = moneyText(value, false);
+  if (amount == null || BigInt(amount) <= 0n) return null;
+  return amount;
+}
+
+function formatFull(value) {
+  const text = moneyText(value, false) || "0";
+  return text.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function formatAmount(value) {
+  const amount = BigInt(moneyText(value, false) || "0");
+  const scales = [[10n ** 12n, "Trillion"], [10n ** 9n, "Billion"], [10n ** 6n, "Million"]];
+  for (const [unit, label] of scales) {
+    if (amount < unit) continue;
+    if (amount % unit === 0n) return `${formatFull(amount / unit)} ${label}`;
+    const tenths = (amount * 10n) / unit;
+    return `${tenths / 10n}.${tenths % 10n} ${label}`;
+  }
+  return formatFull(amount);
 }
 
 function encode(sentence, payload) {
@@ -142,6 +178,7 @@ function acceptLedger(body) {
     rev: Number.isInteger(body.rev) ? body.rev : (ledger?.rev || 0),
     ts: body.ts || Date.now(),
     accounts: body.accounts.map(sanitize).filter(Boolean),
+    settings: normalizeSettings(body.settings),
   };
   localStorage.setItem(LEDGER, JSON.stringify(ledger));
   refreshStatus();
@@ -239,75 +276,84 @@ function waitLedger(ms) {
   });
 }
 
+let accountId = "";
+let chosenOp = "";
+let chosenAmount = "";
+let photoTaken = false;
+let signed = false;
+let selfieToken = 0;
+
 function showLogin() {
   $("login").hidden = false;
   $("bank").hidden = true;
+  $("logout").hidden = true;
   $("password").value = "";
+  $("password").type = "password";
+}
+
+function currentAccount() {
+  const list = matching(sessionPh);
+  return list.find((item) => item.id === accountId) || list[0] || null;
+}
+
+function paintAccount() {
+  const list = matching(sessionPh);
+  const account = currentAccount();
+  const pick = $("account-pick");
+  const wrap = $("account-pick-wrap");
+  wrap.hidden = list.length < 2;
+  pick.replaceChildren();
+  list.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.name;
+    pick.append(option);
+  });
+  if (!account) {
+    $("welcome").textContent = "Welcome";
+    $("who").textContent = "Those accounts are no longer on the main phone.";
+    $("balance").textContent = "";
+    $("balance-full").textContent = "";
+    return;
+  }
+  accountId = account.id;
+  pick.value = account.id;
+  $("welcome").textContent = `Welcome, ${account.name}`;
+  $("who").textContent = account.name;
+  $("balance").textContent = `${formatAmount(account.bal)} ₲`;
+  $("balance-full").textContent = formatFull(account.bal);
+}
+
+function renderPresets() {
+  const box = $("presets");
+  const settings = activeSettings();
+  box.replaceChildren();
+  settings.presets.forEach((value) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn line";
+    button.textContent = formatAmount(value);
+    button.dataset.amount = value;
+    if (chosenAmount === value && !$("other-amount").value.trim()) button.classList.add("is-on");
+    button.addEventListener("click", () => {
+      chosenAmount = value;
+      $("other-amount").value = "";
+      renderPresets();
+      refreshExchange();
+    });
+    box.append(button);
+  });
 }
 
 function renderBank() {
-  const cards = $("cards");
-  const drafts = new Map();
-  cards.querySelectorAll("[data-amount]").forEach((input) => {
-    drafts.set(input.dataset.amount, input.value);
-  });
-  const focusId = document.activeElement?.dataset?.amount || "";
-  cards.replaceChildren();
-  matching(sessionPh).forEach((account) => {
-    const card = document.createElement("article");
-    card.className = "card";
-    card.dataset.id = account.id;
-    const type = document.createElement("p");
-    type.className = "type";
-    type.textContent = account.type;
-    const name = document.createElement("h2");
-    name.textContent = account.name;
-    const balance = document.createElement("p");
-    balance.className = "bal";
-    balance.textContent = `₲ ${formatAmount(account.bal)}`;
-    const label = document.createElement("label");
-    label.className = "field";
-    const span = document.createElement("span");
-    span.textContent = "Amount (₲)";
-    const input = document.createElement("input");
-    input.inputMode = "decimal";
-    input.autocomplete = "off";
-    input.spellcheck = false;
-    input.placeholder = "0";
-    input.dataset.amount = account.id;
-    input.value = drafts.get(account.id) || "";
-    label.append(span, input);
-    const actions = document.createElement("div");
-    actions.className = "actions";
-    const deposit = document.createElement("button");
-    deposit.type = "button";
-    deposit.className = "btn silver";
-    deposit.dataset.op = "deposit";
-    deposit.textContent = "Deposit";
-    deposit.addEventListener("click", () => sendMove(account, "deposit", input));
-    const withdraw = document.createElement("button");
-    withdraw.type = "button";
-    withdraw.className = "btn line";
-    withdraw.dataset.op = "withdraw";
-    withdraw.textContent = "Withdraw";
-    withdraw.addEventListener("click", () => sendMove(account, "withdraw", input));
-    actions.append(deposit, withdraw);
-    const status = document.createElement("p");
-    status.className = "status";
-    status.dataset.status = account.id;
-    card.append(type, name, balance, label, actions, status);
-    cards.append(card);
-  });
-  if (!cards.childElementCount) {
-    const empty = document.createElement("p");
-    empty.className = "lead";
-    empty.textContent = "Those accounts are no longer on the main phone.";
-    cards.append(empty);
-  }
-  if (focusId) {
-    const input = [...cards.querySelectorAll("[data-amount]")].find((node) => node.dataset.amount === focusId);
-    if (input) input.focus();
-  }
+  paintAccount();
+  renderPresets();
+  refreshExchange();
+}
+
+function refreshExchange() {
+  const ready = Boolean(chosenOp && chosenAmount && $("agree").checked && photoTaken && signed && currentAccount());
+  $("exchange").disabled = !ready;
 }
 
 async function login(password) {
@@ -338,9 +384,13 @@ async function login(password) {
       return;
     }
     sessionPh = ph;
+    accountId = matching(ph)[0].id;
     $("login").hidden = true;
     $("bank").hidden = false;
+    $("logout").hidden = false;
+    resetExchange();
     renderBank();
+    pad.size();
     message.textContent = "";
   } catch {
     message.textContent = "This page needs a secure connection before it can check a password.";
@@ -349,31 +399,97 @@ async function login(password) {
   }
 }
 
-async function sendMove(account, op, input) {
-  const status = [...document.querySelectorAll("[data-status]")].find((node) => node.dataset.status === account.id);
-  const amount = parseAmount(input.value);
-  if (amount == null) {
-    if (status) status.textContent = "Enter an amount like 10 or 10.50.";
+function resetExchange() {
+  chosenOp = "";
+  chosenAmount = "";
+  photoTaken = false;
+  signed = false;
+  selfieToken += 1;
+  $("agree").checked = false;
+  $("other-amount").value = "";
+  $("move-msg").textContent = "";
+  $("pick-withdraw").classList.remove("is-on");
+  $("pick-deposit").classList.remove("is-on");
+  pad.setEnabled(false);
+  refreshExchange();
+}
+
+async function takePhoto() {
+  const token = ++selfieToken;
+  photoTaken = false;
+  const message = $("move-msg");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    $("agree").checked = false;
+    pad.setEnabled(false);
+    message.textContent = "This phone cannot take a photo from the browser.";
+    refreshExchange();
     return;
   }
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: "user" }, width: { ideal: 480 }, height: { ideal: 640 } },
+    });
+    if (token !== selfieToken) return;
+    const video = document.createElement("video");
+    video.setAttribute("playsinline", "");
+    video.muted = true;
+    video.srcObject = stream;
+    await video.play();
+    if (video.readyState < 2) {
+      await new Promise((resolve) => video.addEventListener("loadeddata", resolve, { once: true }));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    if (token !== selfieToken || !$("agree").checked) return;
+    const width = 320;
+    const ratio = video.videoWidth ? video.videoHeight / video.videoWidth : 1.25;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = Math.max(1, Math.round(width * ratio));
+    const ctx = canvas.getContext("2d");
+    ctx.translate(width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    photoTaken = true;
+    message.textContent = "";
+    pad.setEnabled(true);
+    pad.size();
+  } catch {
+    if (token !== selfieToken) return;
+    photoTaken = false;
+    $("agree").checked = false;
+    pad.setEnabled(false);
+    message.textContent = "Allow the front camera so a photo can be taken.";
+  } finally {
+    if (stream) stream.getTracks().forEach((track) => track.stop());
+    refreshExchange();
+  }
+}
+
+async function exchange() {
+  const message = $("move-msg");
+  message.textContent = "";
+  const account = currentAccount();
+  const amount = chosenAmount;
+  const op = chosenOp;
+  if (!account || !op || !amount || !$("agree").checked || !photoTaken || !signed) return;
   const latest = matching(sessionPh).find((item) => item.id === account.id) || account;
-  if (op === "withdraw" && latest.bal < amount) {
-    if (status) status.textContent = "Not enough gizbits in that account.";
+  const next = op === "deposit" ? BigInt(latest.bal) + BigInt(amount) : BigInt(latest.bal) - BigInt(amount);
+  if (next < 0n) {
+    message.textContent = "Not enough gizbits in that account.";
     return;
   }
-  if (op === "deposit" && latest.bal + amount > MAX) {
-    if (status) status.textContent = "That would make the balance too large.";
+  if (next > MAX) {
+    message.textContent = "That would make the balance too large.";
     return;
   }
   const id = uid();
   const sentence = op === "withdraw"
     ? `Withdraw ${formatAmount(amount)} ₲ from ${latest.name}.`
     : `Deposit ${formatAmount(amount)} ₲ to ${latest.name}.`;
-  if (status) status.textContent = "Sending to the main phone…";
-  const buttons = input.closest(".card").querySelectorAll("button");
-  buttons.forEach((button) => {
-    button.disabled = true;
-  });
+  $("exchange").disabled = true;
+  message.textContent = "Sending to the main phone…";
   try {
     await publish(sentence, {
       v: 1,
@@ -383,32 +499,91 @@ async function sendMove(account, op, input) {
       op,
       amount,
       ph: sessionPh,
+      photo: true,
       ts: Date.now(),
     });
   } catch {
-    if (status) status.textContent = "Couldn't reach the bank. Try again.";
-    buttons.forEach((button) => {
-      button.disabled = false;
-    });
+    message.textContent = "Couldn't reach the bank. Try again.";
+    refreshExchange();
     return;
   }
-  const result = await waitFor(id, 8000);
-  const card = [...document.querySelectorAll(".card")].find((node) => node.dataset.id === latest.id);
-  const liveStatus = card?.querySelector(".status");
-  const liveInput = card?.querySelector("input");
-  card?.querySelectorAll("button").forEach((button) => {
-    button.disabled = false;
-  });
+  const result = await waitFor(id, 12000);
   if (result === "ok") {
-    if (liveInput) liveInput.value = "";
-    if (liveStatus) liveStatus.textContent = "The main phone updated this balance.";
-    toast(sentence);
-  } else if (result === "reject") {
-    if (liveStatus) liveStatus.textContent = reasons.get(id) || "The main phone refused that.";
-  } else if (liveStatus) {
-    liveStatus.textContent = "Sent. Open Gizbit Network on the main phone to finish it.";
+    resetExchange();
+    renderBank();
+    $("done").hidden = false;
+    return;
   }
+  if (result === "reject") message.textContent = reasons.get(id) || "The main phone refused that.";
+  else message.textContent = "Sent. Open Gizbit Network on the main phone to finish it.";
+  refreshExchange();
 }
+
+function bindPad() {
+  const canvas = $("sign");
+  const block = $("sign-block");
+  const clearBtn = $("clear-sign");
+  const ctx = canvas.getContext("2d");
+  let drawing = false;
+  function size() {
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width < 2) return;
+    const ink = signed;
+    canvas.width = rect.width * devicePixelRatio;
+    canvas.height = 140 * devicePixelRatio;
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    ctx.strokeStyle = "#173a5a";
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = "round";
+    if (!ink) signed = false;
+  }
+  function pos(event) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+  canvas.addEventListener("pointerdown", (event) => {
+    if (block.classList.contains("is-locked")) return;
+    event.preventDefault();
+    drawing = true;
+    canvas.setPointerCapture(event.pointerId);
+    const point = pos(event);
+    ctx.beginPath();
+    ctx.moveTo(point.x, point.y);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!drawing) return;
+    event.preventDefault();
+    const point = pos(event);
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+    signed = true;
+    refreshExchange();
+  });
+  canvas.addEventListener("pointerup", () => {
+    drawing = false;
+  });
+  canvas.addEventListener("pointercancel", () => {
+    drawing = false;
+  });
+  clearBtn.addEventListener("click", () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    signed = false;
+    refreshExchange();
+  });
+  return {
+    size,
+    setEnabled(on) {
+      block.classList.toggle("is-locked", !on);
+      clearBtn.disabled = !on;
+      if (!on) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        signed = false;
+      }
+    },
+  };
+}
+
+const pad = bindPad();
 
 function bindViewport() {
   const apply = () => {
@@ -417,6 +592,9 @@ function bindViewport() {
     const top = viewport ? viewport.offsetTop : 0;
     document.documentElement.style.setProperty("--vvh", `${height}px`);
     document.documentElement.style.setProperty("--vvtop", `${top}px`);
+    requestAnimationFrame(() => {
+      if (!$("login").hidden) $("login-go").scrollIntoView({ block: "end" });
+    });
   };
   apply();
   if (window.visualViewport) {
@@ -478,9 +656,68 @@ $("login-form").addEventListener("submit", (event) => {
   event.preventDefault();
   login($("password").value);
 });
+$("password").addEventListener("focus", () => {
+  setTimeout(() => $("login-go").scrollIntoView({ block: "end" }), 50);
+});
+let peekTimer = 0;
+$("peek").addEventListener("click", () => {
+  const input = $("password");
+  input.type = "text";
+  clearTimeout(peekTimer);
+  peekTimer = setTimeout(() => {
+    input.type = "password";
+  }, 1000);
+});
 $("logout").addEventListener("click", () => {
   sessionPh = "";
   showLogin();
+});
+$("pick-withdraw").addEventListener("click", () => {
+  chosenOp = "withdraw";
+  $("pick-withdraw").classList.add("is-on");
+  $("pick-deposit").classList.remove("is-on");
+  refreshExchange();
+});
+$("pick-deposit").addEventListener("click", () => {
+  chosenOp = "deposit";
+  $("pick-deposit").classList.add("is-on");
+  $("pick-withdraw").classList.remove("is-on");
+  refreshExchange();
+});
+$("other-amount").addEventListener("input", () => {
+  chosenAmount = parseAmount($("other-amount").value) || "";
+  renderPresets();
+  refreshExchange();
+});
+$("account-pick").addEventListener("change", () => {
+  accountId = $("account-pick").value;
+  paintAccount();
+});
+$("agree").addEventListener("change", () => {
+  if (!$("agree").checked) {
+    photoTaken = false;
+    selfieToken += 1;
+    pad.setEnabled(false);
+    refreshExchange();
+    return;
+  }
+  takePhoto();
+});
+$("terms-open").addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  $("terms-body").textContent = activeSettings().terms;
+  $("terms").hidden = false;
+});
+$("terms-close").addEventListener("click", () => {
+  $("terms").hidden = true;
+});
+$("terms").addEventListener("click", (event) => {
+  if (event.target === $("terms")) $("terms").hidden = true;
+});
+$("exchange").addEventListener("click", () => exchange());
+$("done-ok").addEventListener("click", () => {
+  $("done").hidden = true;
 });
 bindViewport();
 stopOverscroll($("main"));
