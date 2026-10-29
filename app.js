@@ -11,7 +11,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "1.02.002";
+const VERSION = "1.03.002";
 const DEVICE_KEY = "gizbit-network-device";
 const NAME_KEY = "gizbit-network-name";
 const PAIR_KEY = "gizbit-network-pair";
@@ -115,6 +115,10 @@ function deviceId() {
 
 function phoneName() {
   return (localStorage.getItem(NAME_KEY) || "This phone").trim().slice(0, 40) || "This phone";
+}
+
+function publishHello() {
+  return publish("Phone ready", { v: 1, kind: "hello", role: "network", from: deviceId(), name: phoneName(), ts: Date.now() });
 }
 
 function pairedTerminal() {
@@ -452,7 +456,7 @@ async function collectPhones() {
     if (!trimmed) continue;
     try {
       const body = decode(JSON.parse(trimmed).message);
-      if (body && body.from && body.name) rememberPhone(body.from, body.name);
+      if (body && body.from && body.name && body.role !== "network") rememberPhone(body.from, body.name);
     } catch {
       /* Skip a line that is not a message. */
     }
@@ -479,8 +483,22 @@ function handleMessage(data, bucket) {
   if (data.event && data.event !== "message") return;
   const body = decode(data.message);
   if (!body || body.v !== 1) return;
-  if (body.from && body.name) rememberPhone(body.from, body.name);
-  if (body.kind === "hello") return;
+  if (body.kind === "hello") {
+    if (body.role !== "network" && body.from && body.name) rememberPhone(body.from, body.name);
+    return;
+  }
+  if (body.kind === "choose") {
+    if (body.bank === deviceId() && body.from) {
+      if (body.name) rememberPhone(body.from, body.name);
+      if (pairedTerminal() !== body.from) {
+        localStorage.setItem(PAIR_KEY, body.from);
+        renderPairList();
+      }
+      if (state.accounts.length) publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
+    }
+    return;
+  }
+  if (body.from && body.name && body.role !== "network") rememberPhone(body.from, body.name);
   if (body.kind === "ping") {
     if (!state.accounts.length) return;
     if (!body.id || !body.ts || Date.now() - body.ts > 120000) return;
@@ -1040,6 +1058,7 @@ $("phone-name").addEventListener("change", () => {
   const name = $("phone-name").value.trim().slice(0, 40);
   localStorage.setItem(NAME_KEY, name);
   $("phone-name").value = name;
+  publishHello().catch(() => {});
   if (!state.accounts.length) return;
   publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
 });
@@ -1139,6 +1158,7 @@ catchUp()
   .finally(() => {
     maybeOpenLinked();
     listen();
+    publishHello().catch(() => {});
     collectPhones().catch(() => {});
   });
 
@@ -1149,5 +1169,6 @@ document.addEventListener("visibilitychange", () => {
     .finally(() => {
       if (state.accounts.length) publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
     });
+  publishHello().catch(() => {});
   collectPhones().catch(() => {});
 });
