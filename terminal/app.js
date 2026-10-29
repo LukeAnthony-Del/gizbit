@@ -8,7 +8,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "1.03.000";
+const VERSION = "1.03.001";
 const SETTINGS_PASSWORD = "321kittymiss";
 const DEVICE_KEY = "gizbit-terminal-device";
 const NAME_KEY = "gizbit-terminal-name";
@@ -34,6 +34,8 @@ function loadLedger() {
     return {
       rev: Number.isInteger(data.rev) ? data.rev : 0,
       ts: Number(data.ts) || 0,
+      device: typeof data.device === "string" ? data.device : "",
+      deviceName: typeof data.deviceName === "string" ? data.deviceName.slice(0, 40) : "",
       accounts: data.accounts.map(sanitize).filter(Boolean),
       settings: normalizeSettings(data.settings),
     };
@@ -258,7 +260,10 @@ function acceptLedger(body) {
   localStorage.setItem(LEDGER, JSON.stringify(ledger));
   liveThisSession = true;
   refreshStatus();
-  if (!$("settings").hidden) renderSettingsAccounts();
+  if (!$("settings").hidden) {
+    paintNetworkPhone();
+    renderSettingsAccounts();
+  }
   window.dispatchEvent(new CustomEvent("gizbit-ledger"));
   if (sessionPh && !matching(sessionPh).length) {
     sessionPh = "";
@@ -383,6 +388,16 @@ function showLogin() {
   $("password").type = "password";
 }
 
+function paintNetworkPhone() {
+  const node = $("network-phone");
+  if (!node) return;
+  if (!trustedDevice) {
+    node.textContent = "Not connected yet";
+    return;
+  }
+  node.textContent = (ledger?.deviceName || "").trim() || "Main phone";
+}
+
 function renderSettingsAccounts() {
   const list = $("account-list");
   const accounts = ledger?.accounts || [];
@@ -420,6 +435,7 @@ function openSettings() {
   $("logout").hidden = true;
   $("settings").hidden = false;
   $("main").scrollTop = 0;
+  paintNetworkPhone();
   renderSettingsAccounts();
 }
 
