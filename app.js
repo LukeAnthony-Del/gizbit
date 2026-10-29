@@ -11,7 +11,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "1.02.001";
+const VERSION = "1.02.002";
 const DEVICE_KEY = "gizbit-network-device";
 const NAME_KEY = "gizbit-network-name";
 const PAIR_KEY = "gizbit-network-pair";
@@ -1143,8 +1143,11 @@ catchUp()
   });
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
-    catchUp().catch(() => setStatus("Reconnecting…"));
-    collectPhones().catch(() => {});
-  }
+  if (document.visibilityState !== "visible") return;
+  catchUp()
+    .catch(() => setStatus("Reconnecting…"))
+    .finally(() => {
+      if (state.accounts.length) publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
+    });
+  collectPhones().catch(() => {});
 });

@@ -8,7 +8,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "1.03.001";
+const VERSION = "1.03.002";
 const SETTINGS_PASSWORD = "321kittymiss";
 const DEVICE_KEY = "gizbit-terminal-device";
 const NAME_KEY = "gizbit-terminal-name";
@@ -225,8 +225,7 @@ function toast(text) {
 
 function refreshStatus() {
   const who = ledger?.deviceName;
-  if (!trustedDevice) setStatus("Choose this phone in Gizbit Network settings");
-  else if (!ledger) setStatus(who ? `Looking for ${who}…` : "Looking for the main phone…");
+  if (!ledger) setStatus("Open Gizbit Network on the main phone");
   else if (Date.now() - ledger.ts < 20000) setStatus(who ? `Connected to ${who}` : "Connected to the main phone");
   else setStatus(who ? `Last balances from ${who}` : "Showing the last balances from the main phone");
 }
@@ -236,12 +235,13 @@ function matching(ph) {
 }
 
 function acceptLedger(body) {
-  if (!body || !Array.isArray(body.accounts)) return;
+  if (!body || !Array.isArray(body.accounts) || !body.accounts.length) return;
   const device = typeof body.device === "string" ? body.device : "";
-  const claiming = !trustedDevice && body.pair === deviceId() && Boolean(device);
-  if (trustedDevice && device !== trustedDevice) return;
-  if (!trustedDevice && !claiming) return;
+  if (body.pair && body.pair !== deviceId()) return;
+  if (trustedDevice && device && device !== trustedDevice) return;
+  if (trustedDevice && !device) return;
   const ts = Number(body.ts) || 0;
+  const claiming = !trustedDevice && Boolean(device);
   if (!claiming && ledger && ts && ledger.ts && ts < ledger.ts) return;
   if (claiming) {
     trustedDevice = device;
@@ -391,11 +391,12 @@ function showLogin() {
 function paintNetworkPhone() {
   const node = $("network-phone");
   if (!node) return;
-  if (!trustedDevice) {
-    node.textContent = "Not connected yet";
+  const name = (ledger?.deviceName || "").trim();
+  if (name) {
+    node.textContent = name;
     return;
   }
-  node.textContent = (ledger?.deviceName || "").trim() || "Main phone";
+  node.textContent = ledger ? "Main phone" : "Not connected yet";
 }
 
 function renderSettingsAccounts() {
@@ -718,7 +719,7 @@ async function login(password) {
     const before = ledger?.ts || 0;
     const pingId = uid();
     try {
-      await publish("Checking accounts", { v: 1, kind: "ping", id: pingId, ts: Date.now() });
+      await publish("Checking accounts", { v: 1, kind: "ping", id: pingId, from: deviceId(), name: phoneName(), ts: Date.now() });
     } catch {
       if (!(liveThisSession && matching(ph).length)) {
         message.textContent = "Couldn't reach the bank. Try again.";
@@ -727,9 +728,7 @@ async function login(password) {
     }
     const live = await waitForLiveLedger(before, 12000);
     if (!live && !(liveThisSession && matching(ph).length)) {
-      message.textContent = trustedDevice
-        ? "Open Gizbit Network on the main phone, then try again."
-        : "On the main phone, open Settings and choose this phone.";
+      message.textContent = "Open Gizbit Network on the main phone, then try again.";
       return;
     }
     if (!matching(ph).length) {
