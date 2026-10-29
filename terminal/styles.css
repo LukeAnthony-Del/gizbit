@@ -250,6 +250,14 @@ h1 {
   letter-spacing: -0.04em;
   color: var(--navy);
 }
+.ver {
+  margin-left: 8px;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.brand .ver { color: var(--silver); font-size: 12px; }
 .lead, .quiet { margin: 0 0 16px; color: var(--muted); }
 .quiet { margin: 0; font-size: 13px; font-weight: 650; }
 .panel {

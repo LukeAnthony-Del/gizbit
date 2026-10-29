@@ -10,6 +10,8 @@ const MAX = 10n ** 18n;
 const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000000000", "1000000000000", "2000000000000"];
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
+// Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
+const VERSION = "1.01.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -1005,6 +1007,7 @@ stopOverscroll(document.querySelector(".sheet-card"));
 lockGestures();
 setupInstall();
 fillSettings();
+$("app-version").textContent = VERSION;
 render();
 showTab("balances");
 maybeOpenLinked();

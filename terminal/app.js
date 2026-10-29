@@ -7,6 +7,8 @@ const MAX = 10n ** 18n;
 const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000000000", "1000000000000", "2000000000000"];
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
+// Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
+const VERSION = "1.01.000";
 
 let ledger = loadLedger();
 let sessionPh = "";
@@ -334,6 +336,7 @@ let accountId = "";
 let chosenOp = "";
 let chosenAmount = "";
 let signed = false;
+let exchangeSent = false;
 
 function showLogin() {
   $("login").hidden = false;
@@ -468,6 +471,18 @@ function revealSteps() {
   }
   const ready = Boolean(showSign && signed && currentAccount());
   $("exchange").disabled = !ready;
+  paintExchangeButton();
+}
+
+function paintExchangeButton() {
+  const button = $("exchange");
+  if (!exchangeSent) {
+    button.textContent = "Exchange";
+    return;
+  }
+  button.hidden = false;
+  button.disabled = false;
+  button.textContent = "Return to home";
 }
 
 let audioCtx = null;
@@ -638,6 +653,7 @@ function resetExchange() {
   chosenOp = "";
   chosenAmount = "";
   signed = false;
+  exchangeSent = false;
   $("agree").checked = false;
   $("other-amount").value = "";
   $("move-msg").textContent = "";
@@ -653,6 +669,10 @@ function resetExchange() {
 }
 
 async function exchange() {
+  if (exchangeSent) {
+    showHome();
+    return;
+  }
   const message = $("move-msg");
   message.textContent = "";
   const account = currentAccount();
@@ -676,7 +696,8 @@ async function exchange() {
   const id = uid();
   unlockSound();
   pendingExchangeId = id;
-  $("exchange").disabled = true;
+  exchangeSent = true;
+  paintExchangeButton();
   message.textContent = "Sending to the main phone…";
   try {
     await publish(`Exchange pending from ${latest.name}`, {
@@ -691,6 +712,7 @@ async function exchange() {
     });
   } catch {
     pendingExchangeId = "";
+    exchangeSent = false;
     message.textContent = "Couldn't reach the bank. Try again.";
     revealSteps();
     return;
@@ -912,7 +934,18 @@ $("other-amount").addEventListener("input", () => {
     }
   }
   input.setSelectionRange(pos, pos);
-  const digits = formatted.replace(/\D/g, "");
+  let digits = formatted.replace(/\D/g, "");
+  if (chosenOp === "withdraw" && digits) {
+    const typed = BigInt(digits);
+    const { max } = limits();
+    if (typed > max) {
+      let capped = max > 0n ? max : 0n;
+      if (capped >= AMOUNT_STEP) capped -= capped % AMOUNT_STEP;
+      digits = capped.toString();
+      input.value = formatTyping(digits);
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }
   chosenAmount = parseAmount(digits) || "";
   if (digits && !onAmountStep(digits)) $("move-msg").textContent = "Use a multiple of 50 billion.";
   else if (digits && !amountAllowed(chosenAmount)) $("move-msg").textContent = rangeNote();
@@ -950,6 +983,9 @@ stopOverscroll($("main"));
 lockGestures();
 setupInstall();
 refreshStatus();
+document.querySelectorAll(".ver").forEach((node) => {
+  node.textContent = VERSION;
+});
 showLogin();
 
 if ("serviceWorker" in navigator) {

@@ -126,6 +126,13 @@ h1 {
   letter-spacing: -0.04em;
   color: var(--navy);
 }
+.ver {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--muted);
+}
 h2 {
   margin: 22px 0 8px;
   font-size: 15px;
