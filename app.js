@@ -941,6 +941,22 @@ $("review-yes").addEventListener("click", markReviewed);
 $("review").addEventListener("click", (event) => {
   if (event.target === $("review")) closeReview();
 });
+$("sync-go").addEventListener("click", async () => {
+  const button = $("sync-go");
+  button.disabled = true;
+  try {
+    await publishLedger([]);
+    announced = true;
+    lastAnnounce = Date.now();
+    toast("Synced with the terminal");
+    if (streamOpen) setStatus("Listening for the other phone");
+  } catch {
+    toast("Couldn't reach the terminal. Try again.");
+    setStatus("Saved on this phone. The other phone will catch up when the connection is back.");
+  } finally {
+    button.disabled = false;
+  }
+});
 $("settings-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const error = $("settings-error");
