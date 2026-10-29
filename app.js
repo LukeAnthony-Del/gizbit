@@ -1,5 +1,6 @@
 // Main bank. Keep TOPIC, encode, and decode identical in terminal/app.js.
 const TOPIC = "gizbit-net-m3p8k2w7q9n4";
+const NTFY = "https://ntfy.envs.net";
 const STORAGE = "gizbit-accounts";
 const ACTIVITY = "gizbit-activity";
 const REQUESTS = "gizbit-requests";
@@ -17,6 +18,7 @@ const seen = new Set(loadList(SEEN));
 let source = null;
 let streamOpen = false;
 let lastAnnounce = 0;
+let announced = false;
 let postChain = Promise.resolve();
 let toastTimer = 0;
 
@@ -157,7 +159,7 @@ function decode(message) {
 
 function publish(sentence, payload) {
   const job = postChain.then(async () => {
-    const res = await fetch(`https://ntfy.sh/${TOPIC}`, {
+    const res = await fetch(`${NTFY}/${TOPIC}`, {
       method: "POST",
       body: encode(sentence, payload),
       cache: "no-store",
@@ -391,6 +393,7 @@ function handleMessage(data, bucket) {
   const body = decode(data.message);
   if (!body || body.v !== 1) return;
   if (body.kind === "ping") {
+    if (!state.accounts.length) return;
     if (!body.id || !body.ts || Date.now() - body.ts > 120000) return;
     if (!remember(`ping:${body.id}`)) return;
     bucket.ping = body.id;
@@ -438,10 +441,11 @@ function takeTx(tx) {
 }
 
 async function catchUp() {
-  const res = await fetch(`https://ntfy.sh/${TOPIC}/json?poll=1&since=${encodeURIComponent(sinceQuery())}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(String(res.status));
+  const res = await fetch(`${NTFY}/${TOPIC}/json?poll=1&since=${encodeURIComponent(sinceQuery())}`, { cache: "no-store" });
+  if (res.status !== 404 && !res.ok) throw new Error(String(res.status));
   const bucket = { ping: false, applied: [] };
-  for (const line of (await res.text()).split("\n")) {
+  const text = res.status === 404 ? "" : await res.text();
+  for (const line of text.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
@@ -450,16 +454,18 @@ async function catchUp() {
       /* Skip a line that is not a message. */
     }
   }
-  const due = Date.now() - lastAnnounce > 15000;
-  if (!bucket.ping && !bucket.applied.length && !bucket.requests && !due) return;
+  const asked = Boolean(bucket.ping || bucket.applied.length || bucket.requests);
+  if (!asked && announced) return;
+  if (!state.accounts.length && !bucket.applied.length && !bucket.requests) return;
   await publishLedger(bucket.applied, bucket.ping || "");
+  announced = true;
   lastAnnounce = Date.now();
   if (streamOpen) setStatus("Listening for the other phone");
 }
 
 function listen() {
   if (source) source.close();
-  source = new EventSource(`https://ntfy.sh/${TOPIC}/sse?since=${encodeURIComponent(sinceQuery())}`);
+  source = new EventSource(`${NTFY}/${TOPIC}/sse?since=${encodeURIComponent(sinceQuery())}`);
   source.onopen = () => {
     streamOpen = true;
     setStatus("Listening for the other phone");
@@ -477,6 +483,7 @@ function listen() {
     }
     const bucket = { ping: false, applied: [] };
     handleMessage(data, bucket);
+    if (!state.accounts.length) return;
     if (!bucket.ping && !bucket.applied.length && !bucket.requests) return;
     publishLedger(bucket.applied, bucket.ping || "")
       .then(() => {

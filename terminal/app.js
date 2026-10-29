@@ -1,5 +1,6 @@
 // Other phone. Keep TOPIC, encode, and decode identical in ../app.js.
 const TOPIC = "gizbit-net-m3p8k2w7q9n4";
+const NTFY = "https://ntfy.envs.net";
 const LEDGER = "gizbit-terminal-ledger";
 const CURSOR = "gizbit-terminal-cursor";
 const MAX = 10n ** 18n;
@@ -9,6 +10,7 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 
 let ledger = loadLedger();
 let sessionPh = "";
+let liveThisSession = false;
 let source = null;
 let lastPing = 0;
 let toastTimer = 0;
@@ -136,7 +138,7 @@ async function publish(sentence, payload) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000);
     try {
-      const res = await fetch(`https://ntfy.sh/${TOPIC}`, {
+      const res = await fetch(`${NTFY}/${TOPIC}`, {
         method: "POST",
         body,
         cache: "no-store",
@@ -163,7 +165,7 @@ async function publish(sentence, payload) {
 async function posted(id) {
   try {
     const since = String(Math.floor(Date.now() / 1000) - 30);
-    const res = await fetch(`https://ntfy.sh/${TOPIC}/json?poll=1&since=${since}`, { cache: "no-store" });
+    const res = await fetch(`${NTFY}/${TOPIC}/json?poll=1&since=${since}`, { cache: "no-store" });
     if (!res.ok) return false;
     return (await res.text()).includes(id);
   } catch {
@@ -215,6 +217,7 @@ function acceptLedger(body) {
     requests: Array.isArray(body.requests) ? body.requests : (ledger?.requests || []),
   };
   localStorage.setItem(LEDGER, JSON.stringify(ledger));
+  liveThisSession = true;
   refreshStatus();
   window.dispatchEvent(new CustomEvent("gizbit-ledger"));
   if (sessionPh && !matching(sessionPh).length) {
@@ -277,7 +280,11 @@ function handleMessage(data) {
 }
 
 async function catchUp() {
-  const res = await fetch(`https://ntfy.sh/${TOPIC}/json?poll=1&since=${encodeURIComponent(sinceQuery())}`, { cache: "no-store" });
+  const res = await fetch(`${NTFY}/${TOPIC}/json?poll=1&since=${encodeURIComponent(sinceQuery())}`, { cache: "no-store" });
+  if (res.status === 404) {
+    refreshStatus();
+    return;
+  }
   if (!res.ok) throw new Error(String(res.status));
   for (const line of (await res.text()).split("\n")) {
     const trimmed = line.trim();
@@ -293,7 +300,7 @@ async function catchUp() {
 
 function listen() {
   if (source) source.close();
-  source = new EventSource(`https://ntfy.sh/${TOPIC}/sse?since=${encodeURIComponent(sinceQuery())}`);
+  source = new EventSource(`${NTFY}/${TOPIC}/sse?since=${encodeURIComponent(sinceQuery())}`);
   source.onmessage = (event) => {
     try {
       handleMessage(JSON.parse(event.data));
@@ -370,9 +377,12 @@ function limits() {
   const account = currentAccount();
   const min = BigInt(settings.minAmount || DEFAULT_MIN);
   const balance = account ? BigInt(account.bal) : 0n;
-  let max = settings.maxAmount ? BigInt(settings.maxAmount) : balance;
-  if (chosenOp === "withdraw" && balance < max) max = balance;
-  return { min, max };
+  const configured = settings.maxAmount ? BigInt(settings.maxAmount) : null;
+  if (chosenOp === "withdraw") {
+    const max = configured == null || balance < configured ? balance : configured;
+    return { min, max };
+  }
+  return { min, max: configured == null ? MAX : configured };
 }
 
 function amountAllowed(amount) {
@@ -385,6 +395,7 @@ function amountAllowed(amount) {
 function rangeNote() {
   const { min, max } = limits();
   if (max < min) return `This account is below the minimum of ${formatAmount(min)} ₲.`;
+  if (max >= MAX) return `At least ${formatAmount(min)} ₲.`;
   return `From ${formatAmount(min)} to ${formatAmount(max)} ₲.`;
 }
 
@@ -450,21 +461,53 @@ function revealSteps() {
   $("exchange").disabled = !ready;
 }
 
+let audioCtx = null;
+let soundBuffer = null;
+let soundLoading = null;
+
+function audioContext() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  if (!audioCtx) audioCtx = new Ctx();
+  return audioCtx;
+}
+
+function loadSound() {
+  const ctx = audioContext();
+  if (!ctx || soundBuffer || soundLoading) return soundLoading;
+  soundLoading = fetch("success.mp3")
+    .then((res) => res.arrayBuffer())
+    .then((buf) => ctx.decodeAudioData(buf))
+    .then((decoded) => {
+      soundBuffer = decoded;
+    })
+    .catch(() => {
+      soundLoading = null;
+    });
+  return soundLoading;
+}
+
 function playSuccess() {
+  const ctx = audioContext();
+  if (ctx && ctx.state === "suspended") ctx.resume();
+  if (ctx && soundBuffer) {
+    const src = ctx.createBufferSource();
+    src.buffer = soundBuffer;
+    src.connect(ctx.destination);
+    src.start(0);
+    return;
+  }
   const audio = $("success-sound");
   audio.muted = false;
+  audio.volume = 1;
   audio.currentTime = 0;
   audio.play().catch(() => {});
 }
 
 function unlockSound() {
-  const audio = $("success-sound");
-  audio.muted = true;
-  audio.play().then(() => {
-    audio.pause();
-    audio.currentTime = 0;
-    audio.muted = false;
-  }).catch(() => {});
+  const ctx = audioContext();
+  if (ctx && ctx.state === "suspended") ctx.resume();
+  loadSound();
 }
 
 function waitForLiveLedger(before, ms) {
@@ -521,11 +564,13 @@ async function login(password) {
     try {
       await publish("Checking accounts", { v: 1, kind: "ping", id: pingId, ts: Date.now() });
     } catch {
-      message.textContent = "Open Gizbit Network on the main phone, then try again.";
-      return;
+      if (!(liveThisSession && matching(ph).length)) {
+        message.textContent = "Couldn't reach the bank. Try again.";
+        return;
+      }
     }
-    const live = await waitForLiveLedger(before, 8000);
-    if (!live) {
+    const live = await waitForLiveLedger(before, 12000);
+    if (!live && !(liveThisSession && matching(ph).length)) {
       message.textContent = "Open Gizbit Network on the main phone, then try again.";
       return;
     }
