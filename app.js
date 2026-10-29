@@ -11,7 +11,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "1.02.000";
+const VERSION = "1.02.001";
 const DEVICE_KEY = "gizbit-network-device";
 const NAME_KEY = "gizbit-network-name";
 const PAIR_KEY = "gizbit-network-pair";
@@ -442,6 +442,21 @@ function openSheet() {
 
 function closeSheet() {
   $("sheet").hidden = true;
+}
+
+async function collectPhones() {
+  const res = await fetch(`${NTFY}/${TOPIC}/json?poll=1&since=6h`, { cache: "no-store" });
+  if (!res.ok) return;
+  for (const line of (await res.text()).split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const body = decode(JSON.parse(trimmed).message);
+      if (body && body.from && body.name) rememberPhone(body.from, body.name);
+    } catch {
+      /* Skip a line that is not a message. */
+    }
+  }
 }
 
 function sinceQuery() {
@@ -1093,6 +1108,7 @@ document.querySelectorAll(".tabs button").forEach((button) => {
   button.addEventListener("click", () => {
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().then(() => renderRequests());
     showTab(button.dataset.tab);
+    if (button.dataset.tab === "settings") collectPhones().catch(() => {});
   });
 });
 
@@ -1123,10 +1139,12 @@ catchUp()
   .finally(() => {
     maybeOpenLinked();
     listen();
+    collectPhones().catch(() => {});
   });
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     catchUp().catch(() => setStatus("Reconnecting…"));
+    collectPhones().catch(() => {});
   }
 });

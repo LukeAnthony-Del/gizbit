@@ -8,7 +8,8 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "1.02.000";
+const VERSION = "1.03.000";
+const SETTINGS_PASSWORD = "321kittymiss";
 const DEVICE_KEY = "gizbit-terminal-device";
 const NAME_KEY = "gizbit-terminal-name";
 const TRUST = "gizbit-terminal-trust";
@@ -257,6 +258,7 @@ function acceptLedger(body) {
   localStorage.setItem(LEDGER, JSON.stringify(ledger));
   liveThisSession = true;
   refreshStatus();
+  if (!$("settings").hidden) renderSettingsAccounts();
   window.dispatchEvent(new CustomEvent("gizbit-ledger"));
   if (sessionPh && !matching(sessionPh).length) {
     sessionPh = "";
@@ -373,11 +375,78 @@ let signed = false;
 let exchangeSent = false;
 
 function showLogin() {
+  $("settings").hidden = true;
   $("login").hidden = false;
   $("bank").hidden = true;
   $("logout").hidden = true;
   $("password").value = "";
   $("password").type = "password";
+}
+
+function renderSettingsAccounts() {
+  const list = $("account-list");
+  const accounts = ledger?.accounts || [];
+  list.replaceChildren();
+  if (!accounts.length) {
+    const empty = document.createElement("li");
+    empty.className = "quiet";
+    empty.textContent = "No accounts on this phone yet.";
+    list.append(empty);
+    return;
+  }
+  accounts.forEach((account) => {
+    const item = document.createElement("li");
+    item.className = "account-row";
+    const name = document.createElement("p");
+    name.className = "who";
+    name.textContent = account.name || "Account";
+    const type = document.createElement("p");
+    type.className = "quiet";
+    type.textContent = account.type || "Account";
+    const bal = document.createElement("p");
+    bal.className = "bal";
+    bal.textContent = `${formatAmount(account.bal)} ₲`;
+    item.append(name, type, bal);
+    list.append(item);
+  });
+}
+
+function openSettings() {
+  $("settings-lock").hidden = true;
+  $("settings-password").value = "";
+  $("settings-lock-msg").textContent = "";
+  $("login").hidden = true;
+  $("bank").hidden = true;
+  $("logout").hidden = true;
+  $("settings").hidden = false;
+  $("main").scrollTop = 0;
+  renderSettingsAccounts();
+}
+
+function closeSettings() {
+  $("settings").hidden = true;
+  if (sessionPh) {
+    $("login").hidden = true;
+    $("bank").hidden = false;
+    $("logout").hidden = $("stage").classList.contains("is-exchange");
+    return;
+  }
+  showLogin();
+}
+
+function waitNewerLedger(beforeTs, ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, ms);
+    function finish() {
+      clearTimeout(timer);
+      window.removeEventListener("gizbit-ledger", onLedger);
+      resolve((ledger?.ts || 0) > beforeTs);
+    }
+    function onLedger() {
+      if ((ledger?.ts || 0) > beforeTs) finish();
+    }
+    window.addEventListener("gizbit-ledger", onLedger);
+  });
 }
 
 function currentAccount() {
@@ -653,6 +722,7 @@ async function login(password) {
     }
     sessionPh = ph;
     accountId = matching(ph)[0].id;
+    $("settings").hidden = true;
     $("login").hidden = true;
     $("bank").hidden = false;
     $("logout").hidden = false;
@@ -893,6 +963,47 @@ function setupInstall() {
   });
 }
 
+$("open-settings").addEventListener("click", () => {
+  if (!$("settings").hidden) return;
+  $("settings-lock-msg").textContent = "";
+  $("settings-password").value = "";
+  $("settings-lock").hidden = false;
+  $("settings-password").focus();
+});
+$("settings-lock-cancel").addEventListener("click", () => {
+  $("settings-lock").hidden = true;
+  $("settings-password").value = "";
+  $("settings-lock-msg").textContent = "";
+});
+$("settings-lock-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  if ($("settings-password").value !== SETTINGS_PASSWORD) {
+    $("settings-lock-msg").textContent = "Wrong password.";
+    return;
+  }
+  openSettings();
+});
+$("settings-password").addEventListener("focus", () => {
+  setTimeout(() => $("settings-open").scrollIntoView({ block: "end" }), 50);
+});
+$("settings-back").addEventListener("click", closeSettings);
+$("sync-phones").addEventListener("click", async () => {
+  const button = $("sync-phones");
+  button.disabled = true;
+  const before = ledger?.ts || 0;
+  lastPing = 0;
+  try {
+    await publishHello();
+    await publishPing();
+    const synced = await waitNewerLedger(before, 8000);
+    renderSettingsAccounts();
+    toast(synced ? "Synced with the main phone" : "Open Gizbit Network on the main phone, then try again.");
+  } catch {
+    toast("Couldn't reach the bank.");
+  } finally {
+    button.disabled = false;
+  }
+});
 $("login-form").addEventListener("submit", (event) => {
   event.preventDefault();
   login($("password").value);
@@ -1049,5 +1160,6 @@ catchUp().catch(() => refreshStatus()).finally(() => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   catchUp().catch(() => {});
+  publishHello().catch(() => {});
   publishPing().catch(() => {});
 });

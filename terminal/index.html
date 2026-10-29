@@ -24,6 +24,11 @@
           <p class="brand">Gizbit Terminal <span class="ver"></span></p>
           <p class="sub" id="link-status" role="status">Looking for the main phone…</p>
         </div>
+        <button type="button" id="open-settings" class="gear" aria-label="Settings">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path fill="currentColor" fill-rule="evenodd" d="M19.4 13.5a7.7 7.7 0 0 0 .1-1.5 7.7 7.7 0 0 0-.1-1.5l2-1.6a.5.5 0 0 0 .1-.6l-1.9-3.3a.5.5 0 0 0-.6-.2l-2.4 1a7.4 7.4 0 0 0-2.6-1.5l-.4-2.5a.5.5 0 0 0-.5-.4h-3.8a.5.5 0 0 0-.5.4l-.4 2.5a7.4 7.4 0 0 0-2.6 1.5l-2.4-1a.5.5 0 0 0-.6.2L2.4 8.3a.5.5 0 0 0 .1.6l2 1.6a7.7 7.7 0 0 0-.1 1.5 7.7 7.7 0 0 0 .1 1.5l-2 1.6a.5.5 0 0 0-.1.6l1.9 3.3a.5.5 0 0 0 .6.2l2.4-1a7.4 7.4 0 0 0 2.6 1.5l.4 2.5a.5.5 0 0 0 .5.4h3.8a.5.5 0 0 0 .5-.4l.4-2.5a7.4 7.4 0 0 0 2.6-1.5l2.4 1a.5.5 0 0 0 .6-.2l1.9-3.3a.5.5 0 0 0-.1-.6l-2-1.6zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/>
+          </svg>
+        </button>
       </header>
 
       <main id="main">
@@ -38,10 +43,6 @@
             <button type="button" id="install-go" class="btn slim" hidden>Install</button>
           </div>
           <form id="login-form" class="panel">
-            <label class="field">
-              <span>This phone</span>
-              <input id="phone-name" data-phone-name maxlength="40" autocomplete="off" placeholder="Name this phone" />
-            </label>
             <label class="field">
               <span>Password</span>
               <span class="pass-wrap">
@@ -63,10 +64,6 @@
           <div class="stage" id="stage">
             <div class="pane-home">
               <h1 id="welcome">Welcome</h1>
-              <label class="field">
-                <span>This phone</span>
-                <input id="phone-name-home" data-phone-name maxlength="40" autocomplete="off" placeholder="Name this phone" />
-              </label>
               <label class="field" id="account-pick-wrap" hidden>
                 <span>Account</span>
                 <select id="account-pick"></select>
@@ -117,8 +114,39 @@
             </div>
           </div>
         </section>
+
+        <section id="settings" class="settings" hidden>
+          <button type="button" id="settings-back" class="back">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Back
+          </button>
+          <h1>Settings</h1>
+          <label class="field">
+            <span>This phone</span>
+            <input id="phone-name" data-phone-name maxlength="40" autocomplete="off" placeholder="Name this phone" />
+          </label>
+          <p class="quiet">This is the name the main phone shows when you connect.</p>
+          <button type="button" id="sync-phones" class="btn">Sync</button>
+          <h2>Accounts</h2>
+          <ul id="account-list" class="account-list"></ul>
+        </section>
       </main>
       <button type="button" id="logout" class="logout" hidden>Log out</button>
+    </div>
+
+    <div id="settings-lock" class="sheet" hidden>
+      <form id="settings-lock-form" class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="settings-lock-title">
+        <h2 id="settings-lock-title">Settings</h2>
+        <label class="field">
+          <span>Password</span>
+          <input id="settings-password" type="password" maxlength="100" autocomplete="off" />
+        </label>
+        <p id="settings-lock-msg" class="error" role="status"></p>
+        <button type="submit" class="btn" id="settings-open">Open</button>
+        <button type="button" id="settings-lock-cancel" class="btn ghost">Cancel</button>
+      </form>
     </div>
 
     <div id="terms" class="sheet" hidden>
