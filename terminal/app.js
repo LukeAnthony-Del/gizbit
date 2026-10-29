@@ -4,14 +4,15 @@ const LEDGER = "gizbit-terminal-ledger";
 const CURSOR = "gizbit-terminal-cursor";
 const MAX = 10n ** 18n;
 const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000000000", "1000000000000", "2000000000000"];
+const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 
 let ledger = loadLedger();
 let sessionPh = "";
 let source = null;
 let lastPing = 0;
-let postChain = Promise.resolve();
 let toastTimer = 0;
+let pendingExchangeId = "";
 const waits = new Map();
 const reasons = new Map();
 
@@ -47,15 +48,18 @@ function sanitize(account) {
 }
 
 function defaultSettings() {
-  return { presets: DEFAULT_PRESETS.slice(), terms: DEFAULT_TERMS };
+  return { presets: DEFAULT_PRESETS.slice(), terms: DEFAULT_TERMS, minAmount: DEFAULT_MIN, maxAmount: "" };
 }
 
 function normalizeSettings(value) {
   const presets = Array.isArray(value?.presets) ? value.presets.map((item) => moneyText(item, false)).filter(Boolean) : [];
   while (presets.length < 6) presets.push(DEFAULT_PRESETS[presets.length]);
+  const maxAmount = moneyText(value?.maxAmount, false);
   return {
     presets: presets.slice(0, 6),
     terms: String(value?.terms || DEFAULT_TERMS).slice(0, 800),
+    minAmount: moneyText(value?.minAmount, false) || DEFAULT_MIN,
+    maxAmount: maxAmount && maxAmount !== "0" ? maxAmount : "",
   };
 }
 
@@ -126,17 +130,45 @@ function decode(message) {
   }
 }
 
-function publish(sentence, payload) {
-  const job = postChain.then(async () => {
-    const res = await fetch(`https://ntfy.sh/${TOPIC}`, {
-      method: "POST",
-      body: encode(sentence, payload),
-      cache: "no-store",
-    });
-    if (!res.ok) throw new Error(String(res.status));
-  });
-  postChain = job.catch(() => {});
-  return job;
+async function publish(sentence, payload) {
+  const body = encode(sentence, payload);
+  const attempt = async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const res = await fetch(`https://ntfy.sh/${TOPIC}`, {
+        method: "POST",
+        body,
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(String(res.status));
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  try {
+    await attempt();
+  } catch (first) {
+    if (payload && payload.id && await posted(payload.id)) return;
+    try {
+      await attempt();
+    } catch (second) {
+      if (payload && payload.id && await posted(payload.id)) return;
+      throw second || first;
+    }
+  }
+}
+
+async function posted(id) {
+  try {
+    const since = String(Math.floor(Date.now() / 1000) - 30);
+    const res = await fetch(`https://ntfy.sh/${TOPIC}/json?poll=1&since=${since}`, { cache: "no-store" });
+    if (!res.ok) return false;
+    return (await res.text()).includes(id);
+  } catch {
+    return false;
+  }
 }
 
 function publishPing() {
@@ -177,13 +209,22 @@ function acceptLedger(body) {
   ledger = {
     rev: Number.isInteger(body.rev) ? body.rev : (ledger?.rev || 0),
     ts: body.ts || Date.now(),
+    answered: body.answered || ledger?.answered || "",
     accounts: body.accounts.map(sanitize).filter(Boolean),
     settings: normalizeSettings(body.settings),
+    requests: Array.isArray(body.requests) ? body.requests : (ledger?.requests || []),
   };
   localStorage.setItem(LEDGER, JSON.stringify(ledger));
   refreshStatus();
   window.dispatchEvent(new CustomEvent("gizbit-ledger"));
+  if (sessionPh && !matching(sessionPh).length) {
+    sessionPh = "";
+    showLogin();
+    $("login-msg").textContent = "That account was removed.";
+    return;
+  }
   if (sessionPh) renderBank();
+  checkExchangeResult();
   (body.applied || []).forEach((id) => resolveWait(id, "ok"));
 }
 
@@ -227,8 +268,10 @@ function handleMessage(data) {
   const body = decode(data.message);
   if (!body || body.v !== 1) return;
   if (body.kind === "ledger") acceptLedger(body);
+  if (body.kind === "decision") finishExchange(body.id, body.status);
   if (body.kind === "reject" && body.id) {
     reasons.set(body.id, body.reason || "The main phone refused that.");
+    if (body.id === pendingExchangeId) finishExchange(body.id, "denied");
     resolveWait(body.id, "reject");
   }
 }
@@ -311,7 +354,6 @@ function paintAccount() {
   });
   if (!account) {
     $("welcome").textContent = "Welcome";
-    $("who").textContent = "Those accounts are no longer on the main phone.";
     $("balance").textContent = "";
     $("balance-full").textContent = "";
     return;
@@ -319,9 +361,31 @@ function paintAccount() {
   accountId = account.id;
   pick.value = account.id;
   $("welcome").textContent = `Welcome, ${account.name}`;
-  $("who").textContent = account.name;
   $("balance").textContent = `${formatAmount(account.bal)} ₲`;
   $("balance-full").textContent = formatFull(account.bal);
+}
+
+function limits() {
+  const settings = activeSettings();
+  const account = currentAccount();
+  const min = BigInt(settings.minAmount || DEFAULT_MIN);
+  const balance = account ? BigInt(account.bal) : 0n;
+  let max = settings.maxAmount ? BigInt(settings.maxAmount) : balance;
+  if (chosenOp === "withdraw" && balance < max) max = balance;
+  return { min, max };
+}
+
+function amountAllowed(amount) {
+  if (!amount) return false;
+  const value = BigInt(amount);
+  const { min, max } = limits();
+  return max >= min && value >= min && value <= max;
+}
+
+function rangeNote() {
+  const { min, max } = limits();
+  if (max < min) return `This account is below the minimum of ${formatAmount(min)} ₲.`;
+  return `From ${formatAmount(min)} to ${formatAmount(max)} ₲.`;
 }
 
 function renderPresets() {
@@ -334,12 +398,16 @@ function renderPresets() {
     button.className = "btn line";
     button.textContent = formatAmount(value);
     button.dataset.amount = value;
+    const allowed = amountAllowed(value);
+    button.disabled = !allowed;
     if (chosenAmount === value && !$("other-amount").value.trim()) button.classList.add("is-on");
     button.addEventListener("click", () => {
+      if (!allowed) return;
       chosenAmount = value;
       $("other-amount").value = "";
+      $("move-msg").textContent = "";
       renderPresets();
-      refreshExchange();
+      revealSteps();
     });
     box.append(button);
   });
@@ -348,12 +416,92 @@ function renderPresets() {
 function renderBank() {
   paintAccount();
   renderPresets();
-  refreshExchange();
+  revealSteps();
 }
 
-function refreshExchange() {
-  const ready = Boolean(chosenOp && chosenAmount && $("agree").checked && photoTaken && signed && currentAccount());
+function showHome() {
+  $("stage").classList.remove("is-exchange");
+}
+
+function showExchangePage() {
+  $("stage").classList.add("is-exchange");
+  $("exchange-pane").scrollTop = 0;
+}
+
+function revealSteps() {
+  const note = $("range-note");
+  if (note) note.textContent = chosenOp ? rangeNote() : "";
+  const valid = Boolean(chosenOp && amountAllowed(chosenAmount));
+  $("terms-step").hidden = !valid;
+  const showSign = valid && $("agree").checked && photoTaken;
+  $("sign-block").hidden = !showSign;
+  $("exchange").hidden = !showSign;
+  if (showSign) {
+    pad.setEnabled(true);
+    if (!$("sign").dataset.ready) {
+      pad.size();
+      $("sign").dataset.ready = "1";
+    }
+  } else {
+    pad.setEnabled(false);
+    delete $("sign").dataset.ready;
+  }
+  const ready = Boolean(showSign && signed && currentAccount());
   $("exchange").disabled = !ready;
+}
+
+function playSuccess() {
+  const audio = $("success-sound");
+  audio.muted = false;
+  audio.currentTime = 0;
+  audio.play().catch(() => {});
+}
+
+function unlockSound() {
+  const audio = $("success-sound");
+  audio.muted = true;
+  audio.play().then(() => {
+    audio.pause();
+    audio.currentTime = 0;
+    audio.muted = false;
+  }).catch(() => {});
+}
+
+function waitForLiveLedger(before, ms) {
+  const ready = () => ledger && ledger.ts > before;
+  if (ready()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => done(false), ms);
+    function done(ok) {
+      clearTimeout(timer);
+      window.removeEventListener("gizbit-ledger", onLedger);
+      resolve(ok);
+    }
+    function onLedger() {
+      if (ready()) done(true);
+    }
+    window.addEventListener("gizbit-ledger", onLedger);
+  });
+}
+
+function finishExchange(id, status) {
+  if (!id || id !== pendingExchangeId || !status || status === "pending") return;
+  pendingExchangeId = "";
+  if (status === "denied") {
+    $("move-msg").textContent = reasons.get(id) || "The network denied this exchange.";
+    revealSteps();
+    return;
+  }
+  resetExchange();
+  showHome();
+  renderBank();
+  playSuccess();
+  $("done").hidden = false;
+}
+
+function checkExchangeResult() {
+  const found = (ledger?.requests || []).find((item) => item.id === pendingExchangeId);
+  if (found) finishExchange(found.id, found.status);
 }
 
 async function login(password) {
@@ -367,20 +515,22 @@ async function login(password) {
   button.disabled = true;
   try {
     const ph = await sha256(password.trim());
-    const fresh = ledger && Date.now() - ledger.ts < 8000;
-    if (!matching(ph).length || !fresh) {
-      message.textContent = "Checking with the main phone…";
-      try {
-        await publishPing();
-      } catch {
-        /* The saved balances can still be used if the bank is offline. */
-      }
-      await waitLedger(matching(ph).length ? 2500 : 5000);
+    message.textContent = "Checking with the main phone…";
+    const before = ledger?.ts || 0;
+    const pingId = uid();
+    try {
+      await publish("Checking accounts", { v: 1, kind: "ping", id: pingId, ts: Date.now() });
+    } catch {
+      message.textContent = "Open Gizbit Network on the main phone, then try again.";
+      return;
+    }
+    const live = await waitForLiveLedger(before, 8000);
+    if (!live) {
+      message.textContent = "Open Gizbit Network on the main phone, then try again.";
+      return;
     }
     if (!matching(ph).length) {
-      message.textContent = ledger
-        ? "That password doesn't match an account."
-        : "Open Gizbit Network on the main phone, then try again.";
+      message.textContent = "That password doesn't match an account.";
       return;
     }
     sessionPh = ph;
@@ -388,15 +538,33 @@ async function login(password) {
     $("login").hidden = true;
     $("bank").hidden = false;
     $("logout").hidden = false;
+    showHome();
     resetExchange();
     renderBank();
-    pad.size();
     message.textContent = "";
   } catch {
     message.textContent = "This page needs a secure connection before it can check a password.";
   } finally {
     button.disabled = false;
   }
+}
+
+function chooseOp(op) {
+  if (chosenOp !== op) {
+    chosenAmount = "";
+    $("other-amount").value = "";
+    $("agree").checked = false;
+    photoTaken = false;
+    signed = false;
+    selfieToken += 1;
+  }
+  chosenOp = op;
+  $("type-slider").dataset.op = op;
+  $("amount-step").hidden = false;
+  $("amount-label").textContent = `How much do you wish to ${op === "withdraw" ? "withdraw" : "deposit"}?`;
+  $("move-msg").textContent = "";
+  renderPresets();
+  revealSteps();
 }
 
 function resetExchange() {
@@ -408,10 +576,13 @@ function resetExchange() {
   $("agree").checked = false;
   $("other-amount").value = "";
   $("move-msg").textContent = "";
-  $("pick-withdraw").classList.remove("is-on");
-  $("pick-deposit").classList.remove("is-on");
+  $("type-slider").dataset.op = "";
+  $("amount-step").hidden = true;
+  $("terms-step").hidden = true;
+  $("sign-block").hidden = true;
+  $("exchange").hidden = true;
   pad.setEnabled(false);
-  refreshExchange();
+  revealSteps();
 }
 
 async function takePhoto() {
@@ -422,7 +593,7 @@ async function takePhoto() {
     $("agree").checked = false;
     pad.setEnabled(false);
     message.textContent = "This phone cannot take a photo from the browser.";
-    refreshExchange();
+    revealSteps();
     return;
   }
   let stream = null;
@@ -454,7 +625,6 @@ async function takePhoto() {
     photoTaken = true;
     message.textContent = "";
     pad.setEnabled(true);
-    pad.size();
   } catch {
     if (token !== selfieToken) return;
     photoTaken = false;
@@ -463,7 +633,7 @@ async function takePhoto() {
     message.textContent = "Allow the front camera so a photo can be taken.";
   } finally {
     if (stream) stream.getTracks().forEach((track) => track.stop());
-    refreshExchange();
+    revealSteps();
   }
 }
 
@@ -484,39 +654,34 @@ async function exchange() {
     message.textContent = "That would make the balance too large.";
     return;
   }
+  if (!amountAllowed(amount)) {
+    message.textContent = rangeNote();
+    return;
+  }
   const id = uid();
-  const sentence = op === "withdraw"
-    ? `Withdraw ${formatAmount(amount)} ₲ from ${latest.name}.`
-    : `Deposit ${formatAmount(amount)} ₲ to ${latest.name}.`;
+  unlockSound();
+  pendingExchangeId = id;
   $("exchange").disabled = true;
   message.textContent = "Sending to the main phone…";
   try {
-    await publish(sentence, {
+    await publish(`Exchange pending from ${latest.name}`, {
       v: 1,
-      kind: "tx",
+      kind: "request",
       id,
       accountId: latest.id,
       op,
       amount,
       ph: sessionPh,
-      photo: true,
       ts: Date.now(),
     });
   } catch {
+    pendingExchangeId = "";
     message.textContent = "Couldn't reach the bank. Try again.";
-    refreshExchange();
+    revealSteps();
     return;
   }
-  const result = await waitFor(id, 12000);
-  if (result === "ok") {
-    resetExchange();
-    renderBank();
-    $("done").hidden = false;
-    return;
-  }
-  if (result === "reject") message.textContent = reasons.get(id) || "The main phone refused that.";
-  else message.textContent = "Sent. Open Gizbit Network on the main phone to finish it.";
-  refreshExchange();
+  message.textContent = "Sent. Waiting for the network to confirm.";
+  checkExchangeResult();
 }
 
 function bindPad() {
@@ -557,7 +722,7 @@ function bindPad() {
     ctx.lineTo(point.x, point.y);
     ctx.stroke();
     signed = true;
-    refreshExchange();
+    revealSteps();
   });
   canvas.addEventListener("pointerup", () => {
     drawing = false;
@@ -568,7 +733,7 @@ function bindPad() {
   clearBtn.addEventListener("click", () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     signed = false;
-    refreshExchange();
+    revealSteps();
   });
   return {
     size,
@@ -670,24 +835,24 @@ $("peek").addEventListener("click", () => {
 });
 $("logout").addEventListener("click", () => {
   sessionPh = "";
+  pendingExchangeId = "";
+  showHome();
   showLogin();
 });
-$("pick-withdraw").addEventListener("click", () => {
-  chosenOp = "withdraw";
-  $("pick-withdraw").classList.add("is-on");
-  $("pick-deposit").classList.remove("is-on");
-  refreshExchange();
+$("open-exchange").addEventListener("click", () => {
+  showExchangePage();
 });
-$("pick-deposit").addEventListener("click", () => {
-  chosenOp = "deposit";
-  $("pick-deposit").classList.add("is-on");
-  $("pick-withdraw").classList.remove("is-on");
-  refreshExchange();
+$("exchange-back").addEventListener("click", () => {
+  showHome();
 });
+$("pick-withdraw").addEventListener("click", () => chooseOp("withdraw"));
+$("pick-deposit").addEventListener("click", () => chooseOp("deposit"));
 $("other-amount").addEventListener("input", () => {
   chosenAmount = parseAmount($("other-amount").value) || "";
+  if ($("other-amount").value.trim() && !amountAllowed(chosenAmount)) $("move-msg").textContent = rangeNote();
+  else $("move-msg").textContent = "";
   renderPresets();
-  refreshExchange();
+  revealSteps();
 });
 $("account-pick").addEventListener("change", () => {
   accountId = $("account-pick").value;
@@ -698,7 +863,7 @@ $("agree").addEventListener("change", () => {
     photoTaken = false;
     selfieToken += 1;
     pad.setEnabled(false);
-    refreshExchange();
+    revealSteps();
     return;
   }
   takePhoto();

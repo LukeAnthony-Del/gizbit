@@ -2,14 +2,17 @@
 const TOPIC = "gizbit-net-m3p8k2w7q9n4";
 const STORAGE = "gizbit-accounts";
 const ACTIVITY = "gizbit-activity";
+const REQUESTS = "gizbit-requests";
 const SEEN = "gizbit-seen";
 const CURSOR = "gizbit-cursor";
 const MAX = 10n ** 18n;
 const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000000000", "1000000000000", "2000000000000"];
+const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
+const requests = loadList(REQUESTS);
 const seen = new Set(loadList(SEEN));
 let source = null;
 let streamOpen = false;
@@ -34,15 +37,18 @@ function loadState() {
 }
 
 function defaultSettings() {
-  return { presets: DEFAULT_PRESETS.slice(), terms: DEFAULT_TERMS };
+  return { presets: DEFAULT_PRESETS.slice(), terms: DEFAULT_TERMS, minAmount: DEFAULT_MIN, maxAmount: "" };
 }
 
 function normalizeSettings(value) {
   const presets = Array.isArray(value?.presets) ? value.presets.map((item) => moneyText(item)).filter(Boolean) : [];
   while (presets.length < 6) presets.push(DEFAULT_PRESETS[presets.length]);
+  const maxAmount = moneyText(value?.maxAmount, false);
   return {
     presets: presets.slice(0, 6),
     terms: String(value?.terms || DEFAULT_TERMS).slice(0, 800),
+    minAmount: moneyText(value?.minAmount, false) || DEFAULT_MIN,
+    maxAmount: maxAmount && maxAmount !== "0" ? maxAmount : "",
   };
 }
 
@@ -73,6 +79,10 @@ function saveAccounts() {
 
 function saveActivity() {
   localStorage.setItem(ACTIVITY, JSON.stringify(activity.slice(0, 40)));
+}
+
+function saveRequests() {
+  localStorage.setItem(REQUESTS, JSON.stringify(requests.slice(0, 40)));
 }
 
 function remember(id) {
@@ -158,12 +168,13 @@ function publish(sentence, payload) {
   return job;
 }
 
-function publishLedger(applied) {
+function publishLedger(applied, answered) {
   const payload = {
     v: 1,
     kind: "ledger",
     rev: state.rev,
     applied: applied || [],
+    answered: typeof answered === "string" ? answered : "",
     accounts: state.accounts.map((account) => ({
       id: account.id,
       name: account.name,
@@ -172,6 +183,16 @@ function publishLedger(applied) {
       ph: account.ph,
     })),
     settings: state.settings,
+    requests: requests.slice(0, 30).map((item) => ({
+      id: item.id,
+      accountId: item.accountId,
+      name: item.name,
+      op: item.op,
+      amount: item.amount,
+      status: item.status,
+      applied: item.applied || "",
+      ts: item.ts,
+    })),
     ts: Date.now(),
   };
   return publish("Balances updated", payload);
@@ -321,6 +342,7 @@ function render() {
   renderRows();
   renderAccounts();
   renderActivity();
+  renderRequests();
 }
 
 function showTab(name) {
@@ -371,7 +393,11 @@ function handleMessage(data, bucket) {
   if (body.kind === "ping") {
     if (!body.id || !body.ts || Date.now() - body.ts > 120000) return;
     if (!remember(`ping:${body.id}`)) return;
-    bucket.ping = true;
+    bucket.ping = body.id;
+    return;
+  }
+  if (body.kind === "request") {
+    if (takeRequest(body)) bucket.requests = true;
     return;
   }
   if (body.kind === "tx") {
@@ -425,8 +451,8 @@ async function catchUp() {
     }
   }
   const due = Date.now() - lastAnnounce > 15000;
-  if (!bucket.ping && !bucket.applied.length && !due) return;
-  await publishLedger(bucket.applied);
+  if (!bucket.ping && !bucket.applied.length && !bucket.requests && !due) return;
+  await publishLedger(bucket.applied, bucket.ping || "");
   lastAnnounce = Date.now();
   if (streamOpen) setStatus("Listening for the other phone");
 }
@@ -451,8 +477,8 @@ function listen() {
     }
     const bucket = { ping: false, applied: [] };
     handleMessage(data, bucket);
-    if (!bucket.ping && !bucket.applied.length) return;
-    publishLedger(bucket.applied)
+    if (!bucket.ping && !bucket.applied.length && !bucket.requests) return;
+    publishLedger(bucket.applied, bucket.ping || "")
       .then(() => {
         lastAnnounce = Date.now();
         if (streamOpen) setStatus("Listening for the other phone");
@@ -543,6 +569,211 @@ function markReviewed() {
   renderActivity();
 }
 
+function playSuccess() {
+  const audio = $("success-sound");
+  audio.currentTime = 0;
+  audio.play().catch(() => {});
+}
+
+function takeRequest(req) {
+  if (!req || !req.id || !remember(req.id)) return false;
+  const account = state.accounts.find((item) => item.id === req.accountId);
+  const amount = parseAmount(req.amount);
+  const op = req.op === "deposit" || req.op === "withdraw" ? req.op : "";
+  if (!account || !op || amount == null || req.ph !== account.ph) {
+    publishReject(req.id, account ? "The password did not match." : "That account was removed.");
+    return false;
+  }
+  requests.unshift({
+    id: req.id,
+    accountId: account.id,
+    name: account.name,
+    op,
+    amount,
+    status: "pending",
+    applied: "",
+    ts: Date.now(),
+  });
+  requests.splice(40);
+  saveRequests();
+  renderRequests();
+  notifyPending(requests[0]);
+  return true;
+}
+
+function notifyPending(item) {
+  if (!("Notification" in window) || Notification.permission !== "granted" || !navigator.serviceWorker) return;
+  const title = `Exchange pending from ${item.name}`;
+  navigator.serviceWorker.ready.then((reg) => {
+    reg.showNotification(title, {
+      body: `${item.op === "withdraw" ? "Withdrawal" : "Deposit"} of ${formatAmount(item.amount)} ₲`,
+      tag: item.id,
+      renotify: true,
+      data: { id: item.id },
+    });
+  }).catch(() => {});
+}
+
+function clearNotification(id) {
+  if (!navigator.serviceWorker) return;
+  navigator.serviceWorker.ready
+    .then((reg) => reg.getNotifications({ tag: id }))
+    .then((notes) => notes.forEach((note) => note.close()))
+    .catch(() => {});
+}
+
+function renderRequests() {
+  const list = $("request-list");
+  list.replaceChildren();
+  requests.forEach((item) => {
+    const li = document.createElement("li");
+    li.className = `request is-${item.status}`;
+    const time = document.createElement("time");
+    time.dateTime = new Date(item.ts).toISOString();
+    time.textContent = formatWhen(item.ts);
+    const verb = item.op === "withdraw" ? "Withdrawal" : "Deposit";
+    const line = document.createElement("span");
+    line.textContent = `${item.name} · ${verb} · ${formatAmount(item.amount)} ₲`;
+    li.append(time, line);
+    if (item.status === "denied") {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "Denied";
+      li.append(tag);
+    } else if (item.status === "part") {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = `Received ${formatAmount(item.applied)} ₲`;
+      li.append(tag);
+    }
+    if (item.status === "pending") {
+      li.addEventListener("click", () => openDecision(item.id));
+    }
+    list.append(li);
+  });
+  $("requests-empty").hidden = requests.length > 0;
+  const notify = $("notify-go");
+  notify.hidden = !("Notification" in window) || Notification.permission === "granted";
+}
+
+let decisionId = "";
+
+function openDecision(id) {
+  const item = requests.find((entry) => entry.id === id && entry.status === "pending");
+  if (!item) return;
+  decisionId = id;
+  const verb = item.op === "withdraw" ? "Withdrawal" : "Deposit";
+  $("decision-text").textContent = `${item.name} wants to ${item.op} ${formatAmount(item.amount)} ₲ (${formatFull(item.amount)}).`;
+  $("decision-title").textContent = verb;
+  $("decision-error").textContent = "";
+  $("part-amount").value = "";
+  $("part-wrap").hidden = true;
+  $("part-go").hidden = true;
+  const actions = $("decision-actions");
+  actions.replaceChildren();
+  const add = (label, className, status) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `btn ${className}`;
+    button.textContent = label;
+    button.addEventListener("click", () => {
+      if (status === "part") {
+        $("part-wrap").hidden = false;
+        $("part-go").hidden = false;
+        $("part-amount").focus();
+        return;
+      }
+      decide(status, item.amount);
+    });
+    actions.append(button);
+  };
+  if (item.op === "withdraw") add("Money disbursed", "green", "disbursed");
+  else {
+    add("Received money in whole", "green", "whole");
+    add("Did not receive money", "red", "denied");
+    add("Received money in part", "yellow", "part");
+  }
+  $("decision").hidden = false;
+}
+
+function closeDecision() {
+  decisionId = "";
+  $("decision").hidden = true;
+}
+
+function decide(status, appliedAmount) {
+  const item = requests.find((entry) => entry.id === decisionId && entry.status === "pending");
+  if (!item) return;
+  const error = $("decision-error");
+  error.textContent = "";
+  if (status === "denied") {
+    item.status = "denied";
+    item.applied = "";
+    saveRequests();
+    renderRequests();
+    clearNotification(item.id);
+    const done = item;
+    closeDecision();
+    publishDecision(done);
+    publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
+    return;
+  }
+  const account = state.accounts.find((entry) => entry.id === item.accountId);
+  const amount = parseAmount(appliedAmount);
+  if (!account || amount == null) {
+    error.textContent = "Enter how much you received.";
+    return;
+  }
+  if (status === "part" && BigInt(amount) > BigInt(item.amount)) {
+    error.textContent = "That is more than the exchange amount.";
+    return;
+  }
+  const next = item.op === "deposit" ? BigInt(account.bal) + BigInt(amount) : BigInt(account.bal) - BigInt(amount);
+  if (next < 0n) {
+    error.textContent = "Not enough gizbits in that account.";
+    return;
+  }
+  if (next > MAX) {
+    error.textContent = "That would make the balance too large.";
+    return;
+  }
+  account.bal = next.toString();
+  item.status = status;
+  item.applied = amount;
+  saveAccounts();
+  saveRequests();
+  render();
+  clearNotification(item.id);
+  if (status === "whole" || status === "disbursed") playSuccess();
+  const done = item;
+  closeDecision();
+  publishDecision(done);
+  publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
+}
+
+function publishDecision(item) {
+  const sentence = item.status === "denied"
+    ? `Exchange denied for ${item.name}`
+    : `Exchange confirmed for ${item.name}`;
+  return publish(sentence, {
+    v: 1,
+    kind: "decision",
+    id: item.id,
+    status: item.status,
+    applied: item.applied || "",
+    accountId: item.accountId,
+    ts: Date.now(),
+  }).catch(() => {});
+}
+
+function maybeOpenLinked() {
+  const params = new URLSearchParams(location.search);
+  if (params.get("tab") !== "requests") return;
+  showTab("requests");
+  const id = params.get("request");
+  if (id) openDecision(id);
+}
+
 function fillSettings() {
   const box = $("preset-fields");
   box.replaceChildren();
@@ -560,6 +791,8 @@ function fillSettings() {
     box.append(label);
   });
   $("terms-text").value = state.settings.terms;
+  $("min-amount").value = state.settings.minAmount;
+  $("max-amount").value = state.settings.maxAmount;
 }
 
 function bindViewport() {
@@ -686,6 +919,16 @@ $("confirm-yes").addEventListener("click", confirmDelete);
 $("confirm").addEventListener("click", (event) => {
   if (event.target === $("confirm")) closeConfirm();
 });
+$("decision-close").addEventListener("click", closeDecision);
+$("decision").addEventListener("click", (event) => {
+  if (event.target === $("decision")) closeDecision();
+});
+$("part-go").addEventListener("click", () => decide("part", $("part-amount").value));
+$("notify-go").addEventListener("click", async () => {
+  if (!("Notification" in window)) return;
+  await Notification.requestPermission();
+  renderRequests();
+});
 $("review-no").addEventListener("click", closeReview);
 $("review-yes").addEventListener("click", markReviewed);
 $("review").addEventListener("click", (event) => {
@@ -700,9 +943,26 @@ $("settings-form").addEventListener("submit", (event) => {
     error.textContent = "Each preset needs a whole number of gizbits.";
     return;
   }
+  const minAmount = parseAmount($("min-amount").value);
+  const maxText = $("max-amount").value.trim();
+  const maxAmount = maxText ? parseAmount(maxText) : "";
+  if (minAmount == null) {
+    error.textContent = "Enter a minimum amount.";
+    return;
+  }
+  if (maxText && maxAmount == null) {
+    error.textContent = "Enter a maximum amount, or leave it empty.";
+    return;
+  }
+  if (maxAmount && BigInt(maxAmount) < BigInt(minAmount)) {
+    error.textContent = "The maximum must be at least the minimum.";
+    return;
+  }
   state.settings = {
     presets,
     terms: $("terms-text").value.trim().slice(0, 800) || DEFAULT_TERMS,
+    minAmount,
+    maxAmount: maxAmount || "",
   };
   saveAccounts();
   fillSettings();
@@ -710,7 +970,10 @@ $("settings-form").addEventListener("submit", (event) => {
   publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
 });
 document.querySelectorAll(".tabs button").forEach((button) => {
-  button.addEventListener("click", () => showTab(button.dataset.tab));
+  button.addEventListener("click", () => {
+    if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().then(() => renderRequests());
+    showTab(button.dataset.tab);
+  });
 });
 
 bindViewport();
@@ -721,14 +984,23 @@ setupInstall();
 fillSettings();
 render();
 showTab("balances");
+maybeOpenLinked();
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js");
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if (event.data?.type !== "open-request") return;
+    showTab("requests");
+    openDecision(event.data.id);
+  });
 }
 
 catchUp()
   .catch(() => setStatus("Saved on this phone. The other phone connects when this one is online."))
-  .finally(listen);
+  .finally(() => {
+    maybeOpenLinked();
+    listen();
+  });
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {

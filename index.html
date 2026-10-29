@@ -59,6 +59,16 @@
           <ul id="activity" class="feed"></ul>
         </section>
 
+        <section id="requests" class="page" role="tabpanel" hidden>
+          <div class="page-head">
+            <h1>Terminal Requests</h1>
+          </div>
+          <hr />
+          <p id="requests-empty" class="empty">Exchanges from the terminal show up here.</p>
+          <ul id="request-list" class="feed"></ul>
+          <button type="button" id="notify-go" class="btn slim">Turn on notifications</button>
+        </section>
+
         <section id="settings" class="page" role="tabpanel" hidden>
           <div class="page-head">
             <h1>Settings</h1>
@@ -68,6 +78,15 @@
           <form id="settings-form" class="panel">
             <p class="field"><span>Preset amounts (₲)</span></p>
             <div id="preset-fields" class="preset-fields"></div>
+            <label class="field">
+              <span>Minimum amount (₲)</span>
+              <input id="min-amount" inputmode="numeric" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Maximum amount (₲)</span>
+              <input id="max-amount" inputmode="numeric" autocomplete="off" placeholder="Account balance" />
+            </label>
+            <p class="quiet">Leave the maximum empty to use the account balance.</p>
             <label class="field">
               <span>Terms and conditions</span>
               <textarea id="terms-text" rows="6" maxlength="800"></textarea>
@@ -96,6 +115,14 @@
             </svg>
           </span>
           <span>Exchanges</span>
+        </button>
+        <button type="button" role="tab" data-tab="requests" aria-selected="false">
+          <span class="tab-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22">
+              <path d="M4 6h16v10H7l-3 3V6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span>Requests</span>
         </button>
         <button type="button" role="tab" data-tab="settings" aria-selected="false">
           <span class="tab-mark" aria-hidden="true">
@@ -139,6 +166,21 @@
       </div>
     </div>
 
+    <div id="decision" class="sheet" hidden>
+      <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="decision-title">
+        <h2 id="decision-title">Exchange</h2>
+        <p id="decision-text"></p>
+        <div id="decision-actions" class="decision-actions"></div>
+        <label class="field" id="part-wrap" hidden>
+          <span>How much did you receive?</span>
+          <input id="part-amount" inputmode="numeric" autocomplete="off" />
+        </label>
+        <p id="decision-error" class="error" role="status"></p>
+        <button type="button" id="part-go" class="btn" hidden>Update balance</button>
+        <button type="button" id="decision-close" class="btn ghost">Cancel</button>
+      </div>
+    </div>
+
     <div id="review" class="sheet" hidden>
       <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="review-title">
         <h2 id="review-title">Review</h2>
@@ -148,6 +190,7 @@
       </div>
     </div>
 
+    <audio id="success-sound" src="success.mp3" preload="auto"></audio>
     <p id="toast" class="toast" role="status" hidden></p>
     <noscript>Gizbit Network needs JavaScript.</noscript>
     <script src="app.js"></script>

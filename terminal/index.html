@@ -56,36 +56,53 @@
         </section>
 
         <section id="bank" class="bank" hidden>
-          <h1 id="welcome">Welcome</h1>
-          <label class="field" id="account-pick-wrap" hidden>
-            <span>Account</span>
-            <select id="account-pick"></select>
-          </label>
-          <article class="panel account-panel">
-            <p id="who" class="who"></p>
-            <p id="balance" class="bal"></p>
-            <p id="balance-full" class="bal-full"></p>
-          </article>
-          <div class="choice" role="group" aria-label="Exchange type">
-            <button type="button" id="pick-withdraw" class="btn line">Withdrawal</button>
-            <button type="button" id="pick-deposit" class="btn line">Deposit</button>
+          <div class="stage" id="stage">
+            <div class="pane-home">
+              <h1 id="welcome">Welcome</h1>
+              <label class="field" id="account-pick-wrap" hidden>
+                <span>Account</span>
+                <select id="account-pick"></select>
+              </label>
+              <article class="panel account-panel">
+                <p class="who">Balance</p>
+                <p id="balance" class="bal"></p>
+                <p id="balance-full" class="bal-full"></p>
+              </article>
+              <button type="button" id="open-exchange" class="btn">Exchange</button>
+            </div>
+            <div class="pane-exchange" id="exchange-pane">
+              <button type="button" id="exchange-back" class="back">Back</button>
+              <h1>Exchange</h1>
+              <p class="field"><span>Select the exchange type</span></p>
+              <div class="type-slider" id="type-slider">
+                <span class="type-knob" aria-hidden="true"></span>
+                <button type="button" id="pick-withdraw">Withdrawal</button>
+                <button type="button" id="pick-deposit">Deposit</button>
+              </div>
+              <div id="amount-step" hidden>
+                <p class="field"><span id="amount-label">How much do you wish to withdraw?</span></p>
+                <p id="range-note" class="quiet"></p>
+                <div id="presets" class="presets"></div>
+                <label class="field">
+                  <span>Other</span>
+                  <input id="other-amount" inputmode="numeric" autocomplete="off" placeholder="Type an amount" />
+                </label>
+              </div>
+              <div id="terms-step" hidden>
+                <label class="agree">
+                  <input id="agree" type="checkbox" />
+                  <span>I agree to the <button type="button" id="terms-open" class="terms-link">terms and conditions</button></span>
+                </label>
+              </div>
+              <div id="sign-block" class="sign-block" hidden>
+                <p class="field"><span>Signature</span></p>
+                <canvas id="sign" class="pad"></canvas>
+                <button type="button" id="clear-sign" class="btn ghost slim">Clear</button>
+              </div>
+              <p id="move-msg" class="error" role="status"></p>
+              <button type="button" id="exchange" class="btn" hidden disabled>Exchange</button>
+            </div>
           </div>
-          <div id="presets" class="presets"></div>
-          <label class="field" id="other-wrap">
-            <span>Other</span>
-            <input id="other-amount" inputmode="numeric" autocomplete="off" placeholder="Type an amount" />
-          </label>
-          <label class="agree">
-            <input id="agree" type="checkbox" />
-            <span>I agree to the <button type="button" id="terms-open" class="terms-link">terms and conditions</button></span>
-          </label>
-          <div id="sign-block" class="sign-block is-locked">
-            <p class="field"><span>Signature</span></p>
-            <canvas id="sign" class="pad"></canvas>
-            <button type="button" id="clear-sign" class="btn ghost slim" disabled>Clear</button>
-          </div>
-          <p id="move-msg" class="error" role="status"></p>
-          <button type="button" id="exchange" class="btn" disabled>Exchange</button>
         </section>
       </main>
       <button type="button" id="logout" class="logout" hidden>Log out</button>
@@ -106,6 +123,7 @@
       </div>
     </div>
 
+    <audio id="success-sound" src="success.mp3" preload="auto"></audio>
     <p id="toast" class="toast" role="status" hidden></p>
     <noscript>Gizbit Terminal needs JavaScript.</noscript>
     <script src="app.js"></script>

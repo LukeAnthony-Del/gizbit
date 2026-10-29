@@ -308,9 +308,19 @@ textarea {
   resize: vertical;
 }
 .btn.danger { background: #8e3a3a; }
+.decision-actions { display: grid; gap: 8px; }
+.btn.green { background: #1f7a45; }
+.btn.red { background: #a33b3b; }
+.btn.yellow { background: #e0b000; color: #1b2c3a; }
+.request { cursor: default; }
+.request.is-pending { background: #f6e7c1; border-color: #c4a15a; cursor: pointer; }
+.request.is-denied { background: #e6e8eb; color: #5d7082; }
+.request.is-whole, .request.is-disbursed { background: #e7f6ec; }
+.request.is-part { background: #fff6d8; }
+.request .tag { display: block; margin-top: 6px; font-weight: 800; }
 .tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(4, 1fr);
   background: #fff;
   border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);
@@ -320,7 +330,7 @@ textarea {
   background: #fff;
   color: var(--muted);
   font-weight: 700;
-  font-size: 12px;
+  font-size: 11px;
   min-height: 62px;
   padding: 8px 4px 10px;
   display: grid;

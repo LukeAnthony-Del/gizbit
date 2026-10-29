@@ -1,4 +1,4 @@
-const CACHE = "gizbit-terminal-v3";
+const CACHE = "gizbit-terminal-v4";
 const ASSETS = [
   "./",
   "index.html",
@@ -8,6 +8,7 @@ const ASSETS = [
   "icon-192.png",
   "icon-512.png",
   "apple-touch-icon.png",
+  "success.mp3",
 ];
 
 self.addEventListener("install", (event) => {
