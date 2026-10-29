@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#1f4d76" />
+    <meta name="description" content="Sign in to Gizbit Network and send a deposit or withdrawal to the main phone." />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Gizbit Terminal" />
+    <title>Gizbit Terminal</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icon-192.png" type="image/png" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <img class="mark" src="icon-192.png" alt="" />
+        <div class="brand-block">
+          <p class="brand">Gizbit Terminal</p>
+          <p class="sub" id="link-status" role="status">Looking for the main phone…</p>
+        </div>
+      </header>
+
+      <main id="main">
+        <section id="login" class="login">
+          <img class="hero" src="icon-512.png" alt="" />
+          <h1>Gizbit Network</h1>
+          <p class="lead">Enter the password for an account on the main phone.</p>
+          <form id="login-form" class="panel">
+            <label class="field">
+              <span>Password</span>
+              <input id="password" type="password" maxlength="100" autocomplete="current-password" required />
+            </label>
+            <button type="submit" class="btn" id="login-go">Login</button>
+            <p id="login-msg" class="error" role="status"></p>
+          </form>
+          <div class="hint" id="install-hint">
+            <p>Install this page on the other phone. Withdrawals and deposits are sent to Gizbit Network, which updates the balance.</p>
+            <button type="button" id="install-go" class="btn slim" hidden>Install</button>
+          </div>
+        </section>
+
+        <section id="bank" class="bank" hidden>
+          <div class="page-head">
+            <h1>Accounts</h1>
+            <button type="button" id="logout" class="chip">Log out</button>
+          </div>
+          <hr />
+          <div id="cards" class="cards"></div>
+        </section>
+      </main>
+    </div>
+    <p id="toast" class="toast" role="status" hidden></p>
+    <noscript>Gizbit Terminal needs JavaScript.</noscript>
+    <script src="app.js"></script>
+  </body>
+</html>

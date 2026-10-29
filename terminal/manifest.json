@@ -1,0 +1,25 @@
+{
+  "id": "./",
+  "name": "Gizbit Terminal",
+  "short_name": "Gizbit Terminal",
+  "description": "Sign in and move gizbits on the main phone",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1f4d76",
+  "theme_color": "#1f4d76",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
