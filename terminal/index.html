@@ -42,7 +42,7 @@
               <span>Password</span>
               <span class="pass-wrap">
                 <input id="password" type="password" maxlength="100" autocomplete="current-password" required />
-                <button type="button" id="peek" class="peek" aria-label="Show password">
+                <button type="button" id="peek" class="peek" tabindex="-1" aria-label="Show password">
                   <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
                     <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2"/>
                     <circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/>
@@ -83,8 +83,8 @@
                 <p class="field"><span id="amount-label">How much do you wish to withdraw?</span></p>
                 <p id="range-note" class="quiet"></p>
                 <div id="presets" class="presets"></div>
-                <label class="field">
-                  <span>Other</span>
+                <label class="field" id="other-field">
+                  <span id="other-label">Other</span>
                   <input id="other-amount" inputmode="numeric" autocomplete="off" placeholder="Type an amount" />
                 </label>
               </div>

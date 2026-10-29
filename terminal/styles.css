@@ -277,7 +277,7 @@ input, select {
   min-height: 48px;
   padding: 12px 14px;
 }
-#login-go { scroll-margin-bottom: 16px; }
+#login-go, #other-amount { scroll-margin-bottom: 20px; }
 .btn.silver { background: var(--silver); color: var(--navy-deep); }
 .btn.line {
   background: transparent;

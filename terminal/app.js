@@ -103,9 +103,12 @@ function formatAmount(value) {
   const scales = [[10n ** 12n, "Trillion"], [10n ** 9n, "Billion"], [10n ** 6n, "Million"]];
   for (const [unit, label] of scales) {
     if (amount < unit) continue;
-    if (amount % unit === 0n) return `${formatFull(amount / unit)} ${label}`;
-    const tenths = (amount * 10n) / unit;
-    return `${tenths / 10n}.${tenths % 10n} ${label}`;
+    const scaled = (amount * 1000n) / unit;
+    const whole = scaled / 1000n;
+    const frac = scaled % 1000n;
+    if (frac === 0n) return `${formatFull(whole)} ${label}`;
+    const decimals = frac.toString().padStart(3, "0").replace(/0+$/, "");
+    return `${formatFull(whole)}.${decimals} ${label}`;
   }
   return formatFull(amount);
 }
@@ -326,12 +329,11 @@ function waitLedger(ms) {
   });
 }
 
+const AMOUNT_STEP = 50000000000n;
 let accountId = "";
 let chosenOp = "";
 let chosenAmount = "";
-let photoTaken = false;
 let signed = false;
-let selfieToken = 0;
 
 function showLogin() {
   $("login").hidden = false;
@@ -385,8 +387,13 @@ function limits() {
   return { min, max: configured == null ? MAX : configured };
 }
 
-function amountAllowed(amount) {
+function onAmountStep(amount) {
   if (!amount) return false;
+  return BigInt(amount) % AMOUNT_STEP === 0n;
+}
+
+function amountAllowed(amount) {
+  if (!amount || !onAmountStep(amount)) return false;
   const value = BigInt(amount);
   const { min, max } = limits();
   return max >= min && value >= min && value <= max;
@@ -432,10 +439,12 @@ function renderBank() {
 
 function showHome() {
   $("stage").classList.remove("is-exchange");
+  if (sessionPh) $("logout").hidden = false;
 }
 
 function showExchangePage() {
   $("stage").classList.add("is-exchange");
+  $("logout").hidden = true;
   $("exchange-pane").scrollTop = 0;
 }
 
@@ -444,7 +453,7 @@ function revealSteps() {
   if (note) note.textContent = chosenOp ? rangeNote() : "";
   const valid = Boolean(chosenOp && amountAllowed(chosenAmount));
   $("terms-step").hidden = !valid;
-  const showSign = valid && $("agree").checked && photoTaken;
+  const showSign = valid && $("agree").checked;
   $("sign-block").hidden = !showSign;
   $("exchange").hidden = !showSign;
   if (showSign) {
@@ -487,27 +496,40 @@ function loadSound() {
   return soundLoading;
 }
 
-function playSuccess() {
+function playBuffer() {
   const ctx = audioContext();
-  if (ctx && ctx.state === "suspended") ctx.resume();
-  if (ctx && soundBuffer) {
-    const src = ctx.createBufferSource();
-    src.buffer = soundBuffer;
-    src.connect(ctx.destination);
-    src.start(0);
-    return;
-  }
+  if (!ctx || !soundBuffer) return;
+  if (ctx.state === "suspended") ctx.resume();
+  const src = ctx.createBufferSource();
+  src.buffer = soundBuffer;
+  src.connect(ctx.destination);
+  src.start(0);
+}
+
+function playSuccess() {
   const audio = $("success-sound");
   audio.muted = false;
   audio.volume = 1;
-  audio.currentTime = 0;
-  audio.play().catch(() => {});
+  try { audio.currentTime = 0; } catch { /* The file may still be loading. */ }
+  const played = audio.play();
+  if (played) played.catch(() => playBuffer());
+  else playBuffer();
 }
 
 function unlockSound() {
+  const audio = $("success-sound");
   const ctx = audioContext();
   if (ctx && ctx.state === "suspended") ctx.resume();
   loadSound();
+  audio.muted = false;
+  audio.volume = 0.01;
+  const played = audio.play();
+  if (!played) return;
+  played.then(() => {
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = 1;
+  }).catch(() => {});
 }
 
 function waitForLiveLedger(before, ms) {
@@ -599,14 +621,14 @@ function chooseOp(op) {
     chosenAmount = "";
     $("other-amount").value = "";
     $("agree").checked = false;
-    photoTaken = false;
     signed = false;
-    selfieToken += 1;
   }
   chosenOp = op;
   $("type-slider").dataset.op = op;
   $("amount-step").hidden = false;
   $("amount-label").textContent = `How much do you wish to ${op === "withdraw" ? "withdraw" : "deposit"}?`;
+  $("presets").hidden = op !== "withdraw";
+  $("other-label").textContent = op === "deposit" ? "Amount" : "Other";
   $("move-msg").textContent = "";
   renderPresets();
   revealSteps();
@@ -615,71 +637,19 @@ function chooseOp(op) {
 function resetExchange() {
   chosenOp = "";
   chosenAmount = "";
-  photoTaken = false;
   signed = false;
-  selfieToken += 1;
   $("agree").checked = false;
   $("other-amount").value = "";
   $("move-msg").textContent = "";
   $("type-slider").dataset.op = "";
   $("amount-step").hidden = true;
+  $("presets").hidden = false;
+  $("other-label").textContent = "Other";
   $("terms-step").hidden = true;
   $("sign-block").hidden = true;
   $("exchange").hidden = true;
   pad.setEnabled(false);
   revealSteps();
-}
-
-async function takePhoto() {
-  const token = ++selfieToken;
-  photoTaken = false;
-  const message = $("move-msg");
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    $("agree").checked = false;
-    pad.setEnabled(false);
-    message.textContent = "This phone cannot take a photo from the browser.";
-    revealSteps();
-    return;
-  }
-  let stream = null;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { facingMode: { ideal: "user" }, width: { ideal: 480 }, height: { ideal: 640 } },
-    });
-    if (token !== selfieToken) return;
-    const video = document.createElement("video");
-    video.setAttribute("playsinline", "");
-    video.muted = true;
-    video.srcObject = stream;
-    await video.play();
-    if (video.readyState < 2) {
-      await new Promise((resolve) => video.addEventListener("loadeddata", resolve, { once: true }));
-    }
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    if (token !== selfieToken || !$("agree").checked) return;
-    const width = 320;
-    const ratio = video.videoWidth ? video.videoHeight / video.videoWidth : 1.25;
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = Math.max(1, Math.round(width * ratio));
-    const ctx = canvas.getContext("2d");
-    ctx.translate(width, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    photoTaken = true;
-    message.textContent = "";
-    pad.setEnabled(true);
-  } catch {
-    if (token !== selfieToken) return;
-    photoTaken = false;
-    $("agree").checked = false;
-    pad.setEnabled(false);
-    message.textContent = "Allow the front camera so a photo can be taken.";
-  } finally {
-    if (stream) stream.getTracks().forEach((track) => track.stop());
-    revealSteps();
-  }
 }
 
 async function exchange() {
@@ -688,7 +658,7 @@ async function exchange() {
   const account = currentAccount();
   const amount = chosenAmount;
   const op = chosenOp;
-  if (!account || !op || !amount || !$("agree").checked || !photoTaken || !signed) return;
+  if (!account || !op || !amount || !$("agree").checked || !signed) return;
   const latest = matching(sessionPh).find((item) => item.id === account.id) || account;
   const next = op === "deposit" ? BigInt(latest.bal) + BigInt(amount) : BigInt(latest.bal) - BigInt(amount);
   if (next < 0n) {
@@ -804,6 +774,8 @@ function bindViewport() {
     document.documentElement.style.setProperty("--vvtop", `${top}px`);
     requestAnimationFrame(() => {
       if (!$("login").hidden) $("login-go").scrollIntoView({ block: "end" });
+      liftAmount();
+      setTimeout(liftAmount, 80);
     });
   };
   apply();
@@ -870,12 +842,22 @@ $("password").addEventListener("focus", () => {
   setTimeout(() => $("login-go").scrollIntoView({ block: "end" }), 50);
 });
 let peekTimer = 0;
+$("peek").addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+});
 $("peek").addEventListener("click", () => {
   const input = $("password");
+  const start = input.selectionStart;
+  const end = input.selectionEnd;
   input.type = "text";
+  input.focus();
+  if (start != null && end != null) input.setSelectionRange(start, end);
   clearTimeout(peekTimer);
   peekTimer = setTimeout(() => {
+    const caret = input.selectionStart;
     input.type = "password";
+    input.focus();
+    if (caret != null) input.setSelectionRange(caret, caret);
   }, 1000);
 });
 $("logout").addEventListener("click", () => {
@@ -892,26 +874,60 @@ $("exchange-back").addEventListener("click", () => {
 });
 $("pick-withdraw").addEventListener("click", () => chooseOp("withdraw"));
 $("pick-deposit").addEventListener("click", () => chooseOp("deposit"));
+function formatTyping(value) {
+  const digits = String(value || "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function liftAmount() {
+  const field = $("other-amount");
+  const pane = $("exchange-pane");
+  if (!$("bank") || $("bank").hidden || $("amount-step").hidden) return;
+  if (document.activeElement !== field) return;
+  const paneRect = pane.getBoundingClientRect();
+  const fieldRect = field.getBoundingClientRect();
+  const overflow = fieldRect.bottom - (paneRect.bottom - 20);
+  if (overflow > 0) pane.scrollTop += overflow;
+}
+
+$("other-amount").addEventListener("focus", () => {
+  setTimeout(liftAmount, 50);
+});
 $("other-amount").addEventListener("input", () => {
-  chosenAmount = parseAmount($("other-amount").value) || "";
-  if ($("other-amount").value.trim() && !amountAllowed(chosenAmount)) $("move-msg").textContent = rangeNote();
+  const input = $("other-amount");
+  const caret = input.selectionStart || 0;
+  const digitsBefore = input.value.slice(0, caret).replace(/\D/g, "").length;
+  const formatted = formatTyping(input.value);
+  input.value = formatted;
+  let seen = 0;
+  let pos = formatted.length;
+  if (!digitsBefore) pos = 0;
+  else {
+    for (let i = 0; i < formatted.length; i += 1) {
+      if (/\d/.test(formatted[i])) seen += 1;
+      if (seen >= digitsBefore) {
+        pos = i + 1;
+        break;
+      }
+    }
+  }
+  input.setSelectionRange(pos, pos);
+  const digits = formatted.replace(/\D/g, "");
+  chosenAmount = parseAmount(digits) || "";
+  if (digits && !onAmountStep(digits)) $("move-msg").textContent = "Use a multiple of 50 billion.";
+  else if (digits && !amountAllowed(chosenAmount)) $("move-msg").textContent = rangeNote();
   else $("move-msg").textContent = "";
   renderPresets();
   revealSteps();
+  liftAmount();
 });
 $("account-pick").addEventListener("change", () => {
   accountId = $("account-pick").value;
   paintAccount();
 });
 $("agree").addEventListener("change", () => {
-  if (!$("agree").checked) {
-    photoTaken = false;
-    selfieToken += 1;
-    pad.setEnabled(false);
-    revealSteps();
-    return;
-  }
-  takePhoto();
+  if (!$("agree").checked) pad.setEnabled(false);
+  revealSteps();
 });
 $("terms-open").addEventListener("click", (event) => {
   event.preventDefault();
