@@ -138,6 +138,9 @@ main {
 }
 .back {
   justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: 0;
   background: none;
   color: var(--navy);
