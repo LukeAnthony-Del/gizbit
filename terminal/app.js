@@ -8,11 +8,15 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "1.01.000";
+const VERSION = "1.02.000";
+const DEVICE_KEY = "gizbit-terminal-device";
+const NAME_KEY = "gizbit-terminal-name";
+const TRUST = "gizbit-terminal-trust";
 
 let ledger = loadLedger();
 let sessionPh = "";
 let liveThisSession = false;
+let trustedDevice = localStorage.getItem(TRUST) || "";
 let source = null;
 let lastPing = 0;
 let toastTimer = 0;
@@ -73,6 +77,23 @@ function activeSettings() {
 
 function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+}
+
+function deviceId() {
+  let id = localStorage.getItem(DEVICE_KEY);
+  if (!id) {
+    id = uid();
+    localStorage.setItem(DEVICE_KEY, id);
+  }
+  return id;
+}
+
+function phoneName() {
+  return (localStorage.getItem(NAME_KEY) || "Terminal").trim().slice(0, 40) || "Terminal";
+}
+
+function publishHello() {
+  return publish("Phone ready", { v: 1, kind: "hello", from: deviceId(), name: phoneName(), ts: Date.now() });
 }
 
 async function sha256(text) {
@@ -182,7 +203,7 @@ function publishPing() {
   const now = Date.now();
   if (now - lastPing < 5000) return Promise.resolve();
   lastPing = now;
-  return publish("Checking accounts", { v: 1, kind: "ping", id: uid(), ts: now });
+  return publish("Checking accounts", { v: 1, kind: "ping", id: uid(), from: deviceId(), name: phoneName(), ts: now });
 }
 
 function setStatus(text) {
@@ -200,9 +221,11 @@ function toast(text) {
 }
 
 function refreshStatus() {
-  if (!ledger) setStatus("Looking for the main phone…");
-  else if (Date.now() - ledger.ts < 20000) setStatus("Connected to the main phone");
-  else setStatus("Showing the last balances from the main phone");
+  const who = ledger?.deviceName;
+  if (!trustedDevice) setStatus("Choose this phone in Gizbit Network settings");
+  else if (!ledger) setStatus(who ? `Looking for ${who}…` : "Looking for the main phone…");
+  else if (Date.now() - ledger.ts < 20000) setStatus(who ? `Connected to ${who}` : "Connected to the main phone");
+  else setStatus(who ? `Last balances from ${who}` : "Showing the last balances from the main phone");
 }
 
 function matching(ph) {
@@ -211,12 +234,22 @@ function matching(ph) {
 
 function acceptLedger(body) {
   if (!body || !Array.isArray(body.accounts)) return;
+  const device = typeof body.device === "string" ? body.device : "";
+  const claiming = !trustedDevice && body.pair === deviceId() && Boolean(device);
+  if (trustedDevice && device !== trustedDevice) return;
+  if (!trustedDevice && !claiming) return;
   const ts = Number(body.ts) || 0;
-  if (ledger && ts && ledger.ts && ts < ledger.ts) return;
+  if (!claiming && ledger && ts && ledger.ts && ts < ledger.ts) return;
+  if (claiming) {
+    trustedDevice = device;
+    localStorage.setItem(TRUST, device);
+  }
   ledger = {
     rev: Number.isInteger(body.rev) ? body.rev : (ledger?.rev || 0),
     ts: body.ts || Date.now(),
     answered: body.answered || ledger?.answered || "",
+    device,
+    deviceName: typeof body.deviceName === "string" ? body.deviceName.slice(0, 40) : (ledger?.deviceName || ""),
     accounts: body.accounts.map(sanitize).filter(Boolean),
     settings: normalizeSettings(body.settings),
     requests: Array.isArray(body.requests) ? body.requests : (ledger?.requests || []),
@@ -276,6 +309,7 @@ function handleMessage(data) {
   const body = decode(data.message);
   if (!body || body.v !== 1) return;
   if (body.kind === "ledger") acceptLedger(body);
+  if (trustedDevice && body.device && body.device !== trustedDevice) return;
   if (body.kind === "decision") finishExchange(body.id, body.status);
   if (body.kind === "reject" && body.id) {
     reasons.set(body.id, body.reason || "The main phone refused that.");
@@ -608,7 +642,9 @@ async function login(password) {
     }
     const live = await waitForLiveLedger(before, 12000);
     if (!live && !(liveThisSession && matching(ph).length)) {
-      message.textContent = "Open Gizbit Network on the main phone, then try again.";
+      message.textContent = trustedDevice
+        ? "Open Gizbit Network on the main phone, then try again."
+        : "On the main phone, open Settings and choose this phone.";
       return;
     }
     if (!matching(ph).length) {
@@ -708,6 +744,7 @@ async function exchange() {
       op,
       amount,
       ph: sessionPh,
+      from: deviceId(),
       ts: Date.now(),
     });
   } catch {
@@ -986,14 +1023,26 @@ refreshStatus();
 document.querySelectorAll(".ver").forEach((node) => {
   node.textContent = VERSION;
 });
+document.querySelectorAll("[data-phone-name]").forEach((input) => {
+  input.value = localStorage.getItem(NAME_KEY) || "";
+  input.addEventListener("change", () => {
+    const name = input.value.trim().slice(0, 40);
+    localStorage.setItem(NAME_KEY, name);
+    document.querySelectorAll("[data-phone-name]").forEach((other) => {
+      other.value = name;
+    });
+    publishHello().catch(() => {});
+  });
+});
 showLogin();
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js");
 }
 
-catchUp().catch(() => setStatus("Looking for the main phone…")).finally(() => {
+catchUp().catch(() => refreshStatus()).finally(() => {
   listen();
+  publishHello().catch(() => {});
   publishPing().catch(() => {});
 });
 

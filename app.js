@@ -11,7 +11,11 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "1.01.000";
+const VERSION = "1.02.000";
+const DEVICE_KEY = "gizbit-network-device";
+const NAME_KEY = "gizbit-network-name";
+const PAIR_KEY = "gizbit-network-pair";
+const PHONES = "gizbit-phones";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -98,6 +102,69 @@ function remember(id) {
 
 function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+}
+
+function deviceId() {
+  let id = localStorage.getItem(DEVICE_KEY);
+  if (!id) {
+    id = uid();
+    localStorage.setItem(DEVICE_KEY, id);
+  }
+  return id;
+}
+
+function phoneName() {
+  return (localStorage.getItem(NAME_KEY) || "This phone").trim().slice(0, 40) || "This phone";
+}
+
+function pairedTerminal() {
+  return localStorage.getItem(PAIR_KEY) || "";
+}
+
+function loadPhones() {
+  try {
+    const data = JSON.parse(localStorage.getItem(PHONES) || "[]");
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberPhone(id, name) {
+  const cleanId = String(id || "").trim();
+  const cleanName = String(name || "").trim().slice(0, 40);
+  if (!cleanId || !cleanName) return;
+  const now = Date.now();
+  const list = loadPhones().filter((item) => item.id !== cleanId && now - Number(item.ts) < 7 * 86400000);
+  list.unshift({ id: cleanId, name: cleanName, ts: now });
+  localStorage.setItem(PHONES, JSON.stringify(list.slice(0, 12)));
+  renderPairList();
+}
+
+let renderingPairs = false;
+
+function renderPairList() {
+  const select = $("pair-phone");
+  if (!select) return;
+  renderingPairs = true;
+  const current = pairedTerminal();
+  const phones = loadPhones();
+  const counts = new Map();
+  phones.forEach((item) => counts.set(item.name, (counts.get(item.name) || 0) + 1));
+  select.replaceChildren();
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = phones.length ? "Choose a phone" : "Open the terminal to see its name";
+  select.append(blank);
+  phones.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.id;
+    const short = item.id.replace(/-/g, "").slice(0, 4);
+    option.textContent = counts.get(item.name) > 1 ? `${item.name} · ${short}` : item.name;
+    select.append(option);
+  });
+  if ([...select.options].some((option) => option.value === current)) select.value = current;
+  renderingPairs = false;
 }
 
 async function sha256(text) {
@@ -197,6 +264,9 @@ function publishLedger(applied, answered) {
       applied: item.applied || "",
       ts: item.ts,
     })),
+    device: deviceId(),
+    deviceName: phoneName(),
+    pair: pairedTerminal(),
     ts: Date.now(),
   };
   return publish("Balances updated", payload);
@@ -394,6 +464,8 @@ function handleMessage(data, bucket) {
   if (data.event && data.event !== "message") return;
   const body = decode(data.message);
   if (!body || body.v !== 1) return;
+  if (body.from && body.name) rememberPhone(body.from, body.name);
+  if (body.kind === "hello") return;
   if (body.kind === "ping") {
     if (!state.accounts.length) return;
     if (!body.id || !body.ts || Date.now() - body.ts > 120000) return;
@@ -586,6 +658,11 @@ function playSuccess() {
 
 function takeRequest(req) {
   if (!req || !req.id || !remember(req.id)) return false;
+  const pair = pairedTerminal();
+  if (pair && req.from !== pair) {
+    publishReject(req.id, "This network phone is connected to a different terminal.");
+    return false;
+  }
   const account = state.accounts.find((item) => item.id === req.accountId);
   const amount = parseAmount(req.amount);
   const op = req.op === "deposit" || req.op === "withdraw" ? req.op : "";
@@ -771,6 +848,7 @@ function publishDecision(item) {
     status: item.status,
     applied: item.applied || "",
     accountId: item.accountId,
+    device: deviceId(),
     ts: Date.now(),
   }).catch(() => {});
 }
@@ -943,6 +1021,23 @@ $("review-yes").addEventListener("click", markReviewed);
 $("review").addEventListener("click", (event) => {
   if (event.target === $("review")) closeReview();
 });
+$("phone-name").addEventListener("change", () => {
+  const name = $("phone-name").value.trim().slice(0, 40);
+  localStorage.setItem(NAME_KEY, name);
+  $("phone-name").value = name;
+  if (!state.accounts.length) return;
+  publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
+});
+$("pair-phone").addEventListener("change", () => {
+  if (renderingPairs) return;
+  const next = $("pair-phone").value;
+  if (next === pairedTerminal()) return;
+  localStorage.setItem(PAIR_KEY, next);
+  const label = next ? ($("pair-phone").selectedOptions[0]?.textContent || "that phone") : "";
+  toast(next ? `Connected to ${label}` : "Choose a phone");
+  if (!state.accounts.length) return;
+  publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
+});
 $("sync-go").addEventListener("click", async () => {
   const button = $("sync-go");
   button.disabled = true;
@@ -1007,6 +1102,8 @@ stopOverscroll(document.querySelector(".sheet-card"));
 lockGestures();
 setupInstall();
 fillSettings();
+$("phone-name").value = localStorage.getItem(NAME_KEY) || "";
+renderPairList();
 $("app-version").textContent = VERSION;
 render();
 showTab("balances");

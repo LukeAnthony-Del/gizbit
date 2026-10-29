@@ -76,6 +76,17 @@
           </div>
           <hr />
           <p id="link-status" class="empty" role="status">Connecting…</p>
+          <div class="panel">
+            <label class="field">
+              <span>Name of this phone</span>
+              <input id="phone-name" maxlength="40" autocomplete="off" placeholder="Main phone" />
+            </label>
+            <label class="field">
+              <span>Connected phone</span>
+              <select id="pair-phone"></select>
+            </label>
+            <p class="quiet">Open the terminal so its name appears, then choose it. A computer that also has Gizbit Network open will not replace that phone.</p>
+          </div>
           <form id="settings-form" class="panel">
             <p class="field"><span>Preset amounts (₲)</span></p>
             <div id="preset-fields" class="preset-fields"></div>

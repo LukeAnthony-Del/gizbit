@@ -39,6 +39,10 @@
           </div>
           <form id="login-form" class="panel">
             <label class="field">
+              <span>This phone</span>
+              <input id="phone-name" data-phone-name maxlength="40" autocomplete="off" placeholder="Name this phone" />
+            </label>
+            <label class="field">
               <span>Password</span>
               <span class="pass-wrap">
                 <input id="password" type="password" maxlength="100" autocomplete="current-password" required />
@@ -59,6 +63,10 @@
           <div class="stage" id="stage">
             <div class="pane-home">
               <h1 id="welcome">Welcome</h1>
+              <label class="field">
+                <span>This phone</span>
+                <input id="phone-name-home" data-phone-name maxlength="40" autocomplete="off" placeholder="Name this phone" />
+              </label>
               <label class="field" id="account-pick-wrap" hidden>
                 <span>Account</span>
                 <select id="account-pick"></select>
