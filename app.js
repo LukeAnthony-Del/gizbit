@@ -9,9 +9,10 @@ const CURSOR = "gizbit-cursor";
 const MAX = 10n ** 18n;
 const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000000000", "1000000000000", "2000000000000"];
 const DEFAULT_MIN = "50000000000";
+const DEFAULT_EURO = "5000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.07.002";
+const VERSION = "2.08.002";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -41,7 +42,7 @@ function loadState() {
 }
 
 function defaultSettings() {
-  return { presets: DEFAULT_PRESETS.slice(), terms: DEFAULT_TERMS, minAmount: DEFAULT_MIN, maxAmount: "" };
+  return { presets: DEFAULT_PRESETS.slice(), terms: DEFAULT_TERMS, minAmount: DEFAULT_MIN, maxAmount: "", euroRate: DEFAULT_EURO };
 }
 
 function normalizeSettings(value) {
@@ -53,6 +54,7 @@ function normalizeSettings(value) {
     terms: String(value?.terms || DEFAULT_TERMS).slice(0, 800),
     minAmount: moneyText(value?.minAmount, false) || DEFAULT_MIN,
     maxAmount: maxAmount && maxAmount !== "0" ? maxAmount : "",
+    euroRate: moneyText(value?.euroRate, false) || DEFAULT_EURO,
   };
 }
 
@@ -268,8 +270,6 @@ function signMarkup() {
   return `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M14.6 3.6l5.8 5.8-1.15 1.15-5.8-5.8L14.6 3.6z" fill="currentColor"/><path d="M12.9 6.4l4.7 4.7-6.55 6.55-.55.15-2.35.62a.7.7 0 0 1-.85-.85l.62-2.35.15-.55L12.9 6.4z" fill="currentColor"/><path d="M3.2 18.2c1.5-2.15 2.55-3.05 3.85-1.75 1.15 1.15 1.7 2.35 3.05.85 1.2-1.35 2.05-3.55 3.45-2.35" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M16.2 5.2l2.6 2.6" fill="none" stroke="#fff" stroke-width="1.1" stroke-linecap="round"/></svg>`;
 }
 
-let logView = "exchanges";
-
 function cleanSign(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 8).map((stroke) => {
@@ -326,8 +326,7 @@ function isTransfer(item) {
 function renderActivity() {
   const list = $("activity");
   list.replaceChildren();
-  const transfers = logView === "transfers";
-  const done = requests.filter((item) => item.status && item.status !== "pending" && (transfers ? isTransfer(item) : !isTransfer(item)));
+  const done = requests.filter((item) => item.status && item.status !== "pending");
   done.forEach((item) => {
     const swipe = document.createElement("li");
     swipe.className = "swipe log-swipe";
@@ -377,7 +376,7 @@ function renderActivity() {
     list.append(swipe);
   });
   const empty = $("activity-empty");
-  empty.textContent = transfers ? "Transfers between accounts show up here." : "Reviewed exchanges show up here.";
+  empty.textContent = "Reviewed exchanges and transfers show up here.";
   empty.hidden = done.length > 0;
 }
 
@@ -429,7 +428,14 @@ function bindReveal(row, openRight, openLeft) {
 function renderRows() {
   const body = $("rows");
   body.replaceChildren();
-  state.accounts.forEach((account) => {
+  const ranked = state.accounts.slice().sort((a, b) => {
+    const left = BigInt(b.bal);
+    const right = BigInt(a.bal);
+    if (left > right) return 1;
+    if (left < right) return -1;
+    return a.name.localeCompare(b.name);
+  });
+  ranked.forEach((account) => {
     const swipe = document.createElement("div");
     swipe.className = "swipe";
     const actions = document.createElement("div");
@@ -452,6 +458,7 @@ function renderRows() {
     const name = document.createElement("span");
     name.textContent = account.name;
     const type = document.createElement("span");
+    type.className = "acct-type";
     type.textContent = account.type;
     const short = document.createElement("span");
     short.className = "bal-short";
@@ -1038,6 +1045,7 @@ function fillSettings() {
   $("terms-text").value = state.settings.terms;
   $("min-amount").value = state.settings.minAmount;
   $("max-amount").value = state.settings.maxAmount;
+  $("euro-rate").value = state.settings.euroRate;
 }
 
 function bindViewport() {
@@ -1120,13 +1128,6 @@ function setupInstall() {
   });
 }
 
-function showLog(name) {
-  logView = name;
-  $("log-slider").dataset.log = name;
-  renderActivity();
-}
-$("show-exchanges").addEventListener("click", () => showLog("exchanges"));
-$("show-transfers").addEventListener("click", () => showLog("transfers"));
 $("add-account").addEventListener("click", openSheet);
 $("sheet-close").addEventListener("click", closeSheet);
 $("pass-edit").addEventListener("click", () => {
@@ -1287,11 +1288,17 @@ $("settings-form").addEventListener("submit", (event) => {
     error.textContent = "The maximum must be at least the minimum.";
     return;
   }
+  const euroRate = parseAmount($("euro-rate").value);
+  if (euroRate == null || BigInt(euroRate) <= 0n) {
+    error.textContent = "Enter how many gizbits one euro is worth.";
+    return;
+  }
   state.settings = {
     presets,
     terms: $("terms-text").value.trim().slice(0, 800) || DEFAULT_TERMS,
     minAmount,
     maxAmount: maxAmount || "",
+    euroRate,
   };
   saveAccounts();
   fillSettings();

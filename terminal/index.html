@@ -39,8 +39,8 @@
       <main id="main">
         <section id="login" class="login">
           <div class="login-brand">
-            <img class="hero" src="icon-512.png" alt="" />
-            <h1>Gizbit Network</h1>
+            <p class="big-g" aria-hidden="true">₲</p>
+            <h1>Welcome to Gizbit Network</h1>
             <p class="lead">Enter the password for an account on the main phone.</p>
           </div>
           <div class="hint" id="install-hint">
@@ -92,6 +92,25 @@
                 </svg>
                 Activity
               </button>
+              <div class="app-row">
+                <button type="button" id="open-calc" class="app-tile">
+                  <span class="app-icon" aria-hidden="true">€₲</span>
+                  <span>Currency</span>
+                </button>
+                <button type="button" id="open-gov" class="app-tile grey">
+                  <span class="app-icon" aria-hidden="true">
+                    <svg viewBox="0 0 64 48" width="36" height="28">
+                      <path fill="currentColor" d="M32 1.5 60 16H4L32 1.5z"/>
+                      <path fill="currentColor" d="M2 16h60v5H2z"/>
+                      <path fill="currentColor" d="M7 22h9v3H7zm13 0h9v3h-9zm13 0h9v3h-9zm13 0h9v3h-9z"/>
+                      <path fill="currentColor" d="M8.2 25h6.6v12H8.2zm13 0h6.6v12h-6.6zm13 0h6.6v12h-6.6zm13 0h6.6v12h-6.6z"/>
+                      <path fill="currentColor" d="M7 37h9v2.4H7zm13 0h9v2.4h-9zm13 0h9v2.4h-9zm13 0h9v2.4h-9z"/>
+                      <path fill="currentColor" d="M6 40.2h52v2.6H6zM2 43.2h60v2.4H2zM0 46h64v2H0z"/>
+                    </svg>
+                  </span>
+                  <span>My Gov Centre</span>
+                </button>
+              </div>
             </div>
             <div class="pane-exchange" id="exchange-pane">
               <button type="button" id="exchange-back" class="back">
@@ -167,6 +186,63 @@
               <h1>Activity</h1>
               <p id="activity-empty" class="quiet">Withdrawals, deposits, and transfers show up here.</p>
               <ul id="history" class="history"></ul>
+            </div>
+            <div class="pane-calc" id="calc-pane">
+              <button type="button" id="calc-back" class="back">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Back
+              </button>
+              <h1>Currency</h1>
+              <p id="rate-line" class="who">1 euro = 5 Billion ₲</p>
+              <p class="quiet">This rate is set in Gizbit Network settings.</p>
+              <label class="field">
+                <span>Euros</span>
+                <input id="euro-input" inputmode="decimal" autocomplete="off" placeholder="0.00" />
+              </label>
+              <p id="euro-out" class="bal"></p>
+              <label class="field">
+                <span>Gizbits</span>
+                <input id="giz-input" inputmode="numeric" autocomplete="off" placeholder="0" />
+              </label>
+              <p id="giz-out" class="bal"></p>
+            </div>
+            <div class="pane-gov" id="gov-pane">
+              <button type="button" id="gov-back" class="back">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Back
+              </button>
+              <h1>My Gov Centre</h1>
+              <div class="gov-tabs" role="tablist">
+                <button type="button" id="gov-taxes" class="is-on" role="tab" aria-selected="true">
+                  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                    <circle cx="16.5" cy="6.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+                    <path d="M16.5 4.6v3.8M14.8 6.5h3.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    <path d="M16.5 9.2v2.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                    <path d="M4 13.5c1.2-.2 2.2.4 3.2 1.4 1 .9 1.6 1.2 2.6 1.2h4.2c1.6 0 2.6.8 2.6 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                    <path d="M7.2 16.2v4.2M10.2 16.4v4M13.2 16.6v3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                  </svg>
+                  Taxes
+                </button>
+                <button type="button" id="gov-assets" role="tab" aria-selected="false">
+                  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                    <path d="M6 3.5h9.2L19 7.2V20.5H6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+                    <path d="M15 3.5V7.4H19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+                    <path d="M8.2 11h6.2M8.2 14h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                    <circle cx="15.2" cy="16.4" r="2.3" fill="none" stroke="currentColor" stroke-width="1.6"/>
+                  </svg>
+                  Assets
+                </button>
+              </div>
+              <div id="gov-taxes-panel">
+                <p class="quiet">No tax records yet.</p>
+              </div>
+              <div id="gov-assets-panel" hidden>
+                <p class="quiet">No assets yet.</p>
+              </div>
             </div>
           </div>
         </section>

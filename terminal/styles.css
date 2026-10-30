@@ -163,7 +163,7 @@ main {
   height: 100%;
   overflow: hidden;
 }
-.pane-home, .pane-exchange, .pane-activity {
+.pane-home, .pane-exchange, .pane-activity, .pane-calc, .pane-gov {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -178,7 +178,7 @@ main {
   transition: transform 0.35s ease;
 }
 .pane-home { transform: translateX(0); z-index: 1; }
-.pane-exchange, .pane-activity { transform: translateX(100%); z-index: 2; }
+.pane-exchange, .pane-activity, .pane-calc, .pane-gov { transform: translateX(100%); z-index: 2; }
 #stage.is-side > .pane-home { transform: translateX(-100%); }
 #stage.is-side > .is-front { transform: translateX(0%); }
 .back {
@@ -238,6 +238,78 @@ main {
   gap: 8px;
 }
 .home-btn svg { flex: none; }
+.app-row {
+  display: flex;
+  justify-content: flex-start;
+  gap: 18px;
+  padding-top: 6px;
+}
+.app-tile {
+  width: 84px;
+  border: 0;
+  background: transparent;
+  color: var(--navy);
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
+}
+.app-icon {
+  width: 58px;
+  height: 58px;
+  border-radius: 16px;
+  background: var(--navy);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.06em;
+}
+.app-tile.grey .app-icon {
+  background: #d5dde5;
+  color: #1b2c3a;
+}
+.gov-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.gov-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  border: 0;
+  border-radius: 12px;
+  background: #e7eef4;
+  color: var(--navy);
+  font-weight: 700;
+}
+.gov-tabs button.is-on {
+  background: var(--navy);
+  color: #fff;
+}
+.login-brand {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 4px;
+}
+.big-g {
+  margin: 8px 0 0;
+  font-size: 96px;
+  line-height: 0.9;
+  font-weight: 700;
+  color: var(--navy);
+}
+.login-brand h1 { font-size: 26px; margin-top: 8px; }
+.login-brand .lead { margin-bottom: 0; }
 .presets { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .who { margin: 0; font-size: 18px; font-weight: 700; color: var(--navy); }
 .bal { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.04em; color: var(--ink); }

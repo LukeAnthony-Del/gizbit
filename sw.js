@@ -1,4 +1,4 @@
-const CACHE = "gizbit-v17";
+const CACHE = "gizbit-v18";
 const ASSETS = [
   "./",
   "index.html",

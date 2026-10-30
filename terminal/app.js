@@ -6,9 +6,10 @@ const CURSOR = "gizbit-terminal-cursor";
 const MAX = 10n ** 18n;
 const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000000000", "1000000000000", "2000000000000"];
 const DEFAULT_MIN = "50000000000";
+const DEFAULT_EURO = "5000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.08.002";
+const VERSION = "2.09.002";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -60,7 +61,7 @@ function sanitize(account) {
 }
 
 function defaultSettings() {
-  return { presets: DEFAULT_PRESETS.slice(), terms: DEFAULT_TERMS, minAmount: DEFAULT_MIN, maxAmount: "" };
+  return { presets: DEFAULT_PRESETS.slice(), terms: DEFAULT_TERMS, minAmount: DEFAULT_MIN, maxAmount: "", euroRate: DEFAULT_EURO };
 }
 
 function normalizeSettings(value) {
@@ -72,6 +73,7 @@ function normalizeSettings(value) {
     terms: String(value?.terms || DEFAULT_TERMS).slice(0, 800),
     minAmount: moneyText(value?.minAmount, false) || DEFAULT_MIN,
     maxAmount: maxAmount && maxAmount !== "0" ? maxAmount : "",
+    euroRate: moneyText(value?.euroRate, false) || DEFAULT_EURO,
   };
 }
 
@@ -387,6 +389,7 @@ function waitLedger(ms) {
 }
 
 const AMOUNT_STEP = 50000000000n;
+const TEN_BILLION = 10000000000n;
 let accountId = "";
 let chosenOp = "";
 let chosenAmount = "";
@@ -744,13 +747,13 @@ document.addEventListener("keydown", bumpIdle);
 function showHome() {
   const stage = $("stage");
   stage.classList.remove("is-side");
-  ["exchange", "activity"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
+  ["exchange", "activity", "calc", "gov"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
   if (sessionPh) $("logout").hidden = false;
 }
 
 function showSide(name) {
   const stage = $("stage");
-  ["exchange", "activity"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
+  ["exchange", "activity", "calc", "gov"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
   stage.classList.add("is-side");
   $("logout").hidden = true;
   const pane = $(`${name}-pane`);
@@ -931,21 +934,23 @@ const BILLION_STEP = 1000000000n;
 let sendAccountId = "";
 let sendAmount = "";
 
-function snapTo(digits, step, max) {
+function floorTo(digits, step, max) {
   if (!/^\d+$/.test(digits)) return "";
-  let amount = BigInt(digits);
-  const rem = amount % step;
-  if (rem !== 0n) {
-    const down = amount - rem;
-    const up = down + step;
-    amount = rem * 2n < step ? down : up;
-    if (amount === 0n) amount = up;
+  let amount = BigInt(digits) - (BigInt(digits) % step);
+  if (max != null) {
+    let cap = max;
+    if (cap >= step) cap -= cap % step;
+    else cap = 0n;
+    if (amount > cap) amount = cap;
   }
-  let cap = max;
-  if (cap >= step) cap -= cap % step;
-  else cap = 0n;
-  if (amount > cap) amount = cap;
   return amount > 0n ? amount.toString() : "";
+}
+
+function cleanTenBillion(digits) {
+  const plain = String(digits || "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  if (!/^\d+$/.test(plain) || plain.length < 11) return plain;
+  const amount = BigInt(plain) - (BigInt(plain) % TEN_BILLION);
+  return amount > 0n ? amount.toString() : "0";
 }
 
 function renderSendAccounts() {
@@ -1031,7 +1036,7 @@ async function sendGizbits() {
   const to = (ledger?.accounts || []).find((item) => item.id === sendAccountId);
   let amount = sendAmount;
   if (amount && BigInt(amount) % BILLION_STEP !== 0n) {
-    amount = snapTo(amount, BILLION_STEP, from ? BigInt(from.bal) : 0n);
+    amount = floorTo(amount, BILLION_STEP, from ? BigInt(from.bal) : 0n);
     sendAmount = amount;
     if (amount) $("send-amount").value = formatTyping(amount);
   }
@@ -1464,6 +1469,75 @@ $("open-activity").addEventListener("click", () => {
   showSide("activity");
 });
 $("activity-back").addEventListener("click", () => showHome());
+
+function euroRate() {
+  try {
+    const value = BigInt(activeSettings().euroRate || DEFAULT_EURO);
+    return value > 0n ? value : BigInt(DEFAULT_EURO);
+  } catch {
+    return BigInt(DEFAULT_EURO);
+  }
+}
+
+function paintRate() {
+  $("rate-line").textContent = `1 euro = ${formatAmount(euroRate())} ₲`;
+}
+
+function readEuro(value) {
+  const cleaned = String(value || "").replace(/[^\d.]/g, "");
+  const dot = cleaned.indexOf(".");
+  const wholeRaw = (dot === -1 ? cleaned : cleaned.slice(0, dot)).replace(/^0+(?=\d)/, "");
+  const frac = dot === -1 ? "" : cleaned.slice(dot + 1).replace(/\D/g, "").slice(0, 2);
+  const text = dot === -1 ? wholeRaw : `${wholeRaw || "0"}.${frac}`;
+  return { text, whole: wholeRaw || "0", frac, empty: !wholeRaw && frac === "" && dot === -1 };
+}
+
+function showGovTab(name) {
+  $("gov-taxes-panel").hidden = name !== "taxes";
+  $("gov-assets-panel").hidden = name !== "assets";
+  $("gov-taxes").classList.toggle("is-on", name === "taxes");
+  $("gov-assets").classList.toggle("is-on", name === "assets");
+  $("gov-taxes").setAttribute("aria-selected", name === "taxes" ? "true" : "false");
+  $("gov-assets").setAttribute("aria-selected", name === "assets" ? "true" : "false");
+}
+
+$("open-calc").addEventListener("click", () => {
+  paintRate();
+  showSide("calc");
+});
+$("calc-back").addEventListener("click", () => showHome());
+$("euro-input").addEventListener("input", () => {
+  const input = $("euro-input");
+  const read = readEuro(input.value);
+  if (input.value !== read.text) {
+    input.value = read.text;
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+  if (read.empty) {
+    $("euro-out").textContent = "";
+    return;
+  }
+  const gizbits = (BigInt(read.whole) * 100n + BigInt((read.frac || "0").padEnd(2, "0"))) * euroRate() / 100n;
+  $("euro-out").textContent = `${formatAmount(gizbits)} ₲`;
+});
+$("giz-input").addEventListener("input", () => {
+  const input = $("giz-input");
+  const digits = input.value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  input.value = formatTyping(digits);
+  if (!digits) {
+    $("giz-out").textContent = "";
+    return;
+  }
+  const cents = (BigInt(digits) * 100n) / euroRate();
+  $("giz-out").textContent = `€${formatFull(cents / 100n)}.${String(cents % 100n).padStart(2, "0")}`;
+});
+$("open-gov").addEventListener("click", () => {
+  showGovTab("taxes");
+  showSide("gov");
+});
+$("gov-back").addEventListener("click", () => showHome());
+$("gov-taxes").addEventListener("click", () => showGovTab("taxes"));
+$("gov-assets").addEventListener("click", () => showGovTab("assets"));
 $("send-account").addEventListener("change", () => {
   sendAccountId = $("send-account").value;
   sendAmount = "";
@@ -1477,14 +1551,12 @@ $("send-amount").addEventListener("input", () => {
   const input = $("send-amount");
   const formatted = formatTyping(input.value);
   input.value = formatted;
-  let digits = formatted.replace(/\D/g, "");
+  let digits = cleanTenBillion(formatted.replace(/\D/g, ""));
   const balance = currentAccount() ? BigInt(currentAccount().bal) : 0n;
-  if (digits && BigInt(digits) > balance) {
-    let capped = balance;
-    if (capped >= BILLION_STEP) capped -= capped % BILLION_STEP;
-    else capped = 0n;
-    digits = capped > 0n ? capped.toString() : "";
+  if (digits && BigInt(digits) > balance) digits = floorTo(digits, BILLION_STEP, balance);
+  if (formatTyping(digits) !== formatted) {
     input.value = formatTyping(digits);
+    input.setSelectionRange(input.value.length, input.value.length);
   }
   sendAmount = digits;
   $("send-msg").textContent = "";
@@ -1493,7 +1565,7 @@ $("send-amount").addEventListener("input", () => {
 $("send-amount").addEventListener("change", () => {
   const digits = $("send-amount").value.replace(/\D/g, "");
   const balance = currentAccount() ? BigInt(currentAccount().bal) : 0n;
-  const snapped = snapTo(digits, BILLION_STEP, balance);
+  const snapped = floorTo(cleanTenBillion(digits), BILLION_STEP, balance);
   $("send-amount").value = snapped ? formatTyping(snapped) : "";
   sendAmount = snapped;
   revealSend();
@@ -1532,25 +1604,8 @@ function liftAmount() {
 }
 
 function snapTyped(digits) {
-  if (!/^\d+$/.test(digits)) return "";
-  let amount = BigInt(digits);
-  const step = AMOUNT_STEP;
-  const rem = amount % step;
-  if (rem !== 0n) {
-    const down = amount - rem;
-    if (chosenOp === "deposit") {
-      amount = down;
-    } else {
-      const up = down + step;
-      amount = rem * 2n < step ? down : up;
-      if (amount === 0n) amount = up;
-    }
-  }
-  let { max } = limits();
-  if (max >= step) max -= max % step;
-  else max = 0n;
-  if (amount > max) amount = max;
-  return amount > 0n ? amount.toString() : "";
+  const { max } = limits();
+  return floorTo(digits, AMOUNT_STEP, max);
 }
 
 $("other-amount").addEventListener("change", () => {
@@ -1585,17 +1640,14 @@ $("other-amount").addEventListener("input", () => {
     }
   }
   input.setSelectionRange(pos, pos);
-  let digits = formatted.replace(/\D/g, "");
-  if (chosenOp === "withdraw" && digits) {
-    const typed = BigInt(digits);
+  let digits = cleanTenBillion(formatted.replace(/\D/g, ""));
+  if ((chosenOp === "withdraw" || chosenOp === "deposit") && digits) {
     const { max } = limits();
-    if (typed > max) {
-      let capped = max > 0n ? max : 0n;
-      if (capped >= AMOUNT_STEP) capped -= capped % AMOUNT_STEP;
-      digits = capped.toString();
-      input.value = formatTyping(digits);
-      input.setSelectionRange(input.value.length, input.value.length);
-    }
+    if (BigInt(digits) > max) digits = floorTo(digits, AMOUNT_STEP, max);
+  }
+  if (formatTyping(digits) !== formatted) {
+    input.value = formatTyping(digits);
+    input.setSelectionRange(input.value.length, input.value.length);
   }
   chosenAmount = parseAmount(digits) || "";
   if (digits && !amountAllowed(chosenAmount) && onAmountStep(digits)) $("move-msg").textContent = rangeNote();

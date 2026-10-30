@@ -21,7 +21,7 @@
       <main id="main">
         <section id="balances" class="page is-active" role="tabpanel">
           <div class="page-head">
-            <h1>Balances</h1>
+            <h1>Registered Accounts</h1>
           </div>
           <hr />
           <div class="cols" aria-hidden="true">
@@ -35,14 +35,10 @@
 
         <section id="moves" class="page" role="tabpanel" hidden>
           <div class="page-head">
-            <div class="log-slider" id="log-slider" data-log="exchanges">
-              <span class="log-knob" aria-hidden="true"></span>
-              <button type="button" id="show-exchanges">Exchanges</button>
-              <button type="button" id="show-transfers">Transfers</button>
-            </div>
+            <h1>Exchanges</h1>
           </div>
           <hr />
-          <p id="activity-empty" class="empty">Reviewed exchanges show up here.</p>
+          <p id="activity-empty" class="empty">Reviewed exchanges and transfers show up here.</p>
           <ul id="activity" class="feed"></ul>
         </section>
 
@@ -76,6 +72,10 @@
             </label>
             <p class="quiet">Leave the maximum empty to use the account balance.</p>
             <label class="field">
+              <span>1 euro equals (₲)</span>
+              <input id="euro-rate" inputmode="numeric" autocomplete="off" />
+            </label>
+            <label class="field">
               <span>Terms and conditions</span>
               <textarea id="terms-text" rows="6" maxlength="800"></textarea>
             </label>
@@ -98,6 +98,20 @@
             <p id="install-note" hidden></p>
             <button type="button" id="install-go" class="btn slim">Install</button>
           </div>
+        </section>
+
+        <section id="gfg" class="page" role="tabpanel" hidden>
+          <div class="page-head">
+            <h1>Gizbit Financial Group</h1>
+          </div>
+          <hr />
+        </section>
+
+        <section id="government" class="page" role="tabpanel" hidden>
+          <div class="page-head">
+            <h1>National Gizbit Government centre</h1>
+          </div>
+          <hr />
         </section>
       </main>
 
@@ -127,6 +141,30 @@
             </svg>
           </span>
           <span>Requests</span>
+        </button>
+        <button type="button" role="tab" data-tab="gfg" aria-selected="false">
+          <span class="tab-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22">
+              <path fill="currentColor" d="M12 2.2 21.2 8H2.8L12 2.2z"/>
+              <path fill="currentColor" d="M3.2 8.8h17.6V11H3.2z"/>
+              <path fill="currentColor" d="M5 12h2.4v6.2H5zm5.8 0h2.4v6.2h-2.4zM16.6 12H19v6.2h-2.4z"/>
+              <path fill="currentColor" d="M2.4 19h19.2v2.2H2.4z"/>
+            </svg>
+          </span>
+          <span>GFG</span>
+        </button>
+        <button type="button" role="tab" data-tab="government" aria-selected="false">
+          <span class="tab-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 48" width="22" height="22">
+              <path fill="currentColor" d="M32 1.5 60 16H4L32 1.5z"/>
+              <path fill="currentColor" d="M2 16h60v5H2z"/>
+              <path fill="currentColor" d="M7 22h9v3H7zm13 0h9v3h-9zm13 0h9v3h-9zm13 0h9v3h-9z"/>
+              <path fill="currentColor" d="M8.2 25h6.6v12H8.2zm13 0h6.6v12h-6.6zm13 0h6.6v12h-6.6zm13 0h6.6v12h-6.6z"/>
+              <path fill="currentColor" d="M7 37h9v2.4H7zm13 0h9v2.4h-9zm13 0h9v2.4h-9zm13 0h9v2.4h-9z"/>
+              <path fill="currentColor" d="M6 40.2h52v2.6H6zM2 43.2h60v2.4H2zM0 46h64v2H0z"/>
+            </svg>
+          </span>
+          <span>Government</span>
         </button>
         <button type="button" role="tab" data-tab="settings" aria-selected="false">
           <span class="tab-mark" aria-hidden="true">
