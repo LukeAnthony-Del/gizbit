@@ -41,7 +41,7 @@
           <div class="login-brand">
             <p class="big-g" aria-hidden="true">₲</p>
             <h1>Welcome to Gizbit Network</h1>
-            <p class="lead">Enter the password for an account on the main phone.</p>
+            <p class="lead">Enter the password for an account.</p>
           </div>
           <div class="hint" id="install-hint">
             <p>Install this page on the other phone. Withdrawals and deposits go to Gizbit Network, which updates the balance.</p>
@@ -71,7 +71,7 @@
               <h1 id="welcome">Welcome</h1>
               <label class="field" id="account-pick-wrap" hidden>
                 <span>Account</span>
-                <select id="account-pick"></select>
+                <select id="account-pick" hidden></select>
               </label>
               <article class="panel account-panel">
                 <p class="who">Balance</p>
@@ -153,7 +153,7 @@
               <div id="transfer-section" hidden>
                 <label class="field">
                   <span>Account</span>
-                  <select id="send-account"></select>
+                  <select id="send-account" hidden></select>
                 </label>
                 <div id="send-amount-step" hidden>
                   <label class="field">
@@ -194,19 +194,57 @@
                 </svg>
                 Back
               </button>
-              <h1>Currency</h1>
-              <p id="rate-line" class="who">1 euro = 5 Billion ₲</p>
-              <p class="quiet">This rate is set in Gizbit Network settings.</p>
-              <label class="field">
-                <span>Euros</span>
-                <input id="euro-input" inputmode="decimal" autocomplete="off" placeholder="0.00" />
-              </label>
-              <p id="euro-out" class="bal"></p>
-              <label class="field">
-                <span>Gizbits</span>
-                <input id="giz-input" inputmode="numeric" autocomplete="off" placeholder="0" />
-              </label>
-              <p id="giz-out" class="bal"></p>
+              <div class="fx">
+                <div class="fx-banner">
+                  <p id="rate-line">1.00 EUR = 5 Billion ₲</p>
+                </div>
+                <div class="fx-stack">
+                  <div class="fx-card">
+                    <div class="fx-code">
+                      <span class="fx-badge" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" width="42" height="42">
+                          <circle cx="16" cy="16" r="16" fill="#003399"/>
+                          <g fill="#fc0">
+                            <circle cx="16" cy="6.4" r="1.15"/>
+                            <circle cx="20.8" cy="7.7" r="1.15"/>
+                            <circle cx="24.3" cy="11.1" r="1.15"/>
+                            <circle cx="25.6" cy="15.9" r="1.15"/>
+                            <circle cx="24.3" cy="20.7" r="1.15"/>
+                            <circle cx="20.8" cy="24.1" r="1.15"/>
+                            <circle cx="16" cy="25.4" r="1.15"/>
+                            <circle cx="11.2" cy="24.1" r="1.15"/>
+                            <circle cx="7.7" cy="20.7" r="1.15"/>
+                            <circle cx="6.4" cy="15.9" r="1.15"/>
+                            <circle cx="7.7" cy="11.1" r="1.15"/>
+                            <circle cx="11.2" cy="7.7" r="1.15"/>
+                          </g>
+                        </svg>
+                      </span>
+                      <span>EUR</span>
+                    </div>
+                    <label class="fx-amount-wrap">
+                      <span class="fx-symbol" aria-hidden="true">€</span>
+                      <input id="euro-input" class="fx-amount" size="1" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="Euros" />
+                    </label>
+                  </div>
+                  <button type="button" id="fx-swap" class="fx-swap" aria-label="Switch amount">
+                    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                      <path d="M7 7h9.2M13.2 4.2 16.8 7 13.2 9.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M17 17H7.8M10.8 14.2 7.2 17l3.6 2.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                  <div class="fx-card">
+                    <div class="fx-code">
+                      <span class="fx-badge giz" aria-hidden="true">₲</span>
+                      <span>GIZ</span>
+                    </div>
+                    <label class="fx-amount-wrap">
+                      <span class="fx-symbol" aria-hidden="true">₲</span>
+                      <input id="giz-input" class="fx-amount" size="1" inputmode="numeric" autocomplete="off" placeholder="0" aria-label="Gizbits" />
+                    </label>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="pane-gov gov-app" id="gov-pane">
               <div class="gov-body">

@@ -16,7 +16,7 @@ const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Gov
 const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.10.002";
+const VERSION = "2.11.002";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -431,13 +431,16 @@ let signed = false;
 let sendSigned = false;
 let exchangeSent = false;
 
-function showLogin() {
+function showLogin(keepKeyboard) {
   $("settings").hidden = true;
   $("login").hidden = false;
+  const password = $("password");
+  if (keepKeyboard) password.focus();
   $("bank").hidden = true;
   $("logout").hidden = true;
-  $("password").value = "";
-  $("password").type = "password";
+  password.value = "";
+  password.type = "password";
+  if (keepKeyboard) password.focus();
   clearIdle();
 }
 
@@ -514,6 +517,70 @@ function currentAccount() {
   return list.find((item) => item.id === accountId) || list[0] || null;
 }
 
+function bindAccountMenu(select) {
+  if (!select || select.dataset.menu) return;
+  select.dataset.menu = "1";
+  const menu = document.createElement("div");
+  menu.className = "account-menu";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "account-menu-btn";
+  button.setAttribute("aria-haspopup", "listbox");
+  button.setAttribute("aria-expanded", "false");
+  const list = document.createElement("div");
+  list.className = "account-menu-list";
+  list.hidden = true;
+  list.setAttribute("role", "listbox");
+  menu.append(button, list);
+  select.after(menu);
+  function refresh() {
+    const selected = [...select.options].find((option) => option.value === select.value) || select.options[0];
+    button.textContent = selected ? selected.textContent : "Choose an account";
+    list.replaceChildren();
+    [...select.options].forEach((option) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "account-menu-item";
+      item.setAttribute("role", "option");
+      if (option.value === select.value) item.classList.add("is-on");
+      item.textContent = option.textContent;
+      item.addEventListener("click", () => {
+        select.value = option.value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        list.hidden = true;
+        button.setAttribute("aria-expanded", "false");
+        refresh();
+      });
+      list.append(item);
+    });
+  }
+  button.addEventListener("click", () => {
+    const willOpen = list.hidden;
+    document.querySelectorAll(".account-menu-list").forEach((node) => {
+      node.hidden = true;
+    });
+    document.querySelectorAll(".account-menu-btn").forEach((node) => node.setAttribute("aria-expanded", "false"));
+    list.hidden = !willOpen;
+    button.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  });
+  select._refreshMenu = refresh;
+  refresh();
+}
+
+function refreshAccountMenu(select) {
+  if (!select) return;
+  if (!select.dataset.menu) bindAccountMenu(select);
+  else select._refreshMenu();
+}
+
+document.addEventListener("pointerdown", (event) => {
+  if (event.target.closest(".account-menu")) return;
+  document.querySelectorAll(".account-menu-list").forEach((node) => {
+    node.hidden = true;
+  });
+  document.querySelectorAll(".account-menu-btn").forEach((node) => node.setAttribute("aria-expanded", "false"));
+});
+
 function paintAccount() {
   const list = matching(sessionPh);
   const account = currentAccount();
@@ -528,6 +595,7 @@ function paintAccount() {
     pick.append(option);
   });
   if (!account) {
+    refreshAccountMenu(pick);
     $("welcome").textContent = "Welcome";
     $("balance").textContent = "";
     $("balance-full").textContent = "";
@@ -535,6 +603,7 @@ function paintAccount() {
   }
   accountId = account.id;
   pick.value = account.id;
+  refreshAccountMenu(pick);
   $("welcome").textContent = `Welcome, ${account.name}`;
   $("balance").textContent = `${formatAmount(account.bal)} ₲`;
   $("balance-full").textContent = formatFull(account.bal);
@@ -766,11 +835,12 @@ function bumpIdle() {
   if (!sessionPh) return;
   idleTimer = setTimeout(() => {
     if (!sessionPh) return;
+    const typing = document.activeElement && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
     sessionPh = "";
     pendingExchangeId = "";
     pendingSendId = "";
     showHome();
-    showLogin();
+    showLogin(typing);
     $("login-msg").textContent = "Timer ran out, log in again.";
   }, 60000);
 }
@@ -1004,6 +1074,7 @@ function renderSendAccounts() {
   });
   if (others.some((item) => item.id === sendAccountId)) select.value = sendAccountId;
   else sendAccountId = "";
+  refreshAccountMenu(select);
 }
 
 function revealSend() {
@@ -1166,6 +1237,7 @@ function chooseOp(op) {
   chosenOp = op;
   $("type-slider").dataset.op = op;
   $("move-msg").textContent = "";
+  if (op === "transfer") renderSendAccounts();
   if (op === "withdraw" || op === "deposit") {
     $("amount-label").textContent = `How much do you wish to ${op === "withdraw" ? "withdraw" : "deposit"}?`;
     $("presets").hidden = op !== "withdraw";
@@ -1272,27 +1344,56 @@ function bindPad(canvasId, blockId, clearId, onInk) {
     const y = Math.max(0, Math.min(9999, Math.round((point.y / height) * 9999)));
     return [x, y];
   }
+  function redraw() {
+    const rect = canvas.getBoundingClientRect();
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    ctx.strokeStyle = "#173a5a";
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    strokes.forEach((stroke) => {
+      const points = [];
+      for (let i = 0; i + 1 < stroke.length; i += 2) {
+        points.push([(stroke[i] / 9999) * rect.width, (stroke[i + 1] / 9999) * rect.height]);
+      }
+      if (points.length < 2) return;
+      ctx.beginPath();
+      ctx.moveTo(points[0][0], points[0][1]);
+      for (let i = 1; i < points.length; i += 1) ctx.lineTo(points[i][0], points[i][1]);
+      ctx.stroke();
+    });
+  }
   function size() {
     const rect = canvas.getBoundingClientRect();
     if (rect.width < 2) return;
-    const ink = hasInk;
     const ratio = Math.min(devicePixelRatio || 1, 3);
-    canvas.width = rect.width * ratio;
-    canvas.height = rect.height * ratio;
+    canvas.width = Math.round(rect.width * ratio);
+    canvas.height = Math.round(rect.height * ratio);
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.strokeStyle = "#173a5a";
     ctx.lineWidth = 2.2;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    if (!ink) hasInk = false;
+    if (strokes.length) redraw();
   }
   function pos(event) {
     const rect = canvas.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
+  function inkPoint(event) {
+    const point = pos(event);
+    if (current) current.push(...norm(point));
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(point.x, point.y);
+    hasInk = true;
+    onInk(true);
+  }
   canvas.addEventListener("pointerdown", (event) => {
     if (block.classList.contains("is-locked")) return;
     event.preventDefault();
+    size();
     drawing = true;
     canvas.setPointerCapture(event.pointerId);
     const point = pos(event);
@@ -1305,23 +1406,29 @@ function bindPad(canvasId, blockId, clearId, onInk) {
   canvas.addEventListener("pointermove", (event) => {
     if (!drawing) return;
     event.preventDefault();
-    const point = pos(event);
-    if (current && current.length < 400) current.push(...norm(point));
-    ctx.lineTo(point.x, point.y);
-    ctx.stroke();
-    hasInk = true;
-    onInk(true);
+    const batch = event.getCoalescedEvents ? event.getCoalescedEvents() : [event];
+    (batch.length ? batch : [event]).forEach(inkPoint);
   });
-  canvas.addEventListener("pointerup", () => {
+  canvas.addEventListener("pointerup", (event) => {
+    if (!drawing) return;
+    drawing = false;
+    if (current) inkPoint(event);
+    if (current && current.length >= 4) {
+      const next = resampleStroke(current);
+      current.length = 0;
+      current.push(...next);
+      redraw();
+    }
+  });
+  canvas.addEventListener("pointercancel", () => {
+    if (!drawing) return;
     drawing = false;
     if (current && current.length >= 4) {
       const next = resampleStroke(current);
       current.length = 0;
       current.push(...next);
+      redraw();
     }
-  });
-  canvas.addEventListener("pointercancel", () => {
-    drawing = false;
   });
   clearBtn.addEventListener("click", () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1518,7 +1625,7 @@ function euroRate() {
 }
 
 function paintRate() {
-  $("rate-line").textContent = `1 euro = ${formatAmount(euroRate())} ₲`;
+  $("rate-line").textContent = `1.00 EUR = ${formatAmount(euroRate())} ₲`;
 }
 
 function readEuro(value) {
@@ -1918,30 +2025,45 @@ $("open-calc").addEventListener("click", () => {
   showSide("calc");
 });
 $("calc-back").addEventListener("click", () => showHome());
+let fxLock = false;
+function euroText(cents) {
+  return `${formatFull(cents / 100n)}.${String(cents % 100n).padStart(2, "0")}`;
+}
 $("euro-input").addEventListener("input", () => {
+  if (fxLock) return;
   const input = $("euro-input");
   const read = readEuro(input.value);
   if (input.value !== read.text) {
     input.value = read.text;
     input.setSelectionRange(input.value.length, input.value.length);
   }
-  if (read.empty) {
-    $("euro-out").textContent = "";
-    return;
+  fxLock = true;
+  if (read.empty) $("giz-input").value = "";
+  else {
+    const gizbits = (BigInt(read.whole) * 100n + BigInt((read.frac || "0").padEnd(2, "0"))) * euroRate() / 100n;
+    $("giz-input").value = gizbits ? formatTyping(gizbits.toString()) : "";
   }
-  const gizbits = (BigInt(read.whole) * 100n + BigInt((read.frac || "0").padEnd(2, "0"))) * euroRate() / 100n;
-  $("euro-out").textContent = `${formatAmount(gizbits)} ₲`;
+  fxLock = false;
 });
 $("giz-input").addEventListener("input", () => {
+  if (fxLock) return;
   const input = $("giz-input");
   const digits = input.value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
-  input.value = formatTyping(digits);
-  if (!digits) {
-    $("giz-out").textContent = "";
-    return;
+  const shown = formatTyping(digits);
+  if (input.value !== shown) {
+    input.value = shown;
+    input.setSelectionRange(shown.length, shown.length);
   }
-  const cents = (BigInt(digits) * 100n) / euroRate();
-  $("giz-out").textContent = `€${formatFull(cents / 100n)}.${String(cents % 100n).padStart(2, "0")}`;
+  fxLock = true;
+  if (!digits) $("euro-input").value = "";
+  else $("euro-input").value = euroText((BigInt(digits) * 100n) / euroRate());
+  fxLock = false;
+});
+$("fx-swap").addEventListener("click", () => {
+  const euro = $("euro-input");
+  const giz = $("giz-input");
+  if (document.activeElement === euro) giz.focus();
+  else euro.focus();
 });
 $("open-gov").addEventListener("click", () => {
   showGovTab("taxes");
@@ -1992,18 +2114,34 @@ $("send-account").addEventListener("change", () => {
 });
 $("send-amount").addEventListener("input", () => {
   const input = $("send-amount");
+  const caret = input.selectionStart || 0;
+  const digitsBefore = input.value.slice(0, caret).replace(/\D/g, "").length;
   const formatted = formatTyping(input.value);
   input.value = formatted;
-  let digits = cleanTenBillion(formatted.replace(/\D/g, ""));
-  const balance = currentAccount() ? BigInt(currentAccount().bal) : 0n;
-  if (digits && BigInt(digits) > balance) digits = floorTo(digits, BILLION_STEP, balance);
-  if (formatTyping(digits) !== formatted) {
-    input.value = formatTyping(digits);
-    input.setSelectionRange(input.value.length, input.value.length);
+  let seen = 0;
+  let pos = formatted.length;
+  if (!digitsBefore) pos = 0;
+  else {
+    for (let i = 0; i < formatted.length; i += 1) {
+      if (/\d/.test(formatted[i])) seen += 1;
+      if (seen >= digitsBefore) {
+        pos = i + 1;
+        break;
+      }
+    }
   }
-  sendAmount = digits;
+  input.setSelectionRange(pos, pos);
+  sendAmount = formatted.replace(/\D/g, "");
   $("send-msg").textContent = "";
   revealSend();
+  liftAmount();
+});
+$("send-amount").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") event.target.blur();
+});
+$("send-amount").addEventListener("focus", () => {
+  setTimeout(liftAmount, 50);
+  setTimeout(liftAmount, 320);
 });
 $("send-amount").addEventListener("change", () => {
   const digits = $("send-amount").value.replace(/\D/g, "");
@@ -2036,14 +2174,15 @@ function formatTyping(value) {
 }
 
 function liftAmount() {
-  const field = $("other-amount");
+  const field = document.activeElement;
+  if (field !== $("other-amount") && field !== $("send-amount")) return;
+  if (!$("bank") || $("bank").hidden) return;
   const pane = $("exchange-pane");
-  if (!$("bank") || $("bank").hidden || $("amount-step").hidden) return;
-  if (document.activeElement !== field) return;
+  field.scrollIntoView({ block: "center", inline: "nearest" });
   const paneRect = pane.getBoundingClientRect();
   const fieldRect = field.getBoundingClientRect();
-  const overflow = fieldRect.bottom - (paneRect.bottom - 20);
-  if (overflow > 0) pane.scrollTop += overflow;
+  const overflow = fieldRect.bottom - (paneRect.bottom - 28);
+  if (overflow > 0) pane.scrollTop += overflow + 16;
 }
 
 function snapTyped(digits) {
@@ -2051,10 +2190,12 @@ function snapTyped(digits) {
   return floorTo(digits, AMOUNT_STEP, max);
 }
 
+$("other-amount").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") event.target.blur();
+});
 $("other-amount").addEventListener("change", () => {
   const digits = $("other-amount").value.replace(/\D/g, "");
-  if (!digits || onAmountStep(digits)) return;
-  const snapped = snapTyped(digits);
+  const snapped = digits ? snapTyped(cleanTenBillion(digits)) : "";
   $("other-amount").value = snapped ? formatTyping(snapped) : "";
   chosenAmount = snapped;
   $("move-msg").textContent = "";
@@ -2083,15 +2224,7 @@ $("other-amount").addEventListener("input", () => {
     }
   }
   input.setSelectionRange(pos, pos);
-  let digits = cleanTenBillion(formatted.replace(/\D/g, ""));
-  if ((chosenOp === "withdraw" || chosenOp === "deposit") && digits) {
-    const { max } = limits();
-    if (BigInt(digits) > max) digits = floorTo(digits, AMOUNT_STEP, max);
-  }
-  if (formatTyping(digits) !== formatted) {
-    input.value = formatTyping(digits);
-    input.setSelectionRange(input.value.length, input.value.length);
-  }
+  const digits = formatted.replace(/\D/g, "");
   chosenAmount = parseAmount(digits) || "";
   if (digits && !amountAllowed(chosenAmount) && onAmountStep(digits)) $("move-msg").textContent = rangeNote();
   else $("move-msg").textContent = "";
@@ -2103,6 +2236,7 @@ $("account-pick").addEventListener("change", () => {
   accountId = $("account-pick").value;
   paintAccount();
   renderHistory();
+  renderSendAccounts();
   if (chosenOp) chooseOp(chosenOp);
   renderTaxDash();
   if ($("tax-pane").classList.contains("is-front")) openTaxForm();
