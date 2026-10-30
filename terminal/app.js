@@ -8,18 +8,14 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "1.04.002";
+const VERSION = "2.04.002";
 const SETTINGS_PASSWORD = "321kittymiss";
-const DEVICE_KEY = "gizbit-terminal-device";
-const NAME_KEY = "gizbit-terminal-name";
-const TRUST = "gizbit-terminal-trust";
-const BANKS = "gizbit-terminal-banks";
-const BOOKS = "gizbit-terminal-books";
+const WIPED = "gizbit-terminal-wiped";
 
 let ledger = loadLedger();
 let sessionPh = "";
 let liveThisSession = false;
-let trustedDevice = localStorage.getItem(TRUST) || "";
+let wipedAt = Number(localStorage.getItem(WIPED)) || 0;
 let source = null;
 let lastPing = 0;
 let toastTimer = 0;
@@ -82,27 +78,6 @@ function activeSettings() {
 
 function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
-}
-
-function deviceId() {
-  let id = localStorage.getItem(DEVICE_KEY);
-  if (!id) {
-    id = uid();
-    localStorage.setItem(DEVICE_KEY, id);
-  }
-  return id;
-}
-
-function phoneName() {
-  return (localStorage.getItem(NAME_KEY) || "Terminal").trim().slice(0, 40) || "Terminal";
-}
-
-function publishHello() {
-  return publish("Phone ready", { v: 1, kind: "hello", role: "terminal", from: deviceId(), name: phoneName(), ts: Date.now() });
-}
-
-function publishChoose(bankId) {
-  return publish("Choosing a phone", { v: 1, kind: "choose", from: deviceId(), name: phoneName(), bank: bankId, ts: Date.now() });
 }
 
 async function sha256(text) {
@@ -212,7 +187,7 @@ function publishPing() {
   const now = Date.now();
   if (now - lastPing < 5000) return Promise.resolve();
   lastPing = now;
-  return publish("Checking accounts", { v: 1, kind: "ping", id: uid(), from: deviceId(), name: phoneName(), ts: now });
+  return publish("Checking accounts", { v: 1, kind: "ping", id: uid(), ts: now });
 }
 
 function setStatus(text) {
@@ -230,48 +205,57 @@ function toast(text) {
 }
 
 function refreshStatus() {
-  const chosen = loadBanks().find((item) => item.id === trustedDevice);
-  const who = (ledger && ledger.device === trustedDevice && ledger.deviceName) || chosen?.name || ledger?.deviceName || "";
-  if (trustedDevice && (!ledger || ledger.device !== trustedDevice)) {
-    setStatus(who ? `Looking for ${who}…` : "Looking for that phone…");
-    return;
-  }
   if (!ledger) setStatus("Open Gizbit Network on the main phone");
-  else if (Date.now() - ledger.ts < 20000) setStatus(who ? `Connected to ${who}` : "Connected to the main phone");
-  else setStatus(who ? `Last balances from ${who}` : "Showing the last balances from the main phone");
+  else if (Date.now() - ledger.ts < 20000) setStatus("Connected to the main phone");
+  else setStatus("Showing the last balances from the main phone");
 }
 
 function matching(ph) {
   return (ledger?.accounts || []).filter((account) => account.ph === ph);
 }
 
+function forgetBook() {
+  ledger = null;
+  liveThisSession = false;
+  localStorage.removeItem(LEDGER);
+  refreshStatus();
+  if (!$("settings").hidden) renderSettingsAccounts();
+  window.dispatchEvent(new CustomEvent("gizbit-ledger"));
+}
+
+function acceptReset(body) {
+  const ts = Number(body?.ts) || Date.now();
+  if (wipedAt && ts < wipedAt) return;
+  wipedAt = ts;
+  localStorage.setItem(WIPED, String(ts));
+  sessionPh = "";
+  pendingExchangeId = "";
+  forgetBook();
+  showLogin();
+  $("login-msg").textContent = "The main phone deleted every account.";
+}
+
 function acceptLedger(body) {
   if (!body || !Array.isArray(body.accounts) || !body.accounts.length) return;
-  const device = typeof body.device === "string" ? body.device : "";
-  const deviceName = typeof body.deviceName === "string" ? body.deviceName.slice(0, 40) : "";
-  if (device && deviceName) rememberNetwork(device, deviceName);
-  if (trustedDevice && device !== trustedDevice) return;
   const ts = Number(body.ts) || 0;
-  const switching = Boolean(trustedDevice && device === trustedDevice && ledger && ledger.device !== device);
-  if (!switching && ledger && ts && ledger.ts && ts < ledger.ts) return;
+  if (wipedAt && ts && ts <= wipedAt) return;
+  if (ledger && ts && ledger.ts && ts < ledger.ts) return;
+  if (wipedAt) {
+    wipedAt = 0;
+    localStorage.removeItem(WIPED);
+  }
   ledger = {
     rev: Number.isInteger(body.rev) ? body.rev : (ledger?.rev || 0),
     ts: body.ts || Date.now(),
     answered: body.answered || ledger?.answered || "",
-    device,
-    deviceName: deviceName || (ledger && ledger.device === device ? ledger.deviceName : ""),
     accounts: body.accounts.map(sanitize).filter(Boolean),
     settings: normalizeSettings(body.settings),
     requests: Array.isArray(body.requests) ? body.requests : (ledger?.requests || []),
   };
   localStorage.setItem(LEDGER, JSON.stringify(ledger));
-  if (device) rememberBook(device, ledger);
   liveThisSession = true;
   refreshStatus();
-  if (!$("settings").hidden) {
-    renderNetworkList();
-    renderSettingsAccounts();
-  }
+  if (!$("settings").hidden) renderSettingsAccounts();
   window.dispatchEvent(new CustomEvent("gizbit-ledger"));
   if (sessionPh && !matching(sessionPh).length) {
     sessionPh = "";
@@ -323,12 +307,11 @@ function handleMessage(data) {
   if (data.event && data.event !== "message") return;
   const body = decode(data.message);
   if (!body || body.v !== 1) return;
-  if (body.kind === "hello" && body.role === "network" && body.from && body.name) {
-    rememberNetwork(body.from, body.name);
+  if (body.kind === "reset") {
+    acceptReset(body);
     return;
   }
   if (body.kind === "ledger") acceptLedger(body);
-  if (trustedDevice && body.device && body.device !== trustedDevice) return;
   if (body.kind === "decision") finishExchange(body.id, body.status);
   if (body.kind === "reject" && body.id) {
     reasons.set(body.id, body.reason || "The main phone refused that.");
@@ -400,141 +383,6 @@ function showLogin() {
   $("password").type = "password";
 }
 
-function paintNetworkPhone() {
-  renderNetworkList();
-}
-
-function loadBanks() {
-  try {
-    const data = JSON.parse(localStorage.getItem(BANKS) || "[]");
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
-}
-
-function rememberNetwork(id, name) {
-  const cleanId = String(id || "").trim();
-  const cleanName = String(name || "").trim().slice(0, 40);
-  if (!cleanId || !cleanName) return;
-  const now = Date.now();
-  const list = loadBanks().filter((item) => item.id !== cleanId && now - Number(item.ts) < 7 * 86400000);
-  list.unshift({ id: cleanId, name: cleanName, ts: now });
-  localStorage.setItem(BANKS, JSON.stringify(list.slice(0, 12)));
-  renderNetworkList();
-}
-
-function loadBooks() {
-  try {
-    const data = JSON.parse(localStorage.getItem(BOOKS) || "{}");
-    return data && typeof data === "object" ? data : {};
-  } catch {
-    return {};
-  }
-}
-
-function rememberBook(device, book) {
-  if (!device) return;
-  const all = loadBooks();
-  all[device] = book;
-  const ids = Object.keys(all);
-  if (ids.length > 8) {
-    ids.sort((a, b) => (all[a].ts || 0) - (all[b].ts || 0));
-    ids.slice(0, ids.length - 8).forEach((id) => delete all[id]);
-  }
-  localStorage.setItem(BOOKS, JSON.stringify(all));
-}
-
-function useBook(device) {
-  const book = loadBooks()[device];
-  if (!book || !Array.isArray(book.accounts)) return false;
-  ledger = {
-    rev: Number.isInteger(book.rev) ? book.rev : 0,
-    ts: Number(book.ts) || 0,
-    device,
-    deviceName: typeof book.deviceName === "string" ? book.deviceName.slice(0, 40) : "",
-    answered: book.answered || "",
-    accounts: book.accounts.map(sanitize).filter(Boolean),
-    settings: normalizeSettings(book.settings),
-    requests: Array.isArray(book.requests) ? book.requests : [],
-  };
-  localStorage.setItem(LEDGER, JSON.stringify(ledger));
-  liveThisSession = true;
-  refreshStatus();
-  if (sessionPh && !matching(sessionPh).length) {
-    sessionPh = "";
-    if ($("settings").hidden) showLogin();
-  } else if (sessionPh) renderBank();
-  if (!$("settings").hidden) renderSettingsAccounts();
-  return true;
-}
-
-let renderingNetworks = false;
-
-function renderNetworkList() {
-  const select = $("network-phone");
-  if (!select) return;
-  renderingNetworks = true;
-  const phones = loadBanks();
-  const counts = new Map();
-  phones.forEach((item) => counts.set(item.name, (counts.get(item.name) || 0) + 1));
-  select.replaceChildren();
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = phones.length ? "Choose a phone" : "Open Gizbit Network to see its name";
-  select.append(blank);
-  phones.forEach((item) => {
-    const option = document.createElement("option");
-    option.value = item.id;
-    const short = item.id.replace(/-/g, "").slice(0, 4);
-    option.textContent = counts.get(item.name) > 1 ? `${item.name} · ${short}` : item.name;
-    select.append(option);
-  });
-  if ([...select.options].some((option) => option.value === trustedDevice)) select.value = trustedDevice;
-  renderingNetworks = false;
-}
-
-function selectNetwork(id) {
-  const next = String(id || "");
-  if (next === trustedDevice) return;
-  trustedDevice = next;
-  if (next) localStorage.setItem(TRUST, next);
-  else localStorage.removeItem(TRUST);
-  if (next) {
-    const applied = useBook(next);
-    if (!applied && ledger && ledger.device !== next) {
-      ledger = null;
-      localStorage.removeItem(LEDGER);
-      liveThisSession = false;
-      if (sessionPh) {
-        sessionPh = "";
-        if ($("settings").hidden) showLogin();
-      }
-    }
-    publishChoose(next).catch(() => {});
-  }
-  refreshStatus();
-  if (!$("settings").hidden) renderSettingsAccounts();
-  renderNetworkList();
-}
-
-async function collectNetworks() {
-  const res = await fetch(`${NTFY}/${TOPIC}/json?poll=1&since=6h`, { cache: "no-store" });
-  if (!res.ok) return;
-  for (const line of (await res.text()).split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const body = decode(JSON.parse(trimmed).message);
-      if (!body) continue;
-      if (body.kind === "hello" && body.role === "network" && body.from && body.name) rememberNetwork(body.from, body.name);
-      if (body.kind === "ledger" && body.device && body.deviceName) rememberNetwork(body.device, body.deviceName);
-    } catch {
-      /* Skip a line that is not a message. */
-    }
-  }
-}
-
 function renderSettingsAccounts() {
   const list = $("account-list");
   const accounts = ledger?.accounts || [];
@@ -572,8 +420,6 @@ function openSettings() {
   $("logout").hidden = true;
   $("settings").hidden = false;
   $("main").scrollTop = 0;
-  renderNetworkList();
-  collectNetworks().catch(() => {});
   renderSettingsAccounts();
 }
 
@@ -856,7 +702,7 @@ async function login(password) {
     const before = ledger?.ts || 0;
     const pingId = uid();
     try {
-      await publish("Checking accounts", { v: 1, kind: "ping", id: pingId, from: deviceId(), name: phoneName(), ts: Date.now() });
+      await publish("Checking accounts", { v: 1, kind: "ping", id: pingId, ts: Date.now() });
     } catch {
       if (!(liveThisSession && matching(ph).length)) {
         message.textContent = "Couldn't reach the bank. Try again.";
@@ -966,7 +812,6 @@ async function exchange() {
       op,
       amount,
       ph: sessionPh,
-      from: deviceId(),
       ts: Date.now(),
     });
   } catch {
@@ -1145,7 +990,6 @@ $("sync-phones").addEventListener("click", async () => {
   const before = ledger?.ts || 0;
   lastPing = 0;
   try {
-    await publishHello();
     await publishPing();
     const synced = await waitNewerLedger(before, 8000);
     renderSettingsAccounts();
@@ -1286,26 +1130,10 @@ refreshStatus();
 document.querySelectorAll(".ver").forEach((node) => {
   node.textContent = VERSION;
 });
-document.querySelectorAll("[data-phone-name]").forEach((input) => {
-  input.value = localStorage.getItem(NAME_KEY) || "";
-  input.addEventListener("change", () => {
-    const name = input.value.trim().slice(0, 40);
-    localStorage.setItem(NAME_KEY, name);
-    document.querySelectorAll("[data-phone-name]").forEach((other) => {
-      other.value = name;
-    });
-    publishHello().catch(() => {});
-  });
+["gizbit-terminal-name", "gizbit-terminal-trust", "gizbit-terminal-banks", "gizbit-terminal-books", "gizbit-terminal-device"].forEach((key) => {
+  localStorage.removeItem(key);
 });
 showLogin();
-renderNetworkList();
-$("network-phone").addEventListener("change", () => {
-  if (renderingNetworks) return;
-  const next = $("network-phone").value;
-  selectNetwork(next);
-  const label = $("network-phone").selectedOptions[0]?.textContent || "";
-  if (next) toast(`Connected to ${label}`);
-});
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js");
@@ -1313,15 +1141,11 @@ if ("serviceWorker" in navigator) {
 
 catchUp().catch(() => refreshStatus()).finally(() => {
   listen();
-  publishHello().catch(() => {});
   publishPing().catch(() => {});
-  if (trustedDevice) publishChoose(trustedDevice).catch(() => {});
-  collectNetworks().catch(() => {});
 });
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   catchUp().catch(() => {});
-  publishHello().catch(() => {});
   publishPing().catch(() => {});
 });
