@@ -208,40 +208,105 @@
               </label>
               <p id="giz-out" class="bal"></p>
             </div>
-            <div class="pane-gov" id="gov-pane">
-              <button type="button" id="gov-back" class="back">
+            <div class="pane-gov gov-app" id="gov-pane">
+              <div class="gov-body">
+                <button type="button" id="gov-back" class="back">
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                    <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  Back
+                </button>
+                <h1>My Gov Centre</h1>
+                <div class="gov-tabs" role="tablist">
+                  <button type="button" id="gov-taxes" class="is-on" role="tab" aria-selected="true">
+                    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                      <circle cx="16.5" cy="6.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+                      <path d="M16.5 4.6v3.8M14.8 6.5h3.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                      <path d="M16.5 9.2v2.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                      <path d="M4 13.5c1.2-.2 2.2.4 3.2 1.4 1 .9 1.6 1.2 2.6 1.2h4.2c1.6 0 2.6.8 2.6 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                      <path d="M7.2 16.2v4.2M10.2 16.4v4M13.2 16.6v3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                    </svg>
+                    Taxes
+                  </button>
+                  <button type="button" id="gov-assets" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                      <path d="M6 3.5h9.2L19 7.2V20.5H6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+                      <path d="M15 3.5V7.4H19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+                      <path d="M8.2 11h6.2M8.2 14h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                      <circle cx="15.2" cy="16.4" r="2.3" fill="none" stroke="currentColor" stroke-width="1.6"/>
+                    </svg>
+                    Assets
+                  </button>
+                </div>
+                <div id="gov-taxes-panel">
+                  <p class="quiet">No tax records yet.</p>
+                </div>
+                <div id="gov-assets-panel" hidden>
+                  <p class="quiet">No assets yet.</p>
+                </div>
+              </div>
+              <button type="button" id="gov-plus" class="gov-plus" aria-label="Add new tax return">
+                <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+                </svg>
+              </button>
+            </div>
+            <div class="pane-tax gov-app" id="tax-pane">
+              <button type="button" id="tax-back" class="back">
                 <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                   <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
                 Back
               </button>
-              <h1>My Gov Centre</h1>
-              <div class="gov-tabs" role="tablist">
-                <button type="button" id="gov-taxes" class="is-on" role="tab" aria-selected="true">
-                  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-                    <circle cx="16.5" cy="6.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
-                    <path d="M16.5 4.6v3.8M14.8 6.5h3.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                    <path d="M16.5 9.2v2.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-                    <path d="M4 13.5c1.2-.2 2.2.4 3.2 1.4 1 .9 1.6 1.2 2.6 1.2h4.2c1.6 0 2.6.8 2.6 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-                    <path d="M7.2 16.2v4.2M10.2 16.4v4M13.2 16.6v3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-                  </svg>
-                  Taxes
-                </button>
-                <button type="button" id="gov-assets" role="tab" aria-selected="false">
-                  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-                    <path d="M6 3.5h9.2L19 7.2V20.5H6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
-                    <path d="M15 3.5V7.4H19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
-                    <path d="M8.2 11h6.2M8.2 14h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-                    <circle cx="15.2" cy="16.4" r="2.3" fill="none" stroke="currentColor" stroke-width="1.6"/>
-                  </svg>
-                  Assets
-                </button>
+              <h1>Add new tax return</h1>
+              <label class="field">
+                <span>Full business name</span>
+                <select id="tax-business"></select>
+              </label>
+              <div id="tax-new" class="tax-new" hidden>
+                <label class="field">
+                  <span>New business name</span>
+                  <input id="tax-business-name" maxlength="60" autocomplete="off" />
+                </label>
+                <button type="button" id="tax-business-save" class="btn">Save</button>
+                <p id="tax-biz-msg" class="error" role="status"></p>
               </div>
-              <div id="gov-taxes-panel">
-                <p class="quiet">No tax records yet.</p>
+              <label class="field">
+                <span>Business owner's full name</span>
+                <input id="tax-owner" readonly />
+              </label>
+              <label class="field">
+                <span>Session number</span>
+                <input id="tax-session" readonly />
+              </label>
+              <label class="field">
+                <span>Sheet number</span>
+                <input id="tax-sheet" readonly />
+              </label>
+              <h2>Products</h2>
+              <div id="tax-lines"></div>
+              <button type="button" id="tax-add-line" class="btn ghost">Add product</button>
+              <div class="tax-totals" id="tax-totals">
+                <p><span>Gross revenue</span><strong id="tax-gross-revenue">—</strong></p>
+                <p><span>Gross VAT</span><strong id="tax-gross-vat">—</strong></p>
+                <p><span>Gross profit</span><strong id="tax-gross-profit">—</strong></p>
+                <p><span>Tax on gross profit</span><strong id="tax-profit-tax">—</strong></p>
+                <p><span>Total invoice</span><strong id="tax-invoice">—</strong></p>
               </div>
-              <div id="gov-assets-panel" hidden>
-                <p class="quiet">No assets yet.</p>
+              <p id="tax-rate-note" class="quiet"></p>
+              <div id="tax-finish" hidden>
+                <div id="tax-terms-text" class="terms-box"></div>
+                <label class="check">
+                  <input id="tax-agree" type="checkbox" />
+                  I agree to the terms and conditions
+                </label>
+                <div id="tax-sign-block" class="sign-block">
+                  <h2>Signature</h2>
+                  <canvas id="tax-sign" class="pad"></canvas>
+                  <button type="button" id="tax-clear-sign" class="btn ghost">Clear signature</button>
+                </div>
+                <p id="tax-msg" class="error" role="status"></p>
+                <button type="button" id="tax-commit" class="btn" disabled>Commit return</button>
               </div>
             </div>
           </div>
@@ -291,6 +356,17 @@
         <canvas id="sign-view" class="sign-view"></canvas>
         <p id="sign-empty" class="quiet">No signature was saved for this exchange.</p>
         <button type="button" id="sign-close" class="btn">Close</button>
+      </div>
+    </div>
+
+    <div id="tax-thanks" class="sheet" hidden>
+      <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="tax-thanks-title">
+        <p id="tax-wait" class="dots" hidden><span></span><span></span><span></span></p>
+        <div id="tax-thanks-body" hidden>
+          <h2 id="tax-thanks-title">Thank you</h2>
+          <p>Your tax return was sent to the National Gizbit Government centre.</p>
+          <button type="button" id="tax-ok" class="btn">Okay</button>
+        </div>
       </div>
     </div>
 

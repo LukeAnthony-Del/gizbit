@@ -76,8 +76,29 @@
               <input id="euro-rate" inputmode="numeric" autocomplete="off" />
             </label>
             <label class="field">
+              <span>VAT on revenue (%)</span>
+              <input id="vat-rate" inputmode="numeric" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Profit tax under the threshold (%)</span>
+              <input id="profit-low" inputmode="numeric" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Profit tax over the threshold (%)</span>
+              <input id="profit-high" inputmode="numeric" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Profit tax threshold (₲)</span>
+              <input id="profit-threshold" inputmode="numeric" autocomplete="off" />
+            </label>
+            <p class="quiet">Profit up to the threshold is taxed at the lower rate. The amount above that is taxed at the higher rate.</p>
+            <label class="field">
               <span>Terms and conditions</span>
               <textarea id="terms-text" rows="6" maxlength="800"></textarea>
+            </label>
+            <label class="field">
+              <span>Tax return terms</span>
+              <textarea id="tax-terms" rows="4" maxlength="400"></textarea>
             </label>
             <p id="settings-error" class="error" role="status"></p>
             <button type="submit" class="btn">Save settings</button>
@@ -112,6 +133,8 @@
             <h1>National Gizbit Government centre</h1>
           </div>
           <hr />
+          <p id="gov-empty" class="empty">Tax returns filed from a terminal show up here.</p>
+          <ul id="gov-list" class="feed"></ul>
         </section>
       </main>
 

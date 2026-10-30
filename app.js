@@ -4,19 +4,26 @@ const NTFY = "https://ntfy.envs.net";
 const STORAGE = "gizbit-accounts";
 const ACTIVITY = "gizbit-activity";
 const REQUESTS = "gizbit-requests";
+const TAXES = "gizbit-taxes";
 const SEEN = "gizbit-seen";
 const CURSOR = "gizbit-cursor";
 const MAX = 10n ** 18n;
 const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000000000", "1000000000000", "2000000000000"];
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_EURO = "5000000000";
+const DEFAULT_VAT = "20";
+const DEFAULT_PROFIT_LOW = "25";
+const DEFAULT_PROFIT_HIGH = "40";
+const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
+const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.08.002";
+const VERSION = "2.09.002";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
 const requests = loadList(REQUESTS);
+const taxes = loadList(TAXES);
 const seen = new Set(loadList(SEEN));
 let source = null;
 let streamOpen = false;
@@ -42,7 +49,26 @@ function loadState() {
 }
 
 function defaultSettings() {
-  return { presets: DEFAULT_PRESETS.slice(), terms: DEFAULT_TERMS, minAmount: DEFAULT_MIN, maxAmount: "", euroRate: DEFAULT_EURO };
+  return {
+    presets: DEFAULT_PRESETS.slice(),
+    terms: DEFAULT_TERMS,
+    minAmount: DEFAULT_MIN,
+    maxAmount: "",
+    euroRate: DEFAULT_EURO,
+    vatRate: DEFAULT_VAT,
+    profitLow: DEFAULT_PROFIT_LOW,
+    profitHigh: DEFAULT_PROFIT_HIGH,
+    profitThreshold: DEFAULT_PROFIT_THRESHOLD,
+    taxTerms: DEFAULT_TAX_TERMS,
+  };
+}
+
+function percentText(value, fallback) {
+  const raw = String(value ?? "").replace(/[,\s%]/g, "");
+  if (!/^\d{1,3}$/.test(raw)) return fallback;
+  const rate = BigInt(raw);
+  if (rate > 100n) return fallback;
+  return rate.toString();
 }
 
 function normalizeSettings(value) {
@@ -55,6 +81,11 @@ function normalizeSettings(value) {
     minAmount: moneyText(value?.minAmount, false) || DEFAULT_MIN,
     maxAmount: maxAmount && maxAmount !== "0" ? maxAmount : "",
     euroRate: moneyText(value?.euroRate, false) || DEFAULT_EURO,
+    vatRate: percentText(value?.vatRate, DEFAULT_VAT),
+    profitLow: percentText(value?.profitLow, DEFAULT_PROFIT_LOW),
+    profitHigh: percentText(value?.profitHigh, DEFAULT_PROFIT_HIGH),
+    profitThreshold: moneyText(value?.profitThreshold, false) || DEFAULT_PROFIT_THRESHOLD,
+    taxTerms: String(value?.taxTerms || DEFAULT_TAX_TERMS).slice(0, 400),
   };
 }
 
@@ -93,6 +124,10 @@ function saveRequests() {
   localStorage.setItem(REQUESTS, JSON.stringify(requests.slice(0, 40)));
 }
 
+function saveTaxes() {
+  localStorage.setItem(TAXES, JSON.stringify(taxes.slice(0, 80)));
+}
+
 function remember(id) {
   if (!id || seen.has(id)) return false;
   seen.add(id);
@@ -127,6 +162,30 @@ function parseAmount(value) {
 function formatFull(value) {
   const text = moneyText(value, false) || "0";
   return text.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function taxTotals(lines, rates) {
+  let revenue = 0n;
+  let vat = 0n;
+  let profit = 0n;
+  lines.forEach((line) => {
+    const amount = BigInt(line.revenue);
+    const due = (amount * BigInt(rates.vat)) / 100n;
+    revenue += amount;
+    vat += due;
+    profit += amount - due;
+  });
+  const threshold = BigInt(rates.threshold);
+  const tax = profit <= threshold
+    ? (profit * BigInt(rates.low)) / 100n
+    : (threshold * BigInt(rates.low)) / 100n + ((profit - threshold) * BigInt(rates.high)) / 100n;
+  return {
+    revenue: revenue.toString(),
+    vat: vat.toString(),
+    profit: profit.toString(),
+    tax: tax.toString(),
+    invoice: (vat + tax).toString(),
+  };
 }
 
 function formatAmount(value) {
@@ -498,6 +557,7 @@ function render() {
   renderAccounts();
   renderActivity();
   renderRequests();
+  renderGovernment();
 }
 
 function showTab(name) {
@@ -560,6 +620,10 @@ function handleMessage(data, bucket) {
     if (takeTransfer(body)) bucket.requests = true;
     return;
   }
+  if (body.kind === "tax") {
+    takeTax(body);
+    return;
+  }
   if (body.kind === "tx") {
     const id = takeTx(body);
     if (id) bucket.applied.push(id);
@@ -595,6 +659,99 @@ function takeTx(tx) {
   logActivity(`Other phone ${verb} ${formatAmount(amount)} ₲ ${direction} ${account.name}. Balance is ${formatAmount(account.bal)} ₲.`, { remote: true });
   render();
   return tx.id;
+}
+
+function sanitizeTaxLines(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 12).map((line) => {
+    const name = String(line?.name || "").trim().slice(0, 40);
+    const qty = moneyText(line?.qty, false);
+    const revenue = moneyText(line?.revenue, false);
+    if (!name || !qty || qty === "0" || revenue == null) return null;
+    return { name, qty, revenue };
+  }).filter(Boolean);
+}
+
+function takeTax(body) {
+  if (!body || typeof body.id !== "string" || !remember(body.id)) return false;
+  const account = state.accounts.find((item) => item.id === body.accountId);
+  if (!account || body.ph !== account.ph) {
+    publishReject(body.id, "The password did not match.");
+    return false;
+  }
+  const business = String(body.business || "").trim().slice(0, 60);
+  const owner = String(body.owner || "").trim().slice(0, 40);
+  const sheet = String(body.sheet || "").replace(/\D/g, "").replace(/^0+/, "");
+  const lines = sanitizeTaxLines(body.lines);
+  if (!business || owner !== account.name || !sheet || !lines.length) {
+    publishReject(body.id, "That tax return could not be filed.");
+    return false;
+  }
+  const rates = {
+    vat: percentText(body.vatRate, state.settings.vatRate),
+    low: percentText(body.lowRate, state.settings.profitLow),
+    high: percentText(body.highRate, state.settings.profitHigh),
+    threshold: moneyText(body.threshold, false) || state.settings.profitThreshold,
+  };
+  const totals = taxTotals(lines, rates);
+  taxes.unshift({
+    id: body.id,
+    accountId: account.id,
+    owner: account.name,
+    business,
+    session: "1",
+    sheet,
+    vatRate: rates.vat,
+    lowRate: rates.low,
+    highRate: rates.high,
+    threshold: rates.threshold,
+    lines,
+    totals,
+    sign: cleanSign(body.sign),
+    ts: Number(body.ts) || Date.now(),
+  });
+  saveTaxes();
+  renderGovernment();
+  toast(`${business} filed a tax return`);
+  return true;
+}
+
+function renderGovernment() {
+  const list = $("gov-list");
+  const empty = $("gov-empty");
+  if (!list || !empty) return;
+  list.replaceChildren();
+  empty.hidden = taxes.length > 0;
+  taxes.forEach((item) => {
+    const li = document.createElement("li");
+    const title = document.createElement("strong");
+    title.textContent = item.business;
+    const meta = document.createElement("p");
+    meta.className = "quiet";
+    meta.textContent = `${item.owner} · Sheet ${item.sheet} · Session ${item.session}`;
+    const rows = document.createElement("ul");
+    rows.className = "gov-lines";
+    (item.lines || []).forEach((line) => {
+      const row = document.createElement("li");
+      const due = (BigInt(line.revenue) * BigInt(item.vatRate)) / 100n;
+      const net = BigInt(line.revenue) - due;
+      row.textContent = `${line.name} · ${formatFull(line.qty)} sold · ${formatAmount(line.revenue)} ₲ · VAT ${formatAmount(due)} ₲ · Net ${formatAmount(net)} ₲`;
+      rows.append(row);
+    });
+    const totals = document.createElement("p");
+    const totalsRow = item.totals || {};
+    totals.textContent = `Gross revenue ${formatAmount(totalsRow.revenue)} ₲. Gross VAT ${formatAmount(totalsRow.vat)} ₲. Gross profit ${formatAmount(totalsRow.profit)} ₲. Profit tax ${formatAmount(totalsRow.tax)} ₲. Total invoice ${formatAmount(totalsRow.invoice)} ₲.`;
+    li.append(title, meta, rows, totals);
+    if (item.sign && item.sign.length) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn slim";
+      button.textContent = "Signature";
+      button.addEventListener("click", () => showSignature(item));
+      li.append(button);
+    }
+    list.append(li);
+  });
 }
 
 async function catchUp() {
@@ -1026,6 +1183,14 @@ function maybeOpenLinked() {
   if (id) openDecision(id);
 }
 
+function readPercent(id) {
+  const raw = $(id).value.replace(/[,\s%]/g, "");
+  if (!/^\d{1,3}$/.test(raw)) return "";
+  const rate = BigInt(raw);
+  if (rate > 100n) return "";
+  return rate.toString();
+}
+
 function fillSettings() {
   const box = $("preset-fields");
   box.replaceChildren();
@@ -1046,6 +1211,11 @@ function fillSettings() {
   $("min-amount").value = state.settings.minAmount;
   $("max-amount").value = state.settings.maxAmount;
   $("euro-rate").value = state.settings.euroRate;
+  $("vat-rate").value = state.settings.vatRate;
+  $("profit-low").value = state.settings.profitLow;
+  $("profit-high").value = state.settings.profitHigh;
+  $("profit-threshold").value = state.settings.profitThreshold;
+  $("tax-terms").value = state.settings.taxTerms;
 }
 
 function bindViewport() {
@@ -1227,6 +1397,8 @@ function deleteEverything() {
   state.settings = defaultSettings();
   requests.splice(0, requests.length);
   activity.splice(0, activity.length);
+  taxes.splice(0, taxes.length);
+  localStorage.removeItem(TAXES);
   ["gizbit-network-name", "gizbit-network-pair", "gizbit-phones", "gizbit-network-device"].forEach((key) => localStorage.removeItem(key));
   saveAccounts();
   saveRequests();
@@ -1293,12 +1465,29 @@ $("settings-form").addEventListener("submit", (event) => {
     error.textContent = "Enter how many gizbits one euro is worth.";
     return;
   }
+  const vatRate = readPercent("vat-rate");
+  const profitLow = readPercent("profit-low");
+  const profitHigh = readPercent("profit-high");
+  if (!vatRate || !profitLow || !profitHigh) {
+    error.textContent = "Enter each tax rate as a whole number from 0 to 100.";
+    return;
+  }
+  const profitThreshold = parseAmount($("profit-threshold").value);
+  if (!profitThreshold) {
+    error.textContent = "Enter the profit tax threshold.";
+    return;
+  }
   state.settings = {
     presets,
     terms: $("terms-text").value.trim().slice(0, 800) || DEFAULT_TERMS,
     minAmount,
     maxAmount: maxAmount || "",
     euroRate,
+    vatRate,
+    profitLow,
+    profitHigh,
+    profitThreshold,
+    taxTerms: $("tax-terms").value.trim().slice(0, 400) || DEFAULT_TAX_TERMS,
   };
   saveAccounts();
   fillSettings();

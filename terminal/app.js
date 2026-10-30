@@ -7,9 +7,16 @@ const MAX = 10n ** 18n;
 const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000000000", "1000000000000", "2000000000000"];
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_EURO = "5000000000";
+const DEFAULT_VAT = "20";
+const DEFAULT_PROFIT_LOW = "25";
+const DEFAULT_PROFIT_HIGH = "40";
+const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
+const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
+const LOCAL_TAXES = "gizbit-terminal-taxes";
+const LOCAL_BIZ = "gizbit-terminal-businesses";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.09.002";
+const VERSION = "2.10.002";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -23,6 +30,9 @@ let lastPing = 0;
 let toastTimer = 0;
 let pendingExchangeId = "";
 let pendingSendId = "";
+let taxLines = [];
+let taxSigned = false;
+let taxBusy = false;
 const waits = new Map();
 const reasons = new Map();
 
@@ -61,7 +71,26 @@ function sanitize(account) {
 }
 
 function defaultSettings() {
-  return { presets: DEFAULT_PRESETS.slice(), terms: DEFAULT_TERMS, minAmount: DEFAULT_MIN, maxAmount: "", euroRate: DEFAULT_EURO };
+  return {
+    presets: DEFAULT_PRESETS.slice(),
+    terms: DEFAULT_TERMS,
+    minAmount: DEFAULT_MIN,
+    maxAmount: "",
+    euroRate: DEFAULT_EURO,
+    vatRate: DEFAULT_VAT,
+    profitLow: DEFAULT_PROFIT_LOW,
+    profitHigh: DEFAULT_PROFIT_HIGH,
+    profitThreshold: DEFAULT_PROFIT_THRESHOLD,
+    taxTerms: DEFAULT_TAX_TERMS,
+  };
+}
+
+function percentText(value, fallback) {
+  const raw = String(value ?? "").replace(/[,\s%]/g, "");
+  if (!/^\d{1,3}$/.test(raw)) return fallback;
+  const rate = BigInt(raw);
+  if (rate > 100n) return fallback;
+  return rate.toString();
 }
 
 function normalizeSettings(value) {
@@ -74,6 +103,11 @@ function normalizeSettings(value) {
     minAmount: moneyText(value?.minAmount, false) || DEFAULT_MIN,
     maxAmount: maxAmount && maxAmount !== "0" ? maxAmount : "",
     euroRate: moneyText(value?.euroRate, false) || DEFAULT_EURO,
+    vatRate: percentText(value?.vatRate, DEFAULT_VAT),
+    profitLow: percentText(value?.profitLow, DEFAULT_PROFIT_LOW),
+    profitHigh: percentText(value?.profitHigh, DEFAULT_PROFIT_HIGH),
+    profitThreshold: moneyText(value?.profitThreshold, false) || DEFAULT_PROFIT_THRESHOLD,
+    taxTerms: String(value?.taxTerms || DEFAULT_TAX_TERMS).slice(0, 400),
   };
 }
 
@@ -747,13 +781,13 @@ document.addEventListener("keydown", bumpIdle);
 function showHome() {
   const stage = $("stage");
   stage.classList.remove("is-side");
-  ["exchange", "activity", "calc", "gov"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
+  ["exchange", "activity", "calc", "gov", "tax"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
   if (sessionPh) $("logout").hidden = false;
 }
 
 function showSide(name) {
   const stage = $("stage");
-  ["exchange", "activity", "calc", "gov"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
+  ["exchange", "activity", "calc", "gov", "tax"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
   stage.classList.add("is-side");
   $("logout").hidden = true;
   const pane = $(`${name}-pane`);
@@ -1321,6 +1355,10 @@ const sendPad = bindPad("send-sign", "send-sign-block", "send-clear-sign", (on) 
   sendSigned = on;
   revealSend();
 });
+const taxPad = bindPad("tax-sign", "tax-sign-block", "tax-clear-sign", (on) => {
+  taxSigned = on;
+  paintTaxCommit();
+});
 
 function bindViewport() {
   const apply = () => {
@@ -1499,6 +1537,380 @@ function showGovTab(name) {
   $("gov-assets").classList.toggle("is-on", name === "assets");
   $("gov-taxes").setAttribute("aria-selected", name === "taxes" ? "true" : "false");
   $("gov-assets").setAttribute("aria-selected", name === "assets" ? "true" : "false");
+  $("gov-plus").hidden = name !== "taxes";
+  if (name === "taxes") renderTaxDash();
+}
+
+function loadTaxes() {
+  try {
+    const data = JSON.parse(localStorage.getItem(LOCAL_TAXES) || "[]");
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadBizMap() {
+  try {
+    const data = JSON.parse(localStorage.getItem(LOCAL_BIZ) || "{}");
+    return data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+function businessesFor(accountId) {
+  const list = loadBizMap()[accountId];
+  if (!Array.isArray(list)) return [];
+  return list.filter((name) => typeof name === "string" && name.trim()).map((name) => name.slice(0, 60));
+}
+
+function nextSheet(accountId) {
+  const filed = loadTaxes().filter((item) => item.accountId === accountId);
+  const max = filed.reduce((highest, item) => Math.max(highest, Number(String(item.sheet || "").replace(/\D/g, "")) || 0), 0);
+  return String(max + 1);
+}
+
+function taxTotals(lines, rates) {
+  let revenue = 0n;
+  let vat = 0n;
+  let profit = 0n;
+  lines.forEach((line) => {
+    const amount = BigInt(line.revenue);
+    const due = (amount * BigInt(rates.vat)) / 100n;
+    revenue += amount;
+    vat += due;
+    profit += amount - due;
+  });
+  const threshold = BigInt(rates.threshold);
+  const tax = profit <= threshold
+    ? (profit * BigInt(rates.low)) / 100n
+    : (threshold * BigInt(rates.low)) / 100n + ((profit - threshold) * BigInt(rates.high)) / 100n;
+  return {
+    revenue: revenue.toString(),
+    vat: vat.toString(),
+    profit: profit.toString(),
+    tax: tax.toString(),
+    invoice: (vat + tax).toString(),
+  };
+}
+
+function taxRates() {
+  const settings = activeSettings();
+  return {
+    vat: settings.vatRate,
+    low: settings.profitLow,
+    high: settings.profitHigh,
+    threshold: settings.profitThreshold,
+  };
+}
+
+function chosenBusiness() {
+  const value = $("tax-business").value;
+  if (!value || value === "__new__") return "";
+  return value;
+}
+
+function lineComplete(line) {
+  const qty = moneyText(line.qty, false);
+  const revenue = moneyText(line.revenue, false);
+  return Boolean(line.name.trim() && qty && qty !== "0" && revenue != null);
+}
+
+function taxReady() {
+  return Boolean(chosenBusiness()) && taxLines.length > 0 && taxLines.every(lineComplete);
+}
+
+function renderTaxDash() {
+  const panel = $("gov-taxes-panel");
+  const account = currentAccount();
+  const filed = loadTaxes().filter((item) => item.accountId === account?.id);
+  panel.replaceChildren();
+  if (!filed.length) {
+    const empty = document.createElement("p");
+    empty.className = "quiet";
+    empty.textContent = "No tax records yet.";
+    panel.append(empty);
+    return;
+  }
+  filed.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "tax-card";
+    const title = document.createElement("strong");
+    title.textContent = item.business;
+    const meta = document.createElement("p");
+    meta.textContent = `Sheet ${item.sheet} · Session ${item.session} · Total invoice ${formatAmount(item.totals?.invoice || "0")} ₲`;
+    card.append(title, meta);
+    panel.append(card);
+  });
+}
+
+function fillBusinesses(selected) {
+  const select = $("tax-business");
+  const names = businessesFor(currentAccount()?.id || "");
+  select.replaceChildren();
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "Choose a business";
+  select.append(blank);
+  names.forEach((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.append(option);
+  });
+  const add = document.createElement("option");
+  add.value = "__new__";
+  add.textContent = "Add new";
+  select.append(add);
+  select.value = names.includes(selected) ? selected : "";
+}
+
+function paintLine(card, line) {
+  const revenue = moneyText(line.revenue, false);
+  const rate = taxRates().vat;
+  if (revenue == null || line.revenue === "") {
+    card.querySelector(".tax-vat").textContent = `VAT due (${rate}%) —`;
+    card.querySelector(".tax-net").textContent = "Net profit —";
+    return;
+  }
+  const due = (BigInt(revenue) * BigInt(rate)) / 100n;
+  const net = BigInt(revenue) - due;
+  card.querySelector(".tax-vat").textContent = `VAT due (${rate}%) ${formatAmount(due)} ₲`;
+  card.querySelector(".tax-net").textContent = `Net profit ${formatAmount(net)} ₲`;
+}
+
+function renderTaxLines() {
+  const box = $("tax-lines");
+  box.replaceChildren();
+  taxLines.forEach((line, index) => {
+    const card = document.createElement("div");
+    card.className = "tax-line";
+    const name = document.createElement("input");
+    name.maxLength = 40;
+    name.autocomplete = "off";
+    name.value = line.name;
+    name.addEventListener("input", () => {
+      line.name = name.value;
+      markTaxDirty();
+    });
+    const qty = document.createElement("input");
+    qty.inputMode = "numeric";
+    qty.autocomplete = "off";
+    qty.value = line.qty ? formatFull(line.qty) : "";
+    qty.addEventListener("input", () => {
+      const digits = qty.value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+      line.qty = digits;
+      const shown = digits ? formatFull(digits) : "";
+      if (qty.value !== shown) {
+        qty.value = shown;
+        qty.setSelectionRange(shown.length, shown.length);
+      }
+      paintLine(card, line);
+      markTaxDirty();
+    });
+    const revenue = document.createElement("input");
+    revenue.inputMode = "numeric";
+    revenue.autocomplete = "off";
+    revenue.value = line.revenue ? formatFull(line.revenue) : "";
+    revenue.addEventListener("input", () => {
+      let digits = revenue.value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+      if (digits && BigInt(digits) > MAX) digits = MAX.toString();
+      line.revenue = digits;
+      const shown = digits ? formatFull(digits) : "";
+      if (revenue.value !== shown) {
+        revenue.value = shown;
+        revenue.setSelectionRange(shown.length, shown.length);
+      }
+      paintLine(card, line);
+      markTaxDirty();
+    });
+    const calc = document.createElement("div");
+    calc.className = "tax-calc";
+    const vat = document.createElement("p");
+    vat.className = "tax-vat";
+    const net = document.createElement("p");
+    net.className = "tax-net";
+    calc.append(vat, net);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn ghost slim";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => {
+      taxLines.splice(index, 1);
+      if (!taxLines.length) taxLines.push({ name: "", qty: "", revenue: "" });
+      renderTaxLines();
+    });
+    card.append(labeled("Product", name), labeled("Total quantities sold", qty), labeled("Revenue", revenue), calc, remove);
+    paintLine(card, line);
+    box.append(card);
+  });
+  paintTaxTotals();
+  paintTaxFinish();
+}
+
+function labeled(text, input) {
+  const label = document.createElement("label");
+  label.className = "field";
+  const span = document.createElement("span");
+  span.textContent = text;
+  label.append(span, input);
+  return label;
+}
+
+function paintTaxTotals() {
+  const rates = taxRates();
+  const lines = taxLines.filter((line) => moneyText(line.revenue, false) != null && line.revenue !== "").map((line) => ({
+    revenue: moneyText(line.revenue, false),
+  }));
+  const totals = lines.length ? taxTotals(lines, rates) : null;
+  $("tax-gross-revenue").textContent = totals ? `${formatAmount(totals.revenue)} ₲` : "—";
+  $("tax-gross-vat").textContent = totals ? `${formatAmount(totals.vat)} ₲` : "—";
+  $("tax-gross-profit").textContent = totals ? `${formatAmount(totals.profit)} ₲` : "—";
+  $("tax-profit-tax").textContent = totals ? `${formatAmount(totals.tax)} ₲` : "—";
+  $("tax-invoice").textContent = totals ? `${formatAmount(totals.invoice)} ₲` : "—";
+  $("tax-rate-note").textContent = `VAT is ${rates.vat}% of revenue. Profit tax is ${rates.low}% up to ${formatAmount(rates.threshold)} ₲ and ${rates.high}% on anything over that. These rates are set on the network phone.`;
+}
+
+function paintTaxFinish() {
+  const ready = taxReady();
+  const finish = $("tax-finish");
+  if (!ready) {
+    if (!finish.hidden) {
+      $("tax-agree").checked = false;
+      taxPad.setEnabled(false);
+    }
+    finish.hidden = true;
+    paintTaxCommit();
+    return;
+  }
+  const opening = finish.hidden;
+  finish.hidden = false;
+  $("tax-terms-text").textContent = activeSettings().taxTerms;
+  if (opening) requestAnimationFrame(() => taxPad.size());
+  paintTaxCommit();
+}
+
+function paintTaxCommit() {
+  $("tax-commit").disabled = taxBusy || !taxReady() || !$("tax-agree").checked || !taxSigned;
+}
+
+function markTaxDirty() {
+  if ($("tax-agree").checked || taxSigned) {
+    $("tax-agree").checked = false;
+    taxPad.setEnabled(false);
+  }
+  paintTaxTotals();
+  paintTaxFinish();
+}
+
+function openTaxForm() {
+  const account = currentAccount();
+  if (!account) return;
+  taxLines = [{ name: "", qty: "", revenue: "" }];
+  taxSigned = false;
+  taxBusy = false;
+  $("tax-msg").textContent = "";
+  $("tax-biz-msg").textContent = "";
+  $("tax-owner").value = account.name;
+  $("tax-session").value = "1";
+  $("tax-sheet").value = nextSheet(account.id);
+  fillBusinesses("");
+  $("tax-new").hidden = true;
+  $("tax-business-name").value = "";
+  $("tax-agree").checked = false;
+  $("tax-terms-text").textContent = activeSettings().taxTerms;
+  renderTaxLines();
+  taxPad.setEnabled(false);
+  showSide("tax");
+}
+
+function saveBusiness() {
+  const account = currentAccount();
+  const name = $("tax-business-name").value.trim().slice(0, 60);
+  $("tax-biz-msg").textContent = "";
+  if (!account || !name) {
+    $("tax-biz-msg").textContent = "Enter the business name.";
+    return;
+  }
+  const map = loadBizMap();
+  const list = businessesFor(account.id);
+  if (!list.some((item) => item.toLowerCase() === name.toLowerCase())) list.push(name);
+  map[account.id] = list.slice(0, 40);
+  localStorage.setItem(LOCAL_BIZ, JSON.stringify(map));
+  fillBusinesses(name);
+  $("tax-new").hidden = true;
+  $("tax-business-name").value = "";
+  paintTaxFinish();
+}
+
+async function commitTax() {
+  if (taxBusy || !taxReady() || !$("tax-agree").checked || !taxSigned) return;
+  const account = currentAccount();
+  if (!account) return;
+  const rates = taxRates();
+  const lines = taxLines.map((line) => ({
+    name: line.name.trim().slice(0, 40),
+    qty: moneyText(line.qty, false),
+    revenue: moneyText(line.revenue, false),
+  }));
+  const totals = taxTotals(lines, rates);
+  const id = uid();
+  const ts = Date.now();
+  const payload = {
+    v: 1,
+    kind: "tax",
+    id,
+    accountId: account.id,
+    ph: sessionPh,
+    owner: account.name,
+    business: chosenBusiness(),
+    session: "1",
+    sheet: $("tax-sheet").value,
+    vatRate: rates.vat,
+    lowRate: rates.low,
+    highRate: rates.high,
+    threshold: rates.threshold,
+    lines,
+    sign: taxPad.strokes(),
+    ts,
+  };
+  if (encode(`${account.name} filed a tax return`, payload).length > 4000) {
+    $("tax-msg").textContent = "That return is too long. Remove a product or use a shorter signature.";
+    return;
+  }
+  taxBusy = true;
+  paintTaxCommit();
+  $("tax-thanks").hidden = false;
+  $("tax-wait").hidden = false;
+  $("tax-thanks-body").hidden = true;
+  const started = Date.now();
+  try {
+    await publish(`${account.name} filed a tax return`, payload);
+  } catch {
+    taxBusy = false;
+    paintTaxCommit();
+    $("tax-thanks").hidden = true;
+    $("tax-msg").textContent = "Couldn't reach the network. Try again.";
+    return;
+  }
+  const wait = 900 - (Date.now() - started);
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  const stored = loadTaxes();
+  stored.unshift({
+    id,
+    accountId: account.id,
+    owner: account.name,
+    business: chosenBusiness(),
+    session: "1",
+    sheet: $("tax-sheet").value,
+    totals,
+    ts,
+  });
+  localStorage.setItem(LOCAL_TAXES, JSON.stringify(stored.slice(0, 40)));
+  taxBusy = false;
+  $("tax-wait").hidden = true;
+  $("tax-thanks-body").hidden = false;
 }
 
 $("open-calc").addEventListener("click", () => {
@@ -1538,6 +1950,37 @@ $("open-gov").addEventListener("click", () => {
 $("gov-back").addEventListener("click", () => showHome());
 $("gov-taxes").addEventListener("click", () => showGovTab("taxes"));
 $("gov-assets").addEventListener("click", () => showGovTab("assets"));
+$("gov-plus").addEventListener("click", () => openTaxForm());
+$("tax-back").addEventListener("click", () => showSide("gov"));
+$("tax-business").addEventListener("change", () => {
+  const adding = $("tax-business").value === "__new__";
+  $("tax-new").hidden = !adding;
+  if (adding) $("tax-business-name").focus();
+  paintTaxFinish();
+});
+$("tax-business-save").addEventListener("click", saveBusiness);
+$("tax-business-name").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    saveBusiness();
+  }
+});
+$("tax-add-line").addEventListener("click", () => {
+  if (taxLines.length >= 12) return;
+  taxLines.push({ name: "", qty: "", revenue: "" });
+  renderTaxLines();
+});
+$("tax-agree").addEventListener("change", () => {
+  taxPad.setEnabled($("tax-agree").checked);
+  if ($("tax-agree").checked) requestAnimationFrame(() => taxPad.size());
+  paintTaxCommit();
+});
+$("tax-commit").addEventListener("click", () => commitTax());
+$("tax-ok").addEventListener("click", () => {
+  $("tax-thanks").hidden = true;
+  showGovTab("taxes");
+  showSide("gov");
+});
 $("send-account").addEventListener("change", () => {
   sendAccountId = $("send-account").value;
   sendAmount = "";
@@ -1661,6 +2104,8 @@ $("account-pick").addEventListener("change", () => {
   paintAccount();
   renderHistory();
   if (chosenOp) chooseOp(chosenOp);
+  renderTaxDash();
+  if ($("tax-pane").classList.contains("is-front")) openTaxForm();
 });
 $("agree").addEventListener("change", () => {
   if (!$("agree").checked) pad.setEnabled(false);
