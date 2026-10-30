@@ -11,7 +11,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.05.002";
+const VERSION = "2.06.002";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -264,6 +264,12 @@ function penMarkup() {
   return `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 20l4.5-1.2L19 8.3 15.7 5 5.2 15.5 4 20z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.8 6.8l3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>`;
 }
 
+function signMarkup() {
+  return `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M14.6 3.6l5.8 5.8-1.15 1.15-5.8-5.8L14.6 3.6z" fill="currentColor"/><path d="M12.9 6.4l4.7 4.7-6.55 6.55-.55.15-2.35.62a.7.7 0 0 1-.85-.85l.62-2.35.15-.55L12.9 6.4z" fill="currentColor"/><path d="M3.2 18.2c1.5-2.15 2.55-3.05 3.85-1.75 1.15 1.15 1.7 2.35 3.05.85 1.2-1.35 2.05-3.55 3.45-2.35" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M16.2 5.2l2.6 2.6" fill="none" stroke="#fff" stroke-width="1.1" stroke-linecap="round"/></svg>`;
+}
+
+let logView = "exchanges";
+
 function cleanSign(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 8).map((stroke) => {
@@ -316,7 +322,8 @@ function drawSignature(canvas, strokes) {
 function renderActivity() {
   const list = $("activity");
   list.replaceChildren();
-  const done = requests.filter((item) => item.status && item.status !== "pending");
+  const transfers = logView === "transfers";
+  const done = requests.filter((item) => item.status && item.status !== "pending" && (transfers ? item.op === "send" : item.op !== "send"));
   done.forEach((item) => {
     const swipe = document.createElement("li");
     swipe.className = "swipe log-swipe";
@@ -329,18 +336,31 @@ function renderActivity() {
     trash.innerHTML = trashMarkup();
     trash.addEventListener("click", () => deleteLog(item.id));
     actions.append(trash);
+    const signBtn = document.createElement("button");
+    signBtn.type = "button";
+    signBtn.className = "swipe-sign";
+    signBtn.setAttribute("aria-label", "Show signature");
+    signBtn.innerHTML = signMarkup();
+    signBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showSignature(item);
+    });
     const row = document.createElement("div");
     row.className = "log-row";
     const time = document.createElement("time");
     time.dateTime = new Date(item.ts).toISOString();
     time.textContent = formatWhen(item.ts);
-    const verb = item.op === "withdraw" ? "Withdrawal" : item.op === "send" ? `Sent to ${item.toName || "another account"}` : "Deposit";
     const line = document.createElement("span");
     const alleged = formatAmount(item.amount);
     const actual = item.applied ? formatAmount(item.applied) : "";
-    line.textContent = actual && actual !== alleged
-      ? `${item.name} · ${verb} · ${alleged} ₲ · received ${actual} ₲`
-      : `${item.name} · ${verb} · ${alleged} ₲`;
+    if (item.op === "send") {
+      line.textContent = `${item.name} sent ${alleged} ₲ to ${item.toName || "another account"}`;
+    } else {
+      const verb = item.op === "withdraw" ? "Withdrawal" : "Deposit";
+      line.textContent = actual && actual !== alleged
+        ? `${item.name} · ${verb} · ${alleged} ₲ · received ${actual} ₲`
+        : `${item.name} · ${verb} · ${alleged} ₲`;
+    }
     row.append(time, line);
     if (item.status === "denied") {
       const tag = document.createElement("span");
@@ -348,34 +368,33 @@ function renderActivity() {
       tag.textContent = "Denied";
       row.append(tag);
     }
-    const signBtn = document.createElement("button");
-    signBtn.type = "button";
-    signBtn.className = "sign-btn";
-    signBtn.setAttribute("aria-label", "Show signature");
-    signBtn.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 16c2-3 3-3 4 0s2 3 3.5 0 2-5 3.5-1 2 2 3.5.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M14 4.5l4 4-7.5 7.5H6.5V12L14 4.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
-    signBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      showSignature(item);
-    });
-    row.append(signBtn);
-    swipe.append(actions, row);
-    bindReveal(row, 56);
+    swipe.append(actions, signBtn, row);
+    bindReveal(row, 56, 56);
     list.append(swipe);
   });
-  $("activity-empty").hidden = done.length > 0;
+  const empty = $("activity-empty");
+  empty.textContent = transfers ? "Transfers between accounts show up here." : "Reviewed exchanges show up here.";
+  empty.hidden = done.length > 0;
 }
 
-function bindReveal(row, openPx) {
+function bindReveal(row, openRight, openLeft) {
+  const right = openRight || 0;
+  const left = openLeft || 0;
   let startX = 0;
   let startY = 0;
   let active = false;
   let origin = 0;
+  const place = () => {
+    if (row.classList.contains("is-open")) return right;
+    if (row.classList.contains("is-sign")) return -left;
+    return 0;
+  };
   row.addEventListener("pointerdown", (event) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     if (event.target.closest("button")) return;
     startX = event.clientX;
     startY = event.clientY;
-    origin = row.classList.contains("is-open") ? openPx : 0;
+    origin = place();
     active = true;
   });
   row.addEventListener("pointermove", (event) => {
@@ -383,15 +402,18 @@ function bindReveal(row, openPx) {
     const dx = event.clientX - startX;
     const dy = event.clientY - startY;
     if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) return;
-    row.style.transform = `translateX(${Math.max(0, Math.min(openPx, origin + dx))}px)`;
+    const next = Math.max(-left, Math.min(right, origin + dx));
+    row.style.transform = `translateX(${next}px)`;
   });
   const finish = (event) => {
     if (!active) return;
     active = false;
-    const dx = event.clientX - startX;
-    const open = origin + dx > openPx * 0.45;
+    const end = origin + (event.clientX - startX);
+    const open = right > 0 && end > right * 0.45;
+    const sign = left > 0 && end < -left * 0.45;
     row.style.transform = "";
-    row.classList.toggle("is-open", open);
+    row.classList.toggle("is-open", open && !sign);
+    row.classList.toggle("is-sign", sign && !open);
   };
   row.addEventListener("pointerup", finish);
   row.addEventListener("pointercancel", () => {
@@ -1094,6 +1116,13 @@ function setupInstall() {
   });
 }
 
+function showLog(name) {
+  logView = name;
+  $("log-slider").dataset.log = name;
+  renderActivity();
+}
+$("show-exchanges").addEventListener("click", () => showLog("exchanges"));
+$("show-transfers").addEventListener("click", () => showLog("transfers"));
 $("add-account").addEventListener("click", openSheet);
 $("sheet-close").addEventListener("click", closeSheet);
 $("pass-edit").addEventListener("click", () => {

@@ -235,9 +235,10 @@ input, select {
 }
 .feed li.log-swipe {
   padding: 0;
-  border: 0;
-  background: transparent;
+  border: 1px solid var(--line);
+  background: #fff;
   overflow: hidden;
+  border-radius: 14px;
 }
 .feed time { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
 .hint { padding: 8px 16px 24px; color: var(--muted); font-size: 13px; display: grid; gap: 10px; }
@@ -285,6 +286,7 @@ body.standalone .hint { display: none; }
 .swipe-eye { background: #8d99a6; }
 .acct.is-open { transform: translateX(112px); }
 .log-row.is-open { transform: translateX(56px); }
+.log-row.is-sign { transform: translateX(-56px); }
 .acct, .log-row {
   position: relative;
   z-index: 1;
@@ -292,18 +294,58 @@ body.standalone .hint { display: none; }
 }
 .log-row {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 4px 8px;
+  gap: 4px;
   align-items: center;
   padding: 12px;
   background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 14px;
+  border: 0;
+  border-radius: 0;
+  min-height: 100%;
 }
 .log-swipe { border-bottom: 0; }
-.log-row time { grid-column: 1; }
-.log-row .tag { grid-column: 1; }
-.log-row .sign-btn { grid-column: 2; grid-row: 1 / span 3; }
+.swipe-sign {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 56px;
+  border: 0;
+  background: #1f4d76;
+  color: #fff;
+  display: grid;
+  place-items: center;
+}
+.log-slider {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  background: #e7eef4;
+  border-radius: 999px;
+  padding: 4px;
+}
+.log-knob {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  border-radius: 999px;
+  background: var(--navy);
+  transition: transform 0.2s ease;
+}
+.log-slider[data-log="transfers"] .log-knob { transform: translateX(100%); }
+.log-slider button {
+  position: relative;
+  z-index: 1;
+  border: 0;
+  background: transparent;
+  color: var(--navy);
+  font-weight: 700;
+  min-height: 40px;
+}
+.log-slider[data-log="exchanges"] #show-exchanges,
+.log-slider[data-log="transfers"] #show-transfers { color: #fff; }
 .sign-btn, .icon-btn {
   border: 0;
   background: #e7eef4;

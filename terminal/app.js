@@ -8,7 +8,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.06.002";
+const VERSION = "2.07.002";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -399,7 +399,6 @@ function showLogin() {
   $("login").hidden = false;
   $("bank").hidden = true;
   $("logout").hidden = true;
-  $("open-settings").hidden = false;
   $("password").value = "";
   $("password").type = "password";
   clearIdle();
@@ -451,7 +450,7 @@ function closeSettings() {
     $("login").hidden = true;
     $("bank").hidden = false;
     const stage = $("stage");
-    const away = stage.classList.contains("is-exchange") || stage.classList.contains("is-send") || stage.classList.contains("is-activity");
+    const away = stage.classList.contains("is-side");
     $("logout").hidden = away;
     return;
   }
@@ -743,14 +742,16 @@ document.addEventListener("pointerdown", bumpIdle);
 document.addEventListener("keydown", bumpIdle);
 
 function showHome() {
-  $("stage").classList.remove("is-exchange", "is-send", "is-activity");
+  const stage = $("stage");
+  stage.classList.remove("is-side");
+  ["exchange", "send", "activity"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
   if (sessionPh) $("logout").hidden = false;
 }
 
 function showSide(name) {
   const stage = $("stage");
-  stage.classList.remove("is-exchange", "is-send", "is-activity");
-  stage.classList.add(`is-${name}`);
+  ["exchange", "send", "activity"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
+  stage.classList.add("is-side");
   $("logout").hidden = true;
   const pane = $(`${name}-pane`);
   if (pane) pane.scrollTop = 0;
@@ -1083,7 +1084,6 @@ async function login(password) {
     $("login").hidden = true;
     $("bank").hidden = false;
     $("logout").hidden = false;
-    $("open-settings").hidden = true;
     showHome();
     resetExchange();
     resetSend();
@@ -1374,13 +1374,6 @@ function setupInstall() {
   });
 }
 
-$("open-settings").addEventListener("click", () => {
-  if (!$("settings").hidden) return;
-  $("settings-lock-msg").textContent = "";
-  $("settings-password").value = "";
-  $("settings-lock").hidden = false;
-  $("settings-password").focus();
-});
 $("settings-lock-cancel").addEventListener("click", () => {
   $("settings-lock").hidden = true;
   $("settings-password").value = "";
