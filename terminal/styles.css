@@ -163,7 +163,7 @@ main {
   height: 100%;
   overflow: hidden;
 }
-.pane-home, .pane-exchange, .pane-send, .pane-activity {
+.pane-home, .pane-exchange, .pane-activity {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -178,7 +178,7 @@ main {
   transition: transform 0.35s ease;
 }
 .pane-home { transform: translateX(0); z-index: 1; }
-.pane-exchange, .pane-send, .pane-activity { transform: translateX(100%); z-index: 2; }
+.pane-exchange, .pane-activity { transform: translateX(100%); z-index: 2; }
 #stage.is-side > .pane-home { transform: translateX(-100%); }
 #stage.is-side > .is-front { transform: translateX(0%); }
 .back {
@@ -196,7 +196,7 @@ main {
 .type-slider {
   position: relative;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   background: #e7eef4;
   border-radius: 999px;
   padding: 4px;
@@ -206,15 +206,17 @@ main {
   top: 4px;
   bottom: 4px;
   left: 4px;
-  width: calc(50% - 4px);
+  width: calc((100% - 8px) / 3);
   border-radius: 999px;
   background: var(--navy);
   transition: transform 0.2s ease;
   opacity: 0;
 }
 .type-slider[data-op="withdraw"] .type-knob,
-.type-slider[data-op="deposit"] .type-knob { opacity: 1; }
+.type-slider[data-op="deposit"] .type-knob,
+.type-slider[data-op="transfer"] .type-knob { opacity: 1; }
 .type-slider[data-op="deposit"] .type-knob { transform: translateX(100%); }
+.type-slider[data-op="transfer"] .type-knob { transform: translateX(200%); }
 .type-slider button {
   position: relative;
   z-index: 1;
@@ -222,10 +224,20 @@ main {
   background: transparent;
   color: var(--navy);
   font-weight: 700;
+  font-size: 13px;
   min-height: 44px;
+  padding: 0 2px;
 }
 .type-slider[data-op="withdraw"] #pick-withdraw,
-.type-slider[data-op="deposit"] #pick-deposit { color: #fff; }
+.type-slider[data-op="deposit"] #pick-deposit,
+.type-slider[data-op="transfer"] #pick-transfer { color: #fff; }
+.home-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.home-btn svg { flex: none; }
 .presets { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .who { margin: 0; font-size: 18px; font-weight: 700; color: var(--navy); }
 .bal { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.04em; color: var(--ink); }

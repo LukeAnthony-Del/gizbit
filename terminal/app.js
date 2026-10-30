@@ -8,7 +8,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.07.002";
+const VERSION = "2.08.002";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -324,7 +324,7 @@ function handleMessage(data) {
     if (body.id === pendingExchangeId) finishExchange(body.id, "denied");
     if (body.id === pendingSendId) {
       pendingSendId = "";
-      $("send-msg").textContent = body.reason || "The main phone could not send that.";
+      $("send-msg").textContent = body.reason || "The main phone could not transfer that.";
       revealSend();
     }
     resolveWait(body.id, "reject");
@@ -615,7 +615,7 @@ function renderHistory() {
     const incoming = account && item.toId === account.id && item.accountId !== account.id;
     const kind = document.createElement("p");
     kind.className = "who";
-    if (item.op === "send") kind.textContent = incoming ? `Received from ${item.name}` : `Sent to ${item.toName || "another account"}`;
+    if (item.op === "send" || item.op === "transfer") kind.textContent = incoming ? `Received from ${item.name}` : `Transferred to ${item.toName || "another account"}`;
     else kind.textContent = item.op === "withdraw" ? "Withdrawal" : "Deposit";
     const money = document.createElement("p");
     money.className = "quiet";
@@ -713,9 +713,9 @@ function resampleStroke(points) {
   return out;
 }
 
-function withdrawIsEmpty() {
+function accountIsEmpty() {
   const account = currentAccount();
-  return chosenOp === "withdraw" && !!account && BigInt(account.bal) === 0n;
+  return !!account && BigInt(account.bal) === 0n;
 }
 
 let idleTimer = 0;
@@ -734,7 +734,7 @@ function bumpIdle() {
     pendingSendId = "";
     showHome();
     showLogin();
-    $("login-msg").textContent = "timer ran out, Log in again.";
+    $("login-msg").textContent = "Timer ran out, log in again.";
   }, 60000);
 }
 
@@ -744,13 +744,13 @@ document.addEventListener("keydown", bumpIdle);
 function showHome() {
   const stage = $("stage");
   stage.classList.remove("is-side");
-  ["exchange", "send", "activity"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
+  ["exchange", "activity"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
   if (sessionPh) $("logout").hidden = false;
 }
 
 function showSide(name) {
   const stage = $("stage");
-  ["exchange", "send", "activity"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
+  ["exchange", "activity"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
   stage.classList.add("is-side");
   $("logout").hidden = true;
   const pane = $(`${name}-pane`);
@@ -762,7 +762,18 @@ function showExchangePage() {
 }
 
 function revealSteps() {
-  if (withdrawIsEmpty()) {
+  const transfer = chosenOp === "transfer";
+  const empty = (chosenOp === "withdraw" || transfer) && accountIsEmpty();
+  $("transfer-section").hidden = !transfer || empty;
+  if (!chosenOp) {
+    $("empty-note").hidden = true;
+    $("amount-step").hidden = true;
+    $("terms-step").hidden = true;
+    $("sign-block").hidden = true;
+    $("exchange").hidden = true;
+    return;
+  }
+  if (empty) {
     $("empty-note").hidden = false;
     $("amount-step").hidden = true;
     $("terms-step").hidden = true;
@@ -771,6 +782,15 @@ function revealSteps() {
     return;
   }
   $("empty-note").hidden = true;
+  if (transfer) {
+    $("amount-step").hidden = true;
+    $("terms-step").hidden = true;
+    $("sign-block").hidden = true;
+    $("exchange").hidden = true;
+    revealSend();
+    return;
+  }
+  $("amount-step").hidden = false;
   const note = $("range-note");
   if (note) {
     note.hidden = chosenOp !== "withdraw";
@@ -957,11 +977,11 @@ function revealSend() {
   const showSign = valid && $("send-agree").checked;
   $("send-sign-block").hidden = !showSign;
   $("send-go").hidden = !showSign;
-  if (showSign) {
+    if (showSign) {
     sendPad.setEnabled(true);
     if (!$("send-sign").dataset.ready) {
       sendPad.size();
-      $("send-sign").dataset.ready = "1";
+      if ($("send-sign").getBoundingClientRect().width >= 2) $("send-sign").dataset.ready = "1";
     }
   } else if (!showSign) {
     sendPad.setEnabled(false);
@@ -992,7 +1012,7 @@ function checkSendResult() {
   if (!found) return;
   pendingSendId = "";
   if (found.status === "denied") {
-    $("send-msg").textContent = reasons.get(found.id) || "The main phone could not send that.";
+    $("send-msg").textContent = reasons.get(found.id) || "The main phone could not transfer that.";
     revealSend();
     return;
   }
@@ -1000,7 +1020,7 @@ function checkSendResult() {
   showHome();
   renderBank();
   playSuccess();
-  $("done-title").textContent = "Gizbits sent";
+  $("done-title").textContent = "Gizbits transferred";
   $("done").hidden = false;
 }
 
@@ -1024,9 +1044,9 @@ async function sendGizbits() {
   unlockSound();
   const strokes = sendPad.strokes();
   $("send-go").disabled = true;
-  message.textContent = "Sending…";
+  message.textContent = "Transferring…";
   try {
-    await publish(`${from.name} sent gizbits to ${to.name}`, {
+    await publish(`${from.name} transferred gizbits to ${to.name}`, {
       v: 1,
       kind: "transfer",
       id,
@@ -1044,7 +1064,7 @@ async function sendGizbits() {
   }
   saveSign(id, strokes);
   pendingSendId = id;
-  message.textContent = "Sent. The main phone moves the gizbits as soon as it receives this.";
+  message.textContent = "Transferred. The main phone moves the gizbits as soon as it receives this.";
   checkSendResult();
 }
 
@@ -1106,21 +1126,13 @@ function chooseOp(op) {
   }
   chosenOp = op;
   $("type-slider").dataset.op = op;
-  const empty = op === "withdraw" && currentAccount() && BigInt(currentAccount().bal) === 0n;
-  $("empty-note").hidden = !empty;
-  $("amount-step").hidden = empty;
-  if (empty) {
-    $("terms-step").hidden = true;
-    $("sign-block").hidden = true;
-    $("exchange").hidden = true;
-    $("move-msg").textContent = "";
-    return;
-  }
-  $("amount-label").textContent = `How much do you wish to ${op === "withdraw" ? "withdraw" : "deposit"}?`;
-  $("presets").hidden = op !== "withdraw";
-  $("other-label").textContent = op === "deposit" ? "Amount" : "Other";
   $("move-msg").textContent = "";
-  renderPresets();
+  if (op === "withdraw" || op === "deposit") {
+    $("amount-label").textContent = `How much do you wish to ${op === "withdraw" ? "withdraw" : "deposit"}?`;
+    $("presets").hidden = op !== "withdraw";
+    $("other-label").textContent = op === "deposit" ? "Amount" : "Other";
+    renderPresets();
+  }
   revealSteps();
 }
 
@@ -1179,7 +1191,7 @@ async function exchange() {
   pendingExchangeId = id;
   exchangeSent = true;
   paintExchangeButton();
-  message.textContent = "Sending to the main phone…";
+  message.textContent = "Asking the main phone…";
   try {
     await publish(`Exchange pending from ${latest.name}`, {
       v: 1,
@@ -1200,7 +1212,7 @@ async function exchange() {
     revealSteps();
     return;
   }
-  message.textContent = "Sent. Waiting for the network to confirm.";
+  message.textContent = "Waiting for the network to confirm.";
   checkExchangeResult();
 }
 
@@ -1447,11 +1459,6 @@ $("open-exchange").addEventListener("click", () => {
 $("exchange-back").addEventListener("click", () => {
   showHome();
 });
-$("open-send").addEventListener("click", () => {
-  resetSend();
-  showSide("send");
-});
-$("send-back").addEventListener("click", () => showHome());
 $("open-activity").addEventListener("click", () => {
   renderHistory();
   showSide("activity");
@@ -1507,6 +1514,7 @@ $("sign-sheet").addEventListener("click", (event) => {
 });
 $("pick-withdraw").addEventListener("click", () => chooseOp("withdraw"));
 $("pick-deposit").addEventListener("click", () => chooseOp("deposit"));
+$("pick-transfer").addEventListener("click", () => chooseOp("transfer"));
 function formatTyping(value) {
   const digits = String(value || "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -1530,9 +1538,13 @@ function snapTyped(digits) {
   const rem = amount % step;
   if (rem !== 0n) {
     const down = amount - rem;
-    const up = down + step;
-    amount = rem * 2n < step ? down : up;
-    if (amount === 0n) amount = up;
+    if (chosenOp === "deposit") {
+      amount = down;
+    } else {
+      const up = down + step;
+      amount = rem * 2n < step ? down : up;
+      if (amount === 0n) amount = up;
+    }
   }
   let { max } = limits();
   if (max >= step) max -= max % step;

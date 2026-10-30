@@ -11,7 +11,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.06.002";
+const VERSION = "2.07.002";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -319,11 +319,15 @@ function drawSignature(canvas, strokes) {
   });
 }
 
+function isTransfer(item) {
+  return item.op === "send" || item.op === "transfer";
+}
+
 function renderActivity() {
   const list = $("activity");
   list.replaceChildren();
   const transfers = logView === "transfers";
-  const done = requests.filter((item) => item.status && item.status !== "pending" && (transfers ? item.op === "send" : item.op !== "send"));
+  const done = requests.filter((item) => item.status && item.status !== "pending" && (transfers ? isTransfer(item) : !isTransfer(item)));
   done.forEach((item) => {
     const swipe = document.createElement("li");
     swipe.className = "swipe log-swipe";
@@ -353,8 +357,8 @@ function renderActivity() {
     const line = document.createElement("span");
     const alleged = formatAmount(item.amount);
     const actual = item.applied ? formatAmount(item.applied) : "";
-    if (item.op === "send") {
-      line.textContent = `${item.name} sent ${alleged} ₲ to ${item.toName || "another account"}`;
+    if (isTransfer(item)) {
+      line.textContent = `${item.name} transferred ${alleged} ₲ to ${item.toName || "another account"}`;
     } else {
       const verb = item.op === "withdraw" ? "Withdrawal" : "Deposit";
       line.textContent = actual && actual !== alleged
@@ -780,7 +784,7 @@ function takeTransfer(body) {
   }
   const value = BigInt(amount);
   if (value <= 0n || value % 1000000000n !== 0n) {
-    publishReject(body.id, "Send a whole number of billions.");
+    publishReject(body.id, "Transfer a whole number of billions.");
     return false;
   }
   if (value > BigInt(from.bal)) {
@@ -799,7 +803,7 @@ function takeTransfer(body) {
     id: body.id,
     accountId: from.id,
     name: from.name,
-    op: "send",
+    op: "transfer",
     amount,
     status: "sent",
     applied: amount,
@@ -810,7 +814,7 @@ function takeTransfer(body) {
   });
   requests.splice(40);
   saveRequests();
-  logActivity(`${from.name} sent ${formatAmount(amount)} ₲ to ${to.name}.`);
+  logActivity(`${from.name} transferred ${formatAmount(amount)} ₲ to ${to.name}.`);
   render();
   return true;
 }
