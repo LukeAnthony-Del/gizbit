@@ -8,7 +8,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.04.002";
+const VERSION = "2.05.002";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -36,6 +36,7 @@ function loadLedger() {
       deviceName: typeof data.deviceName === "string" ? data.deviceName.slice(0, 40) : "",
       accounts: data.accounts.map(sanitize).filter(Boolean),
       settings: normalizeSettings(data.settings),
+      requests: Array.isArray(data.requests) ? data.requests : [],
     };
   } catch {
     return null;
@@ -107,7 +108,7 @@ function formatFull(value) {
 
 function formatAmount(value) {
   const amount = BigInt(moneyText(value, false) || "0");
-  const scales = [[10n ** 12n, "Trillion"], [10n ** 9n, "Billion"], [10n ** 6n, "Million"]];
+  const scales = [[10n ** 12n, "Trillion"], [10n ** 9n, "Billion"]];
   for (const [unit, label] of scales) {
     if (amount < unit) continue;
     const scaled = (amount * 1000n) / unit;
@@ -379,8 +380,10 @@ function showLogin() {
   $("login").hidden = false;
   $("bank").hidden = true;
   $("logout").hidden = true;
+  $("open-settings").hidden = false;
   $("password").value = "";
   $("password").type = "password";
+  clearIdle();
 }
 
 function renderSettingsAccounts() {
@@ -539,9 +542,70 @@ function renderPresets() {
 
 function renderBank() {
   paintAccount();
+  renderHistory();
   renderPresets();
   revealSteps();
 }
+
+function formatDate(ts) {
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(ts);
+}
+
+function formatClock(ts) {
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(ts);
+}
+
+function renderHistory() {
+  const list = $("history");
+  if (!list) return;
+  const account = currentAccount();
+  const items = (ledger?.requests || []).filter((item) => !account || item.accountId === account.id).slice(0, 12);
+  list.replaceChildren();
+  items.forEach((item) => {
+    const li = document.createElement("li");
+    const when = document.createElement("time");
+    const ts = Number(item.ts) || Date.now();
+    when.textContent = `${formatDate(ts)} · ${formatClock(ts)}`;
+    const kind = document.createElement("p");
+    kind.className = "who";
+    kind.textContent = item.op === "withdraw" ? "Withdrawal" : "Deposit";
+    const money = document.createElement("p");
+    money.className = "quiet";
+    const alleged = formatAmount(item.amount);
+    const actual = item.applied ? formatAmount(item.applied) : "";
+    if (item.status === "denied") money.textContent = `${alleged} ₲ · Denied`;
+    else if (actual && String(item.applied) !== String(item.amount)) money.textContent = `${alleged} ₲ asked · ${actual} ₲`;
+    else money.textContent = `${alleged} ₲`;
+    li.append(when, kind, money);
+    list.append(li);
+  });
+}
+
+function withdrawIsEmpty() {
+  const account = currentAccount();
+  return chosenOp === "withdraw" && !!account && BigInt(account.bal) === 0n;
+}
+
+let idleTimer = 0;
+
+function clearIdle() {
+  clearTimeout(idleTimer);
+}
+
+function bumpIdle() {
+  clearIdle();
+  if (!sessionPh) return;
+  idleTimer = setTimeout(() => {
+    if (!sessionPh) return;
+    sessionPh = "";
+    pendingExchangeId = "";
+    showHome();
+    showLogin();
+  }, 60000);
+}
+
+document.addEventListener("pointerdown", bumpIdle);
+document.addEventListener("keydown", bumpIdle);
 
 function showHome() {
   $("stage").classList.remove("is-exchange");
@@ -555,6 +619,15 @@ function showExchangePage() {
 }
 
 function revealSteps() {
+  if (withdrawIsEmpty()) {
+    $("empty-note").hidden = false;
+    $("amount-step").hidden = true;
+    $("terms-step").hidden = true;
+    $("sign-block").hidden = true;
+    $("exchange").hidden = true;
+    return;
+  }
+  $("empty-note").hidden = true;
   const note = $("range-note");
   if (note) note.textContent = chosenOp ? rangeNote() : "";
   const valid = Boolean(chosenOp && amountAllowed(chosenAmount));
@@ -724,9 +797,11 @@ async function login(password) {
     $("login").hidden = true;
     $("bank").hidden = false;
     $("logout").hidden = false;
+    $("open-settings").hidden = true;
     showHome();
     resetExchange();
     renderBank();
+    bumpIdle();
     message.textContent = "";
   } catch {
     message.textContent = "This page needs a secure connection before it can check a password.";
@@ -744,7 +819,16 @@ function chooseOp(op) {
   }
   chosenOp = op;
   $("type-slider").dataset.op = op;
-  $("amount-step").hidden = false;
+  const empty = op === "withdraw" && currentAccount() && BigInt(currentAccount().bal) === 0n;
+  $("empty-note").hidden = !empty;
+  $("amount-step").hidden = empty;
+  if (empty) {
+    $("terms-step").hidden = true;
+    $("sign-block").hidden = true;
+    $("exchange").hidden = true;
+    $("move-msg").textContent = "";
+    return;
+  }
   $("amount-label").textContent = `How much do you wish to ${op === "withdraw" ? "withdraw" : "deposit"}?`;
   $("presets").hidden = op !== "withdraw";
   $("other-label").textContent = op === "deposit" ? "Amount" : "Other";
@@ -763,6 +847,7 @@ function resetExchange() {
   $("move-msg").textContent = "";
   $("type-slider").dataset.op = "";
   $("amount-step").hidden = true;
+  $("empty-note").hidden = true;
   $("presets").hidden = false;
   $("other-label").textContent = "Other";
   $("terms-step").hidden = true;
@@ -780,7 +865,12 @@ async function exchange() {
   const message = $("move-msg");
   message.textContent = "";
   const account = currentAccount();
-  const amount = chosenAmount;
+  let amount = chosenAmount;
+  if (amount && !onAmountStep(amount)) {
+    amount = snapTyped(amount);
+    chosenAmount = amount;
+    if (amount) $("other-amount").value = formatTyping(amount);
+  }
   const op = chosenOp;
   if (!account || !op || !amount || !$("agree").checked || !signed) return;
   const latest = matching(sessionPh).find((item) => item.id === account.id) || account;
@@ -812,6 +902,7 @@ async function exchange() {
       op,
       amount,
       ph: sessionPh,
+      sign: pad.strokes(),
       ts: Date.now(),
     });
   } catch {
@@ -831,6 +922,15 @@ function bindPad() {
   const clearBtn = $("clear-sign");
   const ctx = canvas.getContext("2d");
   let drawing = false;
+  let strokes = [];
+  let current = null;
+  function norm(point) {
+    const rect = canvas.getBoundingClientRect();
+    const width = rect.width || 1;
+    const x = Math.max(0, Math.min(999, Math.round((point.x / width) * 999)));
+    const y = Math.max(0, Math.min(999, Math.round((point.y / 140) * 999)));
+    return [x, y];
+  }
   function size() {
     const rect = canvas.getBoundingClientRect();
     if (rect.width < 2) return;
@@ -853,6 +953,9 @@ function bindPad() {
     drawing = true;
     canvas.setPointerCapture(event.pointerId);
     const point = pos(event);
+    current = [];
+    strokes.push(current);
+    current.push(...norm(point));
     ctx.beginPath();
     ctx.moveTo(point.x, point.y);
   });
@@ -860,6 +963,7 @@ function bindPad() {
     if (!drawing) return;
     event.preventDefault();
     const point = pos(event);
+    if (current && current.length < 48) current.push(...norm(point));
     ctx.lineTo(point.x, point.y);
     ctx.stroke();
     signed = true;
@@ -873,6 +977,7 @@ function bindPad() {
   });
   clearBtn.addEventListener("click", () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    strokes = [];
     signed = false;
     revealSteps();
   });
@@ -883,8 +988,12 @@ function bindPad() {
       clearBtn.disabled = !on;
       if (!on) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        strokes = [];
         signed = false;
       }
+    },
+    strokes() {
+      return strokes.slice(-8).map((stroke) => stroke.slice(0, 48));
     },
   };
 }
@@ -1056,6 +1165,34 @@ function liftAmount() {
   if (overflow > 0) pane.scrollTop += overflow;
 }
 
+function snapTyped(digits) {
+  if (!/^\d+$/.test(digits)) return "";
+  let amount = BigInt(digits);
+  const step = AMOUNT_STEP;
+  const rem = amount % step;
+  if (rem !== 0n) {
+    const down = amount - rem;
+    const up = down + step;
+    amount = rem * 2n < step ? down : up;
+    if (amount === 0n) amount = up;
+  }
+  let { max } = limits();
+  if (max >= step) max -= max % step;
+  else max = 0n;
+  if (amount > max) amount = max;
+  return amount > 0n ? amount.toString() : "";
+}
+
+$("other-amount").addEventListener("change", () => {
+  const digits = $("other-amount").value.replace(/\D/g, "");
+  if (!digits || onAmountStep(digits)) return;
+  const snapped = snapTyped(digits);
+  $("other-amount").value = snapped ? formatTyping(snapped) : "";
+  chosenAmount = snapped;
+  $("move-msg").textContent = "";
+  renderPresets();
+  revealSteps();
+});
 $("other-amount").addEventListener("focus", () => {
   setTimeout(liftAmount, 50);
 });
@@ -1091,8 +1228,7 @@ $("other-amount").addEventListener("input", () => {
     }
   }
   chosenAmount = parseAmount(digits) || "";
-  if (digits && !onAmountStep(digits)) $("move-msg").textContent = "Use a multiple of 50 billion.";
-  else if (digits && !amountAllowed(chosenAmount)) $("move-msg").textContent = rangeNote();
+  if (digits && !amountAllowed(chosenAmount) && onAmountStep(digits)) $("move-msg").textContent = rangeNote();
   else $("move-msg").textContent = "";
   renderPresets();
   revealSteps();
@@ -1101,6 +1237,8 @@ $("other-amount").addEventListener("input", () => {
 $("account-pick").addEventListener("change", () => {
   accountId = $("account-pick").value;
   paintAccount();
+  renderHistory();
+  if (chosenOp) chooseOp(chosenOp);
 });
 $("agree").addEventListener("change", () => {
   if (!$("agree").checked) pad.setEnabled(false);

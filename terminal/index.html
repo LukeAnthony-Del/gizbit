@@ -21,7 +21,7 @@
       <header class="top">
         <img class="mark" src="icon-192.png" alt="" />
         <div class="brand-block">
-          <p class="brand">Gizbit Terminal <span class="ver"></span></p>
+          <p class="brand">Gizbit Terminal <span class="vmark">v</span><span class="ver"></span></p>
           <p class="sub" id="link-status" role="status">Looking for the main phone…</p>
         </div>
         <button type="button" id="open-settings" class="gear" aria-label="Settings">
@@ -74,6 +74,7 @@
                 <p id="balance-full" class="bal-full"></p>
               </article>
               <button type="button" id="open-exchange" class="btn">Exchange</button>
+              <ul id="history" class="history"></ul>
             </div>
             <div class="pane-exchange" id="exchange-pane">
               <button type="button" id="exchange-back" class="back">
@@ -89,6 +90,7 @@
                 <button type="button" id="pick-withdraw">Withdrawal</button>
                 <button type="button" id="pick-deposit">Deposit</button>
               </div>
+              <p id="empty-note" class="empty-note" hidden>Oops, looks like this is empty. Deposit some money to increase your balance.</p>
               <div id="amount-step" hidden>
                 <p class="field"><span id="amount-label">How much do you wish to withdraw?</span></p>
                 <p id="range-note" class="quiet"></p>

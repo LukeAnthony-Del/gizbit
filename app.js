@@ -11,7 +11,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.03.002";
+const VERSION = "2.04.002";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -73,7 +73,9 @@ function sanitize(account) {
   const name = String(account.name || "").trim();
   const type = String(account.type || "").trim();
   if (!name || !type) return null;
-  return { id: account.id, name: name.slice(0, 40), type: type.slice(0, 24), bal, ph: account.ph };
+  const clean = { id: account.id, name: name.slice(0, 40), type: type.slice(0, 24), bal, ph: account.ph };
+  if (typeof account.pw === "string" && account.pw) clean.pw = account.pw.slice(0, 100);
+  return clean;
 }
 
 function saveAccounts() {
@@ -127,12 +129,15 @@ function formatFull(value) {
 
 function formatAmount(value) {
   const amount = BigInt(moneyText(value, false) || "0");
-  const scales = [[10n ** 12n, "Trillion"], [10n ** 9n, "Billion"], [10n ** 6n, "Million"]];
+  const scales = [[10n ** 12n, "Trillion"], [10n ** 9n, "Billion"]];
   for (const [unit, label] of scales) {
     if (amount < unit) continue;
-    if (amount % unit === 0n) return `${formatFull(amount / unit)} ${label}`;
-    const tenths = (amount * 10n) / unit;
-    return `${tenths / 10n}.${tenths % 10n} ${label}`;
+    const scaled = (amount * 1000n) / unit;
+    const whole = scaled / 1000n;
+    const frac = scaled % 1000n;
+    if (frac === 0n) return `${formatFull(whole)} ${label}`;
+    const decimals = frac.toString().padStart(3, "0").replace(/0+$/, "");
+    return `${formatFull(whole)}.${decimals} ${label}`;
   }
   return formatFull(amount);
 }
@@ -242,54 +247,105 @@ function formatWhen(ts) {
   }).format(ts);
 }
 
+function trashMarkup() {
+  return `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M5 7h14M9 7V5h6v2M8 7l1 13h6l1-13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+function eyeMarkup() {
+  return `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
+}
+
+function penMarkup() {
+  return `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 20l4.5-1.2L19 8.3 15.7 5 5.2 15.5 4 20z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.8 6.8l3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>`;
+}
+
+function cleanSign(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 8).map((stroke) => {
+    if (!Array.isArray(stroke)) return [];
+    return stroke.slice(0, 48).map((point) => Math.max(0, Math.min(1000, Math.round(Number(point)) || 0)));
+  }).filter((stroke) => stroke.length >= 2);
+}
+
 function renderActivity() {
   const list = $("activity");
   list.replaceChildren();
-  activity.forEach((item) => {
-    const li = document.createElement("li");
-    const pending = item.remote && !item.reviewed;
-    if (pending) li.classList.add("is-pending");
+  const done = requests.filter((item) => item.status && item.status !== "pending");
+  done.forEach((item) => {
+    const swipe = document.createElement("li");
+    swipe.className = "swipe log-swipe";
+    const actions = document.createElement("div");
+    actions.className = "swipe-actions one";
+    const trash = document.createElement("button");
+    trash.type = "button";
+    trash.className = "swipe-trash";
+    trash.setAttribute("aria-label", "Delete log");
+    trash.innerHTML = trashMarkup();
+    trash.addEventListener("click", () => deleteLog(item.id));
+    actions.append(trash);
+    const row = document.createElement("div");
+    row.className = "log-row";
     const time = document.createElement("time");
     time.dateTime = new Date(item.ts).toISOString();
     time.textContent = formatWhen(item.ts);
-    li.append(time, document.createTextNode(item.text));
-    if (pending) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "review-btn";
-      button.textContent = "Review";
-      button.addEventListener("click", () => openReview(item.id));
-      li.append(button);
+    const verb = item.op === "withdraw" ? "Withdrawal" : "Deposit";
+    const line = document.createElement("span");
+    const alleged = formatAmount(item.amount);
+    const actual = item.applied ? formatAmount(item.applied) : "";
+    line.textContent = actual && actual !== alleged
+      ? `${item.name} · ${verb} · ${alleged} ₲ · received ${actual} ₲`
+      : `${item.name} · ${verb} · ${alleged} ₲`;
+    row.append(time, line);
+    if (item.status === "denied") {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "Denied";
+      row.append(tag);
     }
-    list.append(li);
+    const signBtn = document.createElement("button");
+    signBtn.type = "button";
+    signBtn.className = "sign-btn";
+    signBtn.setAttribute("aria-label", "Show signature");
+    signBtn.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 16c2-3 3-3 4 0s2 3 3.5 0 2-5 3.5-1 2 2 3.5.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M14 4.5l4 4-7.5 7.5H6.5V12L14 4.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+    signBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showSignature(item);
+    });
+    row.append(signBtn);
+    swipe.append(actions, row);
+    bindReveal(row, 56);
+    list.append(swipe);
   });
-  $("activity-empty").hidden = activity.length > 0;
+  $("activity-empty").hidden = done.length > 0;
 }
 
-function bindSwipe(row, id) {
+function bindReveal(row, openPx) {
   let startX = 0;
   let startY = 0;
   let active = false;
+  let origin = 0;
   row.addEventListener("pointerdown", (event) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (event.target.closest("button")) return;
     startX = event.clientX;
     startY = event.clientY;
+    origin = row.classList.contains("is-open") ? openPx : 0;
     active = true;
   });
   row.addEventListener("pointermove", (event) => {
     if (!active) return;
     const dx = event.clientX - startX;
     const dy = event.clientY - startY;
-    if (dx > 8 && Math.abs(dx) > Math.abs(dy)) {
-      row.style.transform = `translateX(${Math.min(dx, 120)}px)`;
-    }
+    if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) return;
+    row.style.transform = `translateX(${Math.max(0, Math.min(openPx, origin + dx))}px)`;
   });
   const finish = (event) => {
     if (!active) return;
     active = false;
     const dx = event.clientX - startX;
+    const open = origin + dx > openPx * 0.45;
     row.style.transform = "";
-    if (dx > 72) askDelete(id);
+    row.classList.toggle("is-open", open);
   };
   row.addEventListener("pointerup", finish);
   row.addEventListener("pointercancel", () => {
@@ -304,6 +360,21 @@ function renderRows() {
   state.accounts.forEach((account) => {
     const swipe = document.createElement("div");
     swipe.className = "swipe";
+    const actions = document.createElement("div");
+    actions.className = "swipe-actions";
+    const trash = document.createElement("button");
+    trash.type = "button";
+    trash.className = "swipe-trash";
+    trash.setAttribute("aria-label", `Delete ${account.name}`);
+    trash.innerHTML = trashMarkup();
+    trash.addEventListener("click", () => deleteAccount(account.id));
+    const eye = document.createElement("button");
+    eye.type = "button";
+    eye.className = "swipe-eye";
+    eye.setAttribute("aria-label", `Show password for ${account.name}`);
+    eye.innerHTML = eyeMarkup();
+    eye.addEventListener("click", () => openPassword(account.id));
+    actions.append(trash, eye);
     const row = document.createElement("div");
     row.className = "acct";
     const name = document.createElement("span");
@@ -317,8 +388,8 @@ function renderRows() {
     full.className = "bal-full";
     full.textContent = formatFull(account.bal);
     row.append(name, type, short, full);
-    swipe.append(row);
-    bindSwipe(swipe, account.id);
+    swipe.append(actions, row);
+    bindReveal(row, 112);
     body.append(swipe);
   });
   $("empty").hidden = state.accounts.length > 0;
@@ -326,6 +397,7 @@ function renderRows() {
 
 function renderAccounts() {
   const select = $("move-account");
+  if (!select) return;
   const current = select.value;
   select.replaceChildren();
   const blank = document.createElement("option");
@@ -532,6 +604,67 @@ function move(op) {
 let pendingDelete = "";
 let pendingReview = "";
 
+function deleteAccount(id) {
+  const account = state.accounts.find((item) => item.id === id);
+  if (!account) return;
+  state.accounts = state.accounts.filter((item) => item.id !== account.id);
+  saveAccounts();
+  logActivity(`Removed ${account.name}.`);
+  render();
+  publishLedger([]).catch(() => {});
+}
+
+function deleteLog(id) {
+  const index = requests.findIndex((item) => item.id === id);
+  if (index < 0) return;
+  requests.splice(index, 1);
+  saveRequests();
+  render();
+  publishLedger([]).catch(() => {});
+}
+
+let passEditId = "";
+
+function openPassword(id) {
+  const account = state.accounts.find((item) => item.id === id);
+  if (!account) return;
+  passEditId = id;
+  $("pass-title").textContent = account.name;
+  $("pass-view").value = account.pw || "";
+  $("pass-view").placeholder = account.pw ? "" : "Not saved on this phone";
+  $("pass-view").readOnly = true;
+  $("pass-save").hidden = true;
+  $("pass-error").textContent = "";
+  $("pass-sheet").hidden = false;
+}
+
+function showSignature(item) {
+  const canvas = $("sign-view");
+  const ctx = canvas.getContext("2d");
+  const width = 320;
+  const height = 160;
+  canvas.width = width;
+  canvas.height = height;
+  ctx.clearRect(0, 0, width, height);
+  ctx.strokeStyle = "#173a5a";
+  ctx.lineWidth = 2.4;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  const strokes = cleanSign(item.sign);
+  $("sign-empty").hidden = strokes.length > 0;
+  strokes.forEach((stroke) => {
+    ctx.beginPath();
+    for (let i = 0; i < stroke.length; i += 2) {
+      const x = (stroke[i] / 999) * width;
+      const y = (stroke[i + 1] / 999) * height;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  });
+  $("sign-sheet").hidden = false;
+}
+
 function askDelete(id) {
   const account = state.accounts.find((item) => item.id === id);
   if (!account) return;
@@ -602,6 +735,7 @@ function takeRequest(req) {
     status: "pending",
     applied: "",
     ts: Date.now(),
+    sign: cleanSign(req.sign),
   });
   requests.splice(40);
   saveRequests();
@@ -634,7 +768,7 @@ function clearNotification(id) {
 function renderRequests() {
   const list = $("request-list");
   list.replaceChildren();
-  requests.forEach((item) => {
+  requests.filter((item) => item.status === "pending").forEach((item) => {
     const li = document.createElement("li");
     li.className = `request is-${item.status}`;
     const time = document.createElement("time");
@@ -660,7 +794,7 @@ function renderRequests() {
     }
     list.append(li);
   });
-  $("requests-empty").hidden = requests.length > 0;
+  $("requests-empty").hidden = requests.some((item) => item.status === "pending");
   const notify = $("notify-go");
   notify.hidden = !("Notification" in window) || Notification.permission === "granted";
 }
@@ -886,6 +1020,45 @@ function setupInstall() {
 
 $("add-account").addEventListener("click", openSheet);
 $("sheet-close").addEventListener("click", closeSheet);
+$("pass-edit").addEventListener("click", () => {
+  $("pass-view").readOnly = false;
+  $("pass-view").placeholder = "New password";
+  $("pass-save").hidden = false;
+  $("pass-view").focus();
+});
+$("pass-save").addEventListener("click", async () => {
+  const account = state.accounts.find((item) => item.id === passEditId);
+  const error = $("pass-error");
+  error.textContent = "";
+  const next = $("pass-view").value.trim();
+  if (!account || !next) {
+    error.textContent = "Enter a password.";
+    return;
+  }
+  try {
+    account.pw = next.slice(0, 100);
+    account.ph = await sha256(next);
+    saveAccounts();
+    $("pass-view").readOnly = true;
+    $("pass-save").hidden = true;
+    toast("Password saved");
+    publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
+  } catch {
+    error.textContent = "This page needs a secure connection before it can save a password.";
+  }
+});
+$("pass-close").addEventListener("click", () => {
+  $("pass-sheet").hidden = true;
+});
+$("pass-sheet").addEventListener("click", (event) => {
+  if (event.target === $("pass-sheet")) $("pass-sheet").hidden = true;
+});
+$("sign-close").addEventListener("click", () => {
+  $("sign-sheet").hidden = true;
+});
+$("sign-sheet").addEventListener("click", (event) => {
+  if (event.target === $("sign-sheet")) $("sign-sheet").hidden = true;
+});
 $("sheet").addEventListener("click", (event) => {
   if (event.target === $("sheet")) closeSheet();
 });
@@ -897,16 +1070,15 @@ $("account-form").addEventListener("submit", async (event) => {
   const error = $("account-error");
   error.textContent = "";
   const name = $("acc-name").value.trim();
-  const type = $("acc-type").value.trim();
   const password = $("acc-pass").value.trim();
-  if (!name || !type || !password) {
-    error.textContent = "Enter a name, account type, and password.";
+  if (!name || !password) {
+    error.textContent = "Enter a name and password.";
     return;
   }
   const button = event.submitter;
   if (button) button.disabled = true;
   try {
-    state.accounts.push({ id: uid(), name: name.slice(0, 40), type: type.slice(0, 24), bal: "0", ph: await sha256(password) });
+    state.accounts.push({ id: uid(), name: name.slice(0, 40), type: "Free", bal: "0", ph: await sha256(password), pw: password });
     saveAccounts();
     logActivity(`Opened ${name} with 0 gizbits.`);
     event.target.reset();
@@ -920,9 +1092,6 @@ $("account-form").addEventListener("submit", async (event) => {
     if (button) button.disabled = false;
   }
 });
-$("deposit").addEventListener("click", () => move("deposit"));
-$("withdraw").addEventListener("click", () => move("withdraw"));
-$("move-form").addEventListener("submit", (event) => event.preventDefault());
 $("confirm-no").addEventListener("click", closeConfirm);
 $("confirm-yes").addEventListener("click", confirmDelete);
 $("confirm").addEventListener("click", (event) => {

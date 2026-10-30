@@ -288,7 +288,34 @@ h1 {
   letter-spacing: 0;
   color: var(--muted);
 }
-.brand .ver { color: var(--silver); font-size: 12px; }
+.vmark + .ver { margin-left: 2px; }
+.vmark {
+  margin-left: 8px;
+  font-family: Palatino, "Iowan Old Style", Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  font-size: 15px;
+  color: #fff;
+}
+.history { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 8px; }
+.history li {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  display: grid;
+  gap: 2px;
+}
+.history time, .history .quiet { color: var(--muted); font-size: 12px; }
+.empty-note {
+  margin: 0;
+  padding: 14px;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--navy);
+  font-weight: 650;
+}
 .lead, .quiet { margin: 0 0 16px; color: var(--muted); }
 .quiet { margin: 0; font-size: 13px; font-weight: 650; }
 .panel {
