@@ -8,7 +8,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.05.002";
+const VERSION = "2.06.002";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -17,9 +17,11 @@ let sessionPh = "";
 let liveThisSession = false;
 let wipedAt = Number(localStorage.getItem(WIPED)) || 0;
 let source = null;
+let streamOpen = false;
 let lastPing = 0;
 let toastTimer = 0;
 let pendingExchangeId = "";
+let pendingSendId = "";
 const waits = new Map();
 const reasons = new Map();
 
@@ -191,8 +193,11 @@ function publishPing() {
   return publish("Checking accounts", { v: 1, kind: "ping", id: uid(), ts: now });
 }
 
-function setStatus(text) {
-  $("link-status").textContent = text;
+function setLink(on) {
+  const mark = $("link-mark");
+  if (!mark) return;
+  mark.classList.toggle("is-on", on);
+  mark.setAttribute("aria-label", on ? "Connected" : "Not connected");
 }
 
 function toast(text) {
@@ -206,9 +211,8 @@ function toast(text) {
 }
 
 function refreshStatus() {
-  if (!ledger) setStatus("Open Gizbit Network on the main phone");
-  else if (Date.now() - ledger.ts < 20000) setStatus("Connected to the main phone");
-  else setStatus("Showing the last balances from the main phone");
+  const fresh = streamOpen && ledger && Date.now() - (ledger.ts || 0) < 20000;
+  setLink(Boolean(fresh));
 }
 
 function matching(ph) {
@@ -266,6 +270,7 @@ function acceptLedger(body) {
   }
   if (sessionPh) renderBank();
   checkExchangeResult();
+  checkSendResult();
   (body.applied || []).forEach((id) => resolveWait(id, "ok"));
 }
 
@@ -317,6 +322,11 @@ function handleMessage(data) {
   if (body.kind === "reject" && body.id) {
     reasons.set(body.id, body.reason || "The main phone refused that.");
     if (body.id === pendingExchangeId) finishExchange(body.id, "denied");
+    if (body.id === pendingSendId) {
+      pendingSendId = "";
+      $("send-msg").textContent = body.reason || "The main phone could not send that.";
+      revealSend();
+    }
     resolveWait(body.id, "reject");
   }
 }
@@ -343,6 +353,14 @@ async function catchUp() {
 function listen() {
   if (source) source.close();
   source = new EventSource(`${NTFY}/${TOPIC}/sse?since=${encodeURIComponent(sinceQuery())}`);
+  source.onopen = () => {
+    streamOpen = true;
+    refreshStatus();
+  };
+  source.onerror = () => {
+    streamOpen = false;
+    refreshStatus();
+  };
   source.onmessage = (event) => {
     try {
       handleMessage(JSON.parse(event.data));
@@ -373,6 +391,7 @@ let accountId = "";
 let chosenOp = "";
 let chosenAmount = "";
 let signed = false;
+let sendSigned = false;
 let exchangeSent = false;
 
 function showLogin() {
@@ -431,7 +450,9 @@ function closeSettings() {
   if (sessionPh) {
     $("login").hidden = true;
     $("bank").hidden = false;
-    $("logout").hidden = $("stage").classList.contains("is-exchange");
+    const stage = $("stage");
+    const away = stage.classList.contains("is-exchange") || stage.classList.contains("is-send") || stage.classList.contains("is-activity");
+    $("logout").hidden = away;
     return;
   }
   showLogin();
@@ -555,20 +576,48 @@ function formatClock(ts) {
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(ts);
 }
 
+const SIGNS = "gizbit-terminal-signs";
+
+function loadSigns() {
+  try {
+    const data = JSON.parse(localStorage.getItem(SIGNS) || "{}");
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSign(id, strokes) {
+  if (!id || !strokes || !strokes.length) return;
+  const all = loadSigns();
+  all[id] = strokes;
+  const ids = Object.keys(all);
+  while (ids.length > 40) delete all[ids.shift()];
+  localStorage.setItem(SIGNS, JSON.stringify(all));
+}
+
 function renderHistory() {
   const list = $("history");
+  const empty = $("activity-empty");
   if (!list) return;
   const account = currentAccount();
-  const items = (ledger?.requests || []).filter((item) => !account || item.accountId === account.id).slice(0, 12);
+  const signs = loadSigns();
+  const items = (ledger?.requests || []).filter((item) => {
+    if (!account) return true;
+    return item.accountId === account.id || item.toId === account.id;
+  }).slice(0, 20);
   list.replaceChildren();
+  if (empty) empty.hidden = items.length > 0;
   items.forEach((item) => {
     const li = document.createElement("li");
     const when = document.createElement("time");
     const ts = Number(item.ts) || Date.now();
     when.textContent = `${formatDate(ts)} · ${formatClock(ts)}`;
+    const incoming = account && item.toId === account.id && item.accountId !== account.id;
     const kind = document.createElement("p");
     kind.className = "who";
-    kind.textContent = item.op === "withdraw" ? "Withdrawal" : "Deposit";
+    if (item.op === "send") kind.textContent = incoming ? `Received from ${item.name}` : `Sent to ${item.toName || "another account"}`;
+    else kind.textContent = item.op === "withdraw" ? "Withdrawal" : "Deposit";
     const money = document.createElement("p");
     money.className = "quiet";
     const alleged = formatAmount(item.amount);
@@ -577,8 +626,92 @@ function renderHistory() {
     else if (actual && String(item.applied) !== String(item.amount)) money.textContent = `${alleged} ₲ asked · ${actual} ₲`;
     else money.textContent = `${alleged} ₲`;
     li.append(when, kind, money);
+    const strokes = signs[item.id] || item.sign;
+    if (Array.isArray(strokes) && strokes.length) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "sign-btn";
+      button.setAttribute("aria-label", "Show signature");
+      button.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 16c2-3 3-3 4 0s2 3 3.5 0 2-5 3.5-1 2 2 3.5.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M14 4.5l4 4-7.5 7.5H6.5V12L14 4.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+      button.addEventListener("click", () => showSavedSignature(strokes));
+      li.append(button);
+    }
     list.append(li);
   });
+}
+
+function signSpace(strokes) {
+  let max = 0;
+  strokes.forEach((stroke) => stroke.forEach((point) => {
+    if (point > max) max = point;
+  }));
+  return max > 999 ? 9999 : 999;
+}
+
+function drawSignature(canvas, strokes) {
+  const cssWidth = canvas.clientWidth || 320;
+  const cssHeight = canvas.clientHeight || 180;
+  const ratio = Math.min(window.devicePixelRatio || 1, 3);
+  const ctx = canvas.getContext("2d");
+  canvas.width = Math.round(cssWidth * ratio);
+  canvas.height = Math.round(cssHeight * ratio);
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+  ctx.strokeStyle = "#173a5a";
+  ctx.lineWidth = 2.2;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  const space = signSpace(strokes);
+  strokes.forEach((stroke) => {
+    const points = [];
+    for (let i = 0; i + 1 < stroke.length; i += 2) {
+      points.push([(stroke[i] / space) * cssWidth, (stroke[i + 1] / space) * cssHeight]);
+    }
+    if (points.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length - 1; i += 1) {
+      const midX = (points[i][0] + points[i + 1][0]) / 2;
+      const midY = (points[i][1] + points[i + 1][1]) / 2;
+      ctx.quadraticCurveTo(points[i][0], points[i][1], midX, midY);
+    }
+    const last = points[points.length - 1];
+    ctx.lineTo(last[0], last[1]);
+    ctx.stroke();
+  });
+}
+
+function showSavedSignature(strokes) {
+  const clean = Array.isArray(strokes) ? strokes : [];
+  $("sign-empty").hidden = clean.length > 0;
+  $("sign-sheet").hidden = false;
+  requestAnimationFrame(() => drawSignature($("sign-view"), clean));
+}
+
+function resampleStroke(points) {
+  const raw = [];
+  for (let i = 0; i + 1 < points.length; i += 2) raw.push([points[i], points[i + 1]]);
+  if (raw.length < 2) return points.slice(0, 80);
+  let length = 0;
+  const walked = [0];
+  for (let i = 1; i < raw.length; i += 1) {
+    length += Math.hypot(raw[i][0] - raw[i - 1][0], raw[i][1] - raw[i - 1][1]);
+    walked.push(length);
+  }
+  const count = Math.min(40, raw.length);
+  const out = [];
+  for (let i = 0; i < count; i += 1) {
+    const dist = count === 1 ? 0 : (length * i) / (count - 1);
+    let index = 1;
+    while (index < walked.length && walked[index] < dist) index += 1;
+    const span = walked[index] - walked[index - 1] || 1;
+    const t = (dist - walked[index - 1]) / span;
+    out.push(
+      Math.round(raw[index - 1][0] + (raw[index][0] - raw[index - 1][0]) * t),
+      Math.round(raw[index - 1][1] + (raw[index][1] - raw[index - 1][1]) * t),
+    );
+  }
+  return out;
 }
 
 function withdrawIsEmpty() {
@@ -599,8 +732,10 @@ function bumpIdle() {
     if (!sessionPh) return;
     sessionPh = "";
     pendingExchangeId = "";
+    pendingSendId = "";
     showHome();
     showLogin();
+    $("login-msg").textContent = "timer ran out, Log in again.";
   }, 60000);
 }
 
@@ -608,14 +743,21 @@ document.addEventListener("pointerdown", bumpIdle);
 document.addEventListener("keydown", bumpIdle);
 
 function showHome() {
-  $("stage").classList.remove("is-exchange");
+  $("stage").classList.remove("is-exchange", "is-send", "is-activity");
   if (sessionPh) $("logout").hidden = false;
 }
 
-function showExchangePage() {
-  $("stage").classList.add("is-exchange");
+function showSide(name) {
+  const stage = $("stage");
+  stage.classList.remove("is-exchange", "is-send", "is-activity");
+  stage.classList.add(`is-${name}`);
   $("logout").hidden = true;
-  $("exchange-pane").scrollTop = 0;
+  const pane = $(`${name}-pane`);
+  if (pane) pane.scrollTop = 0;
+}
+
+function showExchangePage() {
+  showSide("exchange");
 }
 
 function revealSteps() {
@@ -629,7 +771,10 @@ function revealSteps() {
   }
   $("empty-note").hidden = true;
   const note = $("range-note");
-  if (note) note.textContent = chosenOp ? rangeNote() : "";
+  if (note) {
+    note.hidden = chosenOp !== "withdraw";
+    note.textContent = chosenOp === "withdraw" ? rangeNote() : "";
+  }
   const valid = Boolean(chosenOp && amountAllowed(chosenAmount));
   $("terms-step").hidden = !valid;
   const showSign = valid && $("agree").checked;
@@ -653,7 +798,7 @@ function revealSteps() {
 function paintExchangeButton() {
   const button = $("exchange");
   if (!exchangeSent) {
-    button.textContent = "Exchange";
+    button.textContent = "Exchange ₲";
     return;
   }
   button.hidden = false;
@@ -752,12 +897,154 @@ function finishExchange(id, status) {
   showHome();
   renderBank();
   playSuccess();
+  $("done-title").textContent = "Successfully exchanged";
   $("done").hidden = false;
 }
 
 function checkExchangeResult() {
   const found = (ledger?.requests || []).find((item) => item.id === pendingExchangeId);
   if (found) finishExchange(found.id, found.status);
+}
+
+const BILLION_STEP = 1000000000n;
+let sendAccountId = "";
+let sendAmount = "";
+
+function snapTo(digits, step, max) {
+  if (!/^\d+$/.test(digits)) return "";
+  let amount = BigInt(digits);
+  const rem = amount % step;
+  if (rem !== 0n) {
+    const down = amount - rem;
+    const up = down + step;
+    amount = rem * 2n < step ? down : up;
+    if (amount === 0n) amount = up;
+  }
+  let cap = max;
+  if (cap >= step) cap -= cap % step;
+  else cap = 0n;
+  if (amount > cap) amount = cap;
+  return amount > 0n ? amount.toString() : "";
+}
+
+function renderSendAccounts() {
+  const select = $("send-account");
+  const mine = currentAccount();
+  const others = (ledger?.accounts || []).filter((item) => !mine || item.id !== mine.id);
+  select.replaceChildren();
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = others.length ? "Choose an account" : "No other accounts";
+  select.append(blank);
+  others.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.name;
+    select.append(option);
+  });
+  if (others.some((item) => item.id === sendAccountId)) select.value = sendAccountId;
+  else sendAccountId = "";
+}
+
+function revealSend() {
+  const account = currentAccount();
+  const balance = account ? BigInt(account.bal) : 0n;
+  const chosen = Boolean(sendAccountId);
+  $("send-amount-step").hidden = !chosen;
+  const valid = chosen && /^\d+$/.test(sendAmount) && BigInt(sendAmount) > 0n && BigInt(sendAmount) <= balance && BigInt(sendAmount) % BILLION_STEP === 0n;
+  $("send-terms-step").hidden = !valid;
+  const showSign = valid && $("send-agree").checked;
+  $("send-sign-block").hidden = !showSign;
+  $("send-go").hidden = !showSign;
+  if (showSign) {
+    sendPad.setEnabled(true);
+    if (!$("send-sign").dataset.ready) {
+      sendPad.size();
+      $("send-sign").dataset.ready = "1";
+    }
+  } else if (!showSign) {
+    sendPad.setEnabled(false);
+    delete $("send-sign").dataset.ready;
+  }
+  $("send-go").disabled = !(showSign && sendSigned);
+}
+
+function resetSend() {
+  sendAccountId = "";
+  sendAmount = "";
+  sendSigned = false;
+  pendingSendId = "";
+  $("send-amount").value = "";
+  $("send-agree").checked = false;
+  $("send-msg").textContent = "";
+  $("send-amount-step").hidden = true;
+  $("send-terms-step").hidden = true;
+  $("send-sign-block").hidden = true;
+  $("send-go").hidden = true;
+  renderSendAccounts();
+  revealSend();
+}
+
+function checkSendResult() {
+  if (!pendingSendId) return;
+  const found = (ledger?.requests || []).find((item) => item.id === pendingSendId);
+  if (!found) return;
+  pendingSendId = "";
+  if (found.status === "denied") {
+    $("send-msg").textContent = reasons.get(found.id) || "The main phone could not send that.";
+    revealSend();
+    return;
+  }
+  resetSend();
+  showHome();
+  renderBank();
+  playSuccess();
+  $("done-title").textContent = "Gizbits sent";
+  $("done").hidden = false;
+}
+
+async function sendGizbits() {
+  const message = $("send-msg");
+  message.textContent = "";
+  const from = currentAccount();
+  const to = (ledger?.accounts || []).find((item) => item.id === sendAccountId);
+  let amount = sendAmount;
+  if (amount && BigInt(amount) % BILLION_STEP !== 0n) {
+    amount = snapTo(amount, BILLION_STEP, from ? BigInt(from.bal) : 0n);
+    sendAmount = amount;
+    if (amount) $("send-amount").value = formatTyping(amount);
+  }
+  if (!from || !to || !amount || !$("send-agree").checked || !sendSigned) return;
+  if (BigInt(amount) > BigInt(from.bal)) {
+    message.textContent = "Not enough gizbits in that account.";
+    return;
+  }
+  const id = uid();
+  unlockSound();
+  const strokes = sendPad.strokes();
+  $("send-go").disabled = true;
+  message.textContent = "Sending…";
+  try {
+    await publish(`${from.name} sent gizbits to ${to.name}`, {
+      v: 1,
+      kind: "transfer",
+      id,
+      fromId: from.id,
+      toId: to.id,
+      amount,
+      ph: sessionPh,
+      sign: strokes,
+      ts: Date.now(),
+    });
+  } catch {
+    message.textContent = "Couldn't reach the bank. Try again.";
+    revealSend();
+    return;
+  }
+  saveSign(id, strokes);
+  pendingSendId = id;
+  message.textContent = "Sent. The main phone moves the gizbits as soon as it receives this.";
+  checkSendResult();
 }
 
 async function login(password) {
@@ -771,25 +1058,24 @@ async function login(password) {
   button.disabled = true;
   try {
     const ph = await sha256(password.trim());
-    message.textContent = "Checking with the main phone…";
     const before = ledger?.ts || 0;
-    const pingId = uid();
-    try {
-      await publish("Checking accounts", { v: 1, kind: "ping", id: pingId, ts: Date.now() });
-    } catch {
-      if (!(liveThisSession && matching(ph).length)) {
-        message.textContent = "Couldn't reach the bank. Try again.";
+    const known = matching(ph).length > 0;
+    if (!known) message.textContent = "Checking with the main phone…";
+    publish("Checking accounts", { v: 1, kind: "ping", id: uid(), ts: Date.now() }).catch(() => {});
+    if (!known) {
+      const live = await waitForLiveLedger(before, 12000);
+      if (!live && !matching(ph).length) {
+        message.textContent = "Open Gizbit Network on the main phone, then try again.";
         return;
       }
-    }
-    const live = await waitForLiveLedger(before, 12000);
-    if (!live && !(liveThisSession && matching(ph).length)) {
-      message.textContent = "Open Gizbit Network on the main phone, then try again.";
-      return;
-    }
-    if (!matching(ph).length) {
-      message.textContent = "That password doesn't match an account.";
-      return;
+      if (!matching(ph).length) {
+        message.textContent = "That password doesn't match an account.";
+        return;
+      }
+    } else {
+      waitForLiveLedger(before, 4000).then(() => {
+        if (sessionPh) renderBank();
+      });
     }
     sessionPh = ph;
     accountId = matching(ph)[0].id;
@@ -800,6 +1086,7 @@ async function login(password) {
     $("open-settings").hidden = true;
     showHome();
     resetExchange();
+    resetSend();
     renderBank();
     bumpIdle();
     message.textContent = "";
@@ -905,6 +1192,7 @@ async function exchange() {
       sign: pad.strokes(),
       ts: Date.now(),
     });
+    saveSign(id, pad.strokes());
   } catch {
     pendingExchangeId = "";
     exchangeSent = false;
@@ -916,32 +1204,36 @@ async function exchange() {
   checkExchangeResult();
 }
 
-function bindPad() {
-  const canvas = $("sign");
-  const block = $("sign-block");
-  const clearBtn = $("clear-sign");
+function bindPad(canvasId, blockId, clearId, onInk) {
+  const canvas = $(canvasId);
+  const block = $(blockId);
+  const clearBtn = $(clearId);
   const ctx = canvas.getContext("2d");
   let drawing = false;
+  let hasInk = false;
   let strokes = [];
   let current = null;
   function norm(point) {
     const rect = canvas.getBoundingClientRect();
     const width = rect.width || 1;
-    const x = Math.max(0, Math.min(999, Math.round((point.x / width) * 999)));
-    const y = Math.max(0, Math.min(999, Math.round((point.y / 140) * 999)));
+    const height = rect.height || 140;
+    const x = Math.max(0, Math.min(9999, Math.round((point.x / width) * 9999)));
+    const y = Math.max(0, Math.min(9999, Math.round((point.y / height) * 9999)));
     return [x, y];
   }
   function size() {
     const rect = canvas.getBoundingClientRect();
     if (rect.width < 2) return;
-    const ink = signed;
-    canvas.width = rect.width * devicePixelRatio;
-    canvas.height = 140 * devicePixelRatio;
-    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    const ink = hasInk;
+    const ratio = Math.min(devicePixelRatio || 1, 3);
+    canvas.width = rect.width * ratio;
+    canvas.height = rect.height * ratio;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.strokeStyle = "#173a5a";
-    ctx.lineWidth = 2.4;
+    ctx.lineWidth = 2.2;
     ctx.lineCap = "round";
-    if (!ink) signed = false;
+    ctx.lineJoin = "round";
+    if (!ink) hasInk = false;
   }
   function pos(event) {
     const rect = canvas.getBoundingClientRect();
@@ -963,14 +1255,19 @@ function bindPad() {
     if (!drawing) return;
     event.preventDefault();
     const point = pos(event);
-    if (current && current.length < 48) current.push(...norm(point));
+    if (current && current.length < 400) current.push(...norm(point));
     ctx.lineTo(point.x, point.y);
     ctx.stroke();
-    signed = true;
-    revealSteps();
+    hasInk = true;
+    onInk(true);
   });
   canvas.addEventListener("pointerup", () => {
     drawing = false;
+    if (current && current.length >= 4) {
+      const next = resampleStroke(current);
+      current.length = 0;
+      current.push(...next);
+    }
   });
   canvas.addEventListener("pointercancel", () => {
     drawing = false;
@@ -978,27 +1275,35 @@ function bindPad() {
   clearBtn.addEventListener("click", () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     strokes = [];
-    signed = false;
-    revealSteps();
+    hasInk = false;
+    onInk(false);
   });
   return {
     size,
     setEnabled(on) {
       block.classList.toggle("is-locked", !on);
       clearBtn.disabled = !on;
-      if (!on) {
+      if (!on && (hasInk || strokes.length)) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         strokes = [];
-        signed = false;
+        hasInk = false;
+        onInk(false);
       }
     },
     strokes() {
-      return strokes.slice(-8).map((stroke) => stroke.slice(0, 48));
+      return strokes.slice(-8).map((stroke) => stroke.slice(0, 80));
     },
   };
 }
 
-const pad = bindPad();
+const pad = bindPad("sign", "sign-block", "clear-sign", (on) => {
+  signed = on;
+  revealSteps();
+});
+const sendPad = bindPad("send-sign", "send-sign-block", "send-clear-sign", (on) => {
+  sendSigned = on;
+  revealSend();
+});
 
 function bindViewport() {
   const apply = () => {
@@ -1138,14 +1443,74 @@ $("peek").addEventListener("click", () => {
 $("logout").addEventListener("click", () => {
   sessionPh = "";
   pendingExchangeId = "";
+  pendingSendId = "";
   showHome();
   showLogin();
+  $("login-msg").textContent = "";
 });
 $("open-exchange").addEventListener("click", () => {
   showExchangePage();
 });
 $("exchange-back").addEventListener("click", () => {
   showHome();
+});
+$("open-send").addEventListener("click", () => {
+  resetSend();
+  showSide("send");
+});
+$("send-back").addEventListener("click", () => showHome());
+$("open-activity").addEventListener("click", () => {
+  renderHistory();
+  showSide("activity");
+});
+$("activity-back").addEventListener("click", () => showHome());
+$("send-account").addEventListener("change", () => {
+  sendAccountId = $("send-account").value;
+  sendAmount = "";
+  $("send-amount").value = "";
+  $("send-agree").checked = false;
+  sendSigned = false;
+  $("send-msg").textContent = "";
+  revealSend();
+});
+$("send-amount").addEventListener("input", () => {
+  const input = $("send-amount");
+  const formatted = formatTyping(input.value);
+  input.value = formatted;
+  let digits = formatted.replace(/\D/g, "");
+  const balance = currentAccount() ? BigInt(currentAccount().bal) : 0n;
+  if (digits && BigInt(digits) > balance) {
+    let capped = balance;
+    if (capped >= BILLION_STEP) capped -= capped % BILLION_STEP;
+    else capped = 0n;
+    digits = capped > 0n ? capped.toString() : "";
+    input.value = formatTyping(digits);
+  }
+  sendAmount = digits;
+  $("send-msg").textContent = "";
+  revealSend();
+});
+$("send-amount").addEventListener("change", () => {
+  const digits = $("send-amount").value.replace(/\D/g, "");
+  const balance = currentAccount() ? BigInt(currentAccount().bal) : 0n;
+  const snapped = snapTo(digits, BILLION_STEP, balance);
+  $("send-amount").value = snapped ? formatTyping(snapped) : "";
+  sendAmount = snapped;
+  revealSend();
+});
+$("send-agree").addEventListener("change", revealSend);
+$("send-go").addEventListener("click", () => sendGizbits());
+$("send-terms-open").addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  $("terms-body").textContent = activeSettings().terms;
+  $("terms").hidden = false;
+});
+$("sign-close").addEventListener("click", () => {
+  $("sign-sheet").hidden = true;
+});
+$("sign-sheet").addEventListener("click", (event) => {
+  if (event.target === $("sign-sheet")) $("sign-sheet").hidden = true;
 });
 $("pick-withdraw").addEventListener("click", () => chooseOp("withdraw"));
 $("pick-deposit").addEventListener("click", () => chooseOp("deposit"));
@@ -1272,6 +1637,7 @@ document.querySelectorAll(".ver").forEach((node) => {
   localStorage.removeItem(key);
 });
 showLogin();
+setInterval(refreshStatus, 5000);
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js");

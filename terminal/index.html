@@ -22,20 +22,28 @@
         <img class="mark" src="icon-192.png" alt="" />
         <div class="brand-block">
           <p class="brand">Gizbit Terminal <span class="vmark">v</span><span class="ver"></span></p>
-          <p class="sub" id="link-status" role="status">Looking for the main phone…</p>
         </div>
         <button type="button" id="open-settings" class="gear" aria-label="Settings">
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
             <path fill="currentColor" fill-rule="evenodd" d="M19.4 13.5a7.7 7.7 0 0 0 .1-1.5 7.7 7.7 0 0 0-.1-1.5l2-1.6a.5.5 0 0 0 .1-.6l-1.9-3.3a.5.5 0 0 0-.6-.2l-2.4 1a7.4 7.4 0 0 0-2.6-1.5l-.4-2.5a.5.5 0 0 0-.5-.4h-3.8a.5.5 0 0 0-.5.4l-.4 2.5a7.4 7.4 0 0 0-2.6 1.5l-2.4-1a.5.5 0 0 0-.6.2L2.4 8.3a.5.5 0 0 0 .1.6l2 1.6a7.7 7.7 0 0 0-.1 1.5 7.7 7.7 0 0 0 .1 1.5l-2 1.6a.5.5 0 0 0-.1.6l1.9 3.3a.5.5 0 0 0 .6.2l2.4-1a7.4 7.4 0 0 0 2.6 1.5l.4 2.5a.5.5 0 0 0 .5.4h3.8a.5.5 0 0 0 .5-.4l.4-2.5a7.4 7.4 0 0 0 2.6-1.5l2.4 1a.5.5 0 0 0 .6-.2l1.9-3.3a.5.5 0 0 0-.1-.6l-2-1.6zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/>
           </svg>
         </button>
+        <span id="link-mark" class="sat" role="status" aria-label="Not connected">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M4 15.5c4.2-5.2 9.4-7 15-7"/>
+            <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8.2 16c2-2.8 4.8-4 8.8-4"/>
+            <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 16.4V20"/>
+            <circle cx="12" cy="16" r="1.5" fill="currentColor"/>
+            <path class="sat-slash" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M5 5l14 14"/>
+          </svg>
+        </span>
       </header>
 
       <main id="main">
         <section id="login" class="login">
           <div class="login-brand">
             <img class="hero" src="icon-512.png" alt="" />
-            <h1>Gizbit Network <span class="ver"></span></h1>
+            <h1>Gizbit Network</h1>
             <p class="lead">Enter the password for an account on the main phone.</p>
           </div>
           <div class="hint" id="install-hint">
@@ -73,8 +81,9 @@
                 <p id="balance" class="bal"></p>
                 <p id="balance-full" class="bal-full"></p>
               </article>
-              <button type="button" id="open-exchange" class="btn">Exchange</button>
-              <ul id="history" class="history"></ul>
+              <button type="button" id="open-exchange" class="btn">Exchange ₲</button>
+              <button type="button" id="open-send" class="btn">Send ₲</button>
+              <button type="button" id="open-activity" class="btn">Activity</button>
             </div>
             <div class="pane-exchange" id="exchange-pane">
               <button type="button" id="exchange-back" class="back">
@@ -112,7 +121,50 @@
                 <button type="button" id="clear-sign" class="btn ghost slim">Clear</button>
               </div>
               <p id="move-msg" class="error" role="status"></p>
-              <button type="button" id="exchange" class="btn" hidden disabled>Exchange</button>
+              <button type="button" id="exchange" class="btn" hidden disabled>Exchange ₲</button>
+            </div>
+            <div class="pane-send" id="send-pane">
+              <button type="button" id="send-back" class="back">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Back
+              </button>
+              <h1>Send someone gizbits</h1>
+              <label class="field">
+                <span>Account</span>
+                <select id="send-account"></select>
+              </label>
+              <div id="send-amount-step" hidden>
+                <label class="field">
+                  <span>How much would you like to send?</span>
+                  <input id="send-amount" inputmode="numeric" autocomplete="off" placeholder="Type an amount" />
+                </label>
+              </div>
+              <div id="send-terms-step" hidden>
+                <label class="agree">
+                  <input id="send-agree" type="checkbox" />
+                  <span>I agree to the <button type="button" id="send-terms-open" class="terms-link">terms and conditions</button></span>
+                </label>
+              </div>
+              <div id="send-sign-block" class="sign-block" hidden>
+                <p class="field"><span>Signature</span></p>
+                <canvas id="send-sign" class="pad"></canvas>
+                <button type="button" id="send-clear-sign" class="btn ghost slim">Clear</button>
+              </div>
+              <p id="send-msg" class="error" role="status"></p>
+              <button type="button" id="send-go" class="btn" hidden disabled>Send gizbits</button>
+            </div>
+            <div class="pane-activity" id="activity-pane">
+              <button type="button" id="activity-back" class="back">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Back
+              </button>
+              <h1>Activity</h1>
+              <p id="activity-empty" class="quiet">Withdrawals, deposits, and sends show up here.</p>
+              <ul id="history" class="history"></ul>
             </div>
           </div>
         </section>
@@ -152,6 +204,15 @@
         <h2 id="terms-title">Terms and conditions</h2>
         <p id="terms-body"></p>
         <button type="button" id="terms-close" class="btn">Close</button>
+      </div>
+    </div>
+
+    <div id="sign-sheet" class="sheet" hidden>
+      <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sign-title">
+        <h2 id="sign-title">Signature</h2>
+        <canvas id="sign-view" class="sign-view"></canvas>
+        <p id="sign-empty" class="quiet">No signature was saved for this exchange.</p>
+        <button type="button" id="sign-close" class="btn">Close</button>
       </div>
     </div>
 

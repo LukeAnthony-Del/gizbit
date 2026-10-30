@@ -11,7 +11,7 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.04.002";
+const VERSION = "2.05.002";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -192,16 +192,21 @@ function publishLedger(applied, answered) {
       ph: account.ph,
     })),
     settings: state.settings,
-    requests: requests.slice(0, 30).map((item) => ({
-      id: item.id,
-      accountId: item.accountId,
-      name: item.name,
-      op: item.op,
-      amount: item.amount,
-      status: item.status,
-      applied: item.applied || "",
-      ts: item.ts,
-    })),
+    requests: requests.slice(0, 30).map((item) => {
+      const row = {
+        id: item.id,
+        accountId: item.accountId,
+        name: item.name,
+        op: item.op,
+        amount: item.amount,
+        status: item.status,
+        applied: item.applied || "",
+        ts: item.ts,
+      };
+      if (item.toId) row.toId = item.toId;
+      if (item.toName) row.toName = item.toName;
+      return row;
+    }),
     ts: Date.now(),
   };
   return publish("Balances updated", payload);
@@ -263,8 +268,49 @@ function cleanSign(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 8).map((stroke) => {
     if (!Array.isArray(stroke)) return [];
-    return stroke.slice(0, 48).map((point) => Math.max(0, Math.min(1000, Math.round(Number(point)) || 0)));
+    return stroke.slice(0, 80).map((point) => Math.max(0, Math.min(9999, Math.round(Number(point)) || 0)));
   }).filter((stroke) => stroke.length >= 2);
+}
+
+function signSpace(strokes) {
+  let max = 0;
+  strokes.forEach((stroke) => stroke.forEach((point) => {
+    if (point > max) max = point;
+  }));
+  return max > 999 ? 9999 : 999;
+}
+
+function drawSignature(canvas, strokes) {
+  const cssWidth = canvas.clientWidth || 320;
+  const cssHeight = canvas.clientHeight || 180;
+  const ratio = Math.min(window.devicePixelRatio || 1, 3);
+  const ctx = canvas.getContext("2d");
+  canvas.width = Math.round(cssWidth * ratio);
+  canvas.height = Math.round(cssHeight * ratio);
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+  ctx.strokeStyle = "#173a5a";
+  ctx.lineWidth = 2.2;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  const space = signSpace(strokes);
+  strokes.forEach((stroke) => {
+    const points = [];
+    for (let i = 0; i + 1 < stroke.length; i += 2) {
+      points.push([(stroke[i] / space) * cssWidth, (stroke[i + 1] / space) * cssHeight]);
+    }
+    if (points.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length - 1; i += 1) {
+      const midX = (points[i][0] + points[i + 1][0]) / 2;
+      const midY = (points[i][1] + points[i + 1][1]) / 2;
+      ctx.quadraticCurveTo(points[i][0], points[i][1], midX, midY);
+    }
+    const last = points[points.length - 1];
+    ctx.lineTo(last[0], last[1]);
+    ctx.stroke();
+  });
 }
 
 function renderActivity() {
@@ -288,7 +334,7 @@ function renderActivity() {
     const time = document.createElement("time");
     time.dateTime = new Date(item.ts).toISOString();
     time.textContent = formatWhen(item.ts);
-    const verb = item.op === "withdraw" ? "Withdrawal" : "Deposit";
+    const verb = item.op === "withdraw" ? "Withdrawal" : item.op === "send" ? `Sent to ${item.toName || "another account"}` : "Deposit";
     const line = document.createElement("span");
     const alleged = formatAmount(item.amount);
     const actual = item.applied ? formatAmount(item.applied) : "";
@@ -477,6 +523,10 @@ function handleMessage(data, bucket) {
     if (takeRequest(body)) bucket.requests = true;
     return;
   }
+  if (body.kind === "transfer") {
+    if (takeTransfer(body)) bucket.requests = true;
+    return;
+  }
   if (body.kind === "tx") {
     const id = takeTx(body);
     if (id) bucket.applied.push(id);
@@ -639,30 +689,10 @@ function openPassword(id) {
 }
 
 function showSignature(item) {
-  const canvas = $("sign-view");
-  const ctx = canvas.getContext("2d");
-  const width = 320;
-  const height = 160;
-  canvas.width = width;
-  canvas.height = height;
-  ctx.clearRect(0, 0, width, height);
-  ctx.strokeStyle = "#173a5a";
-  ctx.lineWidth = 2.4;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
   const strokes = cleanSign(item.sign);
   $("sign-empty").hidden = strokes.length > 0;
-  strokes.forEach((stroke) => {
-    ctx.beginPath();
-    for (let i = 0; i < stroke.length; i += 2) {
-      const x = (stroke[i] / 999) * width;
-      const y = (stroke[i + 1] / 999) * height;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  });
   $("sign-sheet").hidden = false;
+  requestAnimationFrame(() => drawSignature($("sign-view"), strokes));
 }
 
 function askDelete(id) {
@@ -715,6 +745,52 @@ function playSuccess() {
   const audio = $("success-sound");
   audio.currentTime = 0;
   audio.play().catch(() => {});
+}
+
+function takeTransfer(body) {
+  if (!body || !body.id || !remember(body.id)) return false;
+  const from = state.accounts.find((item) => item.id === body.fromId);
+  const to = state.accounts.find((item) => item.id === body.toId);
+  const amount = parseAmount(body.amount);
+  if (!from || !to || from.id === to.id || amount == null || body.ph !== from.ph) {
+    publishReject(body.id, from ? "The password did not match." : "That account was removed.");
+    return false;
+  }
+  const value = BigInt(amount);
+  if (value <= 0n || value % 1000000000n !== 0n) {
+    publishReject(body.id, "Send a whole number of billions.");
+    return false;
+  }
+  if (value > BigInt(from.bal)) {
+    publishReject(body.id, "Not enough gizbits.");
+    return false;
+  }
+  const nextTo = BigInt(to.bal) + value;
+  if (nextTo > MAX) {
+    publishReject(body.id, "That balance would be too large.");
+    return false;
+  }
+  from.bal = (BigInt(from.bal) - value).toString();
+  to.bal = nextTo.toString();
+  saveAccounts();
+  requests.unshift({
+    id: body.id,
+    accountId: from.id,
+    name: from.name,
+    op: "send",
+    amount,
+    status: "sent",
+    applied: amount,
+    toId: to.id,
+    toName: to.name,
+    ts: Date.now(),
+    sign: cleanSign(body.sign),
+  });
+  requests.splice(40);
+  saveRequests();
+  logActivity(`${from.name} sent ${formatAmount(amount)} ₲ to ${to.name}.`);
+  render();
+  return true;
 }
 
 function takeRequest(req) {
