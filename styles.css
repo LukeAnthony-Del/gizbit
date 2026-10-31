@@ -287,6 +287,24 @@ body.standalone .hint { display: none; }
 .swipe-trash { background: #a33b3b; }
 .swipe-eye { background: #8d99a6; }
 .acct.is-open { transform: translateX(112px); }
+.acct.is-sign { transform: translateX(-56px); }
+.swipe-usual {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 56px;
+  border: 0;
+  background: #c5dff5;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+}
+.swipe-usual img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
 .log-row.is-open { transform: translateX(56px); }
 .log-row.is-sign { transform: translateX(-56px); }
 .acct, .log-row {

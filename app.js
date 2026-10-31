@@ -5,6 +5,7 @@ const STORAGE = "gizbit-accounts";
 const ACTIVITY = "gizbit-activity";
 const REQUESTS = "gizbit-requests";
 const TAXES = "gizbit-taxes";
+const USUAL = "gizbit-usual";
 const SEEN = "gizbit-seen";
 const CURSOR = "gizbit-cursor";
 const MAX = 10n ** 18n;
@@ -18,7 +19,7 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.09.002";
+const VERSION = "2.10.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -378,6 +379,141 @@ function drawSignature(canvas, strokes) {
   });
 }
 
+function loadUsual() {
+  try {
+    const data = JSON.parse(localStorage.getItem(USUAL) || "{}");
+    if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+    return data;
+  } catch {
+    return {};
+  }
+}
+
+let usual = loadUsual();
+
+function saveUsual() {
+  localStorage.setItem(USUAL, JSON.stringify(usual));
+}
+
+function strokePoints(stroke) {
+  const points = [];
+  for (let i = 0; i + 1 < stroke.length; i += 2) points.push([stroke[i], stroke[i + 1]]);
+  return points;
+}
+
+function resamplePoints(points, count) {
+  if (!points.length) return [];
+  const lengths = [0];
+  for (let i = 1; i < points.length; i += 1) {
+    lengths.push(lengths[i - 1] + Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]));
+  }
+  const total = lengths[lengths.length - 1];
+  if (total === 0) return Array.from({ length: count }, () => [points[0][0], points[0][1]]);
+  const out = [];
+  let seg = 1;
+  for (let i = 0; i < count; i += 1) {
+    const dist = (total * i) / (count - 1);
+    while (seg < lengths.length - 1 && lengths[seg] < dist) seg += 1;
+    const span = lengths[seg] - lengths[seg - 1] || 1;
+    const t = (dist - lengths[seg - 1]) / span;
+    const a = points[seg - 1];
+    const b = points[seg];
+    out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+  }
+  return out;
+}
+
+function normalizeSign(strokes) {
+  const clean = cleanSign(strokes).map(strokePoints).filter((points) => points.length >= 2);
+  if (!clean.length) return [];
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  clean.forEach((points) => points.forEach(([x, y]) => {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }));
+  const span = Math.max(1, maxX - minX, maxY - minY);
+  const scale = 8000 / span;
+  const offsetX = (9999 - (maxX - minX) * scale) / 2;
+  const offsetY = (9999 - (maxY - minY) * scale) / 2;
+  return clean.slice(0, 8).map((points) => resamplePoints(points, 16).map(([x, y]) => [
+    Math.max(0, Math.min(9999, Math.round((x - minX) * scale + offsetX))),
+    Math.max(0, Math.min(9999, Math.round((y - minY) * scale + offsetY))),
+  ]).flat());
+}
+
+function averageSign(samples) {
+  if (!samples.length) return [];
+  const tally = new Map();
+  samples.forEach((sample) => tally.set(sample.length, (tally.get(sample.length) || 0) + 1));
+  let mode = samples[0].length;
+  let best = 0;
+  tally.forEach((count, size) => {
+    if (count > best) {
+      best = count;
+      mode = size;
+    }
+  });
+  const pool = samples.filter((sample) => sample.length === mode);
+  const out = [];
+  for (let i = 0; i < mode; i += 1) {
+    const strokes = pool.map((sample) => resamplePoints(strokePoints(sample[i] || []), 16));
+    const avg = [];
+    for (let p = 0; p < 16; p += 1) {
+      let x = 0;
+      let y = 0;
+      let n = 0;
+      strokes.forEach((points) => {
+        if (!points[p]) return;
+        x += points[p][0];
+        y += points[p][1];
+        n += 1;
+      });
+      if (!n) continue;
+      avg.push(Math.round(x / n), Math.round(y / n));
+    }
+    if (avg.length >= 4) out.push(avg);
+  }
+  return out;
+}
+
+function noteSign(accountId, id, sign, quiet) {
+  const strokes = normalizeSign(sign);
+  if (!accountId || !id || !strokes.length) return false;
+  if (!usual[accountId] || typeof usual[accountId] !== "object") usual[accountId] = { ids: [], samples: [] };
+  const bag = usual[accountId];
+  if (!Array.isArray(bag.ids)) bag.ids = [];
+  if (!Array.isArray(bag.samples)) bag.samples = [];
+  if (bag.ids.includes(id)) return false;
+  bag.ids.push(id);
+  bag.samples.push(strokes);
+  if (bag.samples.length > 24) bag.samples.splice(0, bag.samples.length - 24);
+  if (bag.ids.length > 80) bag.ids.splice(0, bag.ids.length - 80);
+  if (!quiet) saveUsual();
+  return true;
+}
+
+function absorbStoredSigns() {
+  let changed = false;
+  requests.forEach((item) => {
+    if (noteSign(item.accountId, item.id, item.sign, true)) changed = true;
+  });
+  taxes.forEach((item) => {
+    if (noteSign(item.accountId, item.id, item.sign, true)) changed = true;
+  });
+  if (changed) saveUsual();
+}
+
+function usualSign(accountId) {
+  const bag = usual[accountId];
+  if (!bag || !Array.isArray(bag.samples) || !bag.samples.length) return [];
+  return averageSign(bag.samples);
+}
+
 function isTransfer(item) {
   return item.op === "send" || item.op === "transfer";
 }
@@ -512,6 +648,15 @@ function renderRows() {
     eye.innerHTML = eyeMarkup();
     eye.addEventListener("click", () => openPassword(account.id));
     actions.append(trash, eye);
+    const usualBtn = document.createElement("button");
+    usualBtn.type = "button";
+    usualBtn.className = "swipe-usual";
+    usualBtn.setAttribute("aria-label", `Usual signature for ${account.name}`);
+    usualBtn.innerHTML = `<img src="sign-hand.png" alt="" />`;
+    usualBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showUsual(account);
+    });
     const row = document.createElement("div");
     row.className = "acct";
     const name = document.createElement("span");
@@ -526,8 +671,8 @@ function renderRows() {
     full.className = "bal-full";
     full.textContent = formatFull(account.bal);
     row.append(name, type, short, full);
-    swipe.append(actions, row);
-    bindReveal(row, 112);
+    swipe.append(actions, usualBtn, row);
+    bindReveal(row, 112, 56);
     body.append(swipe);
   });
   $("empty").hidden = state.accounts.length > 0;
@@ -711,6 +856,7 @@ function takeTax(body) {
     ts: Number(body.ts) || Date.now(),
   });
   saveTaxes();
+  noteSign(account.id, body.id, body.sign);
   renderGovernment();
   toast(`${business} filed a tax return`);
   return true;
@@ -880,6 +1026,17 @@ function openPassword(id) {
 
 function showSignature(item) {
   const strokes = cleanSign(item.sign);
+  $("sign-title").textContent = "Signature";
+  $("sign-empty").textContent = "No signature was saved for this exchange.";
+  $("sign-empty").hidden = strokes.length > 0;
+  $("sign-sheet").hidden = false;
+  requestAnimationFrame(() => drawSignature($("sign-view"), strokes));
+}
+
+function showUsual(account) {
+  const strokes = usualSign(account.id);
+  $("sign-title").textContent = `Usual signature for ${account.name}`;
+  $("sign-empty").textContent = "No signature yet for this account.";
   $("sign-empty").hidden = strokes.length > 0;
   $("sign-sheet").hidden = false;
   requestAnimationFrame(() => drawSignature($("sign-view"), strokes));
@@ -903,6 +1060,8 @@ function confirmDelete() {
   closeConfirm();
   if (!account) return;
   state.accounts = state.accounts.filter((item) => item.id !== account.id);
+  delete usual[account.id];
+  saveUsual();
   saveAccounts();
   logActivity(`Removed ${account.name}.`);
   render();
@@ -978,6 +1137,7 @@ function takeTransfer(body) {
   });
   requests.splice(40);
   saveRequests();
+  noteSign(from.id, body.id, body.sign);
   logActivity(`${from.name} transferred ${formatAmount(amount)} ₲ to ${to.name}.`);
   render();
   return true;
@@ -1005,6 +1165,7 @@ function takeRequest(req) {
   });
   requests.splice(40);
   saveRequests();
+  noteSign(account.id, req.id, req.sign);
   renderRequests();
   notifyPending(requests[0]);
   return true;
@@ -1398,7 +1559,9 @@ function deleteEverything() {
   requests.splice(0, requests.length);
   activity.splice(0, activity.length);
   taxes.splice(0, taxes.length);
+  usual = {};
   localStorage.removeItem(TAXES);
+  localStorage.removeItem(USUAL);
   ["gizbit-network-name", "gizbit-network-pair", "gizbit-phones", "gizbit-network-device"].forEach((key) => localStorage.removeItem(key));
   saveAccounts();
   saveRequests();
@@ -1509,6 +1672,7 @@ setupInstall();
 fillSettings();
 ["gizbit-network-name", "gizbit-network-pair", "gizbit-phones", "gizbit-network-device"].forEach((key) => localStorage.removeItem(key));
 $("app-version").textContent = VERSION;
+absorbStoredSigns();
 render();
 showTab("balances");
 maybeOpenLinked();
