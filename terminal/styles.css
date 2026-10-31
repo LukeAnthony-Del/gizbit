@@ -161,7 +161,7 @@ main {
   position: relative;
   width: 100%;
   height: 100%;
-  overflow: hidden;
+  overflow: clip;
 }
 .pane-home, .pane-exchange, .pane-activity, .pane-calc, .pane-gov, .pane-tax {
   position: absolute;
@@ -274,19 +274,53 @@ main {
   background: #d5dde5;
   color: #1b2c3a;
 }
+.gov-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.gov-brand {
+  margin-left: auto;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  color: #fff;
+  text-align: right;
+}
+.gov-brand p {
+  margin: 0;
+  max-width: 148px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #fff;
+}
+.gov-crest { width: 48px; height: 36px; }
+.tax-mark {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  transform: rotate(180deg);
+  filter: invert(1);
+}
 .gov-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  width: 100%;
+  flex: none;
+  padding-bottom: env(safe-area-inset-bottom);
 }
 .gov-tabs button {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  min-height: 48px;
+  gap: 4px;
+  width: 100%;
+  min-height: 72px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 0;
   background: #3a3a3a;
   color: #f4f4f4;
   font-weight: 700;
@@ -296,7 +330,8 @@ main {
   color: #fff;
 }
 .pane-gov.gov-app {
-  display: block;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   padding: 0;
   background: #2a2a2a;
@@ -307,10 +342,11 @@ main {
   color: #f4f4f4;
 }
 .gov-body {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   overscroll-behavior: none;
-  padding: 18px 16px 96px;
+  padding: 18px 16px 88px;
   display: grid;
   gap: 12px;
   align-content: start;
@@ -329,7 +365,7 @@ main {
 .gov-plus {
   position: absolute;
   right: 16px;
-  bottom: 16px;
+  bottom: calc(84px + env(safe-area-inset-bottom));
   z-index: 3;
   width: 56px;
   height: 56px;
@@ -658,7 +694,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 0 0 14px; }
   font-size: 14px;
   font-weight: 650;
 }
-#send-amount, #other-amount { scroll-margin-top: 24px; scroll-margin-bottom: 42vh; }
+#send-amount, #other-amount, #euro-input, #giz-input { scroll-margin-top: 24px; scroll-margin-bottom: 42vh; }
 .account-menu { position: relative; }
 .account-menu-btn {
   width: 100%;
@@ -710,6 +746,8 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 0 0 14px; }
 }
 .account-menu-item.is-on { background: #e7eef4; color: var(--navy); }
 .pane-calc { background: #e6e7ee; }
+.pane-calc.is-typing { padding-bottom: 46vh; }
+.pane-calc h1 { margin: 0; font-size: 26px; color: #111; line-height: 1.15; }
 .fx { display: grid; gap: 16px; }
 .fx-banner {
   background: #2f5bff;
@@ -721,10 +759,11 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 0 0 14px; }
 .fx-banner p {
   margin: 0;
   color: #fff;
-  font-size: 26px;
+  font-size: clamp(18px, 5.4vw, 26px);
   font-weight: 800;
   letter-spacing: -0.03em;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 .fx-stack { position: relative; display: grid; gap: 12px; }
 .fx-card {
@@ -735,7 +774,9 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 0 0 14px; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
 }
 .fx-code {
   display: flex;
@@ -756,32 +797,29 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 0 0 14px; }
   font-weight: 800;
 }
 .fx-amount-wrap {
-  margin-left: auto;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: baseline;
   justify-content: flex-end;
   gap: 4px;
-  min-width: 0;
-  max-width: 68%;
 }
 .fx-symbol {
   flex: none;
-  font-size: clamp(18px, 6cqi, 28px);
+  font-size: 28px;
   font-weight: 750;
   color: #111;
   line-height: 1;
 }
-.fx-card { container-type: inline-size; }
 .pane-calc .fx-amount {
+  flex: 1 1 0;
   width: auto;
-  max-width: 100%;
-  field-sizing: content;
-  flex: 0 1 auto;
+  min-width: 0;
   border: 0;
   background: transparent;
   color: #111;
   text-align: right;
-  font-size: clamp(18px, 6cqi, 28px);
+  font-size: 28px;
   font-weight: 750;
   line-height: 1.1;
   padding: 0;

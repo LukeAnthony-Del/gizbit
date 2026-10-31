@@ -16,7 +16,7 @@ const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Gov
 const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.11.002";
+const VERSION = "2.12.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -606,7 +606,7 @@ function paintAccount() {
   refreshAccountMenu(pick);
   $("welcome").textContent = `Welcome, ${account.name}`;
   $("balance").textContent = `${formatAmount(account.bal)} ₲`;
-  $("balance-full").textContent = formatFull(account.bal);
+  $("balance-full").textContent = `${formatFull(account.bal)} GZBT`;
 }
 
 function limits() {
@@ -851,6 +851,7 @@ document.addEventListener("keydown", bumpIdle);
 function showHome() {
   const stage = $("stage");
   stage.classList.remove("is-side");
+  stage.scrollLeft = 0;
   ["exchange", "activity", "calc", "gov", "tax"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
   if (sessionPh) $("logout").hidden = false;
 }
@@ -859,6 +860,7 @@ function showSide(name) {
   const stage = $("stage");
   ["exchange", "activity", "calc", "gov", "tax"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
   stage.classList.add("is-side");
+  stage.scrollLeft = 0;
   $("logout").hidden = true;
   const pane = $(`${name}-pane`);
   if (pane) pane.scrollTop = 0;
@@ -1476,6 +1478,7 @@ function bindViewport() {
     document.documentElement.style.setProperty("--vvtop", `${top}px`);
     requestAnimationFrame(() => {
       if (!$("login").hidden) $("login-go").scrollIntoView({ block: "end" });
+      fitFxAmounts();
       liftAmount();
       setTimeout(liftAmount, 80);
     });
@@ -1624,8 +1627,41 @@ function euroRate() {
   }
 }
 
+let fxEuroOnTop = true;
+
+function oneGzbtInEuro(rate) {
+  if (rate <= 0n) return "0";
+  if (rate === 1n) return "1.00";
+  const scale = BigInt(rate.toString().length + 2);
+  const scaled = (10n ** scale) / rate;
+  if (scaled <= 0n) return `0.${"0".repeat(Number(scale))}`;
+  const digits = scaled.toString().padStart(Number(scale), "0").replace(/0+$/, "");
+  return `0.${digits}`;
+}
+
 function paintRate() {
-  $("rate-line").textContent = `1.00 EUR = ${formatAmount(euroRate())} ₲`;
+  const rate = euroRate();
+  $("rate-line").textContent = fxEuroOnTop
+    ? `1.00 EUR = ${formatAmount(rate)} ₲`
+    : `1 GZBT = ${oneGzbtInEuro(rate)} EUR`;
+}
+
+function fitFxAmount(input) {
+  if (!input || input.clientWidth < 8) return;
+  const symbol = input.previousElementSibling;
+  let size = 28;
+  input.style.fontSize = "28px";
+  if (symbol) symbol.style.fontSize = "28px";
+  while (size > 13 && input.scrollWidth > input.clientWidth + 1) {
+    size -= 2;
+    input.style.fontSize = `${size}px`;
+    if (symbol) symbol.style.fontSize = `${size}px`;
+  }
+}
+
+function fitFxAmounts() {
+  fitFxAmount($("euro-input"));
+  fitFxAmount($("giz-input"));
 }
 
 function readEuro(value) {
@@ -1736,7 +1772,7 @@ function renderTaxDash() {
   if (!filed.length) {
     const empty = document.createElement("p");
     empty.className = "quiet";
-    empty.textContent = "No tax records yet.";
+    empty.textContent = "No tax returns yet, file a return to get started.";
     panel.append(empty);
     return;
   }
@@ -2044,6 +2080,7 @@ $("euro-input").addEventListener("input", () => {
     $("giz-input").value = gizbits ? formatTyping(gizbits.toString()) : "";
   }
   fxLock = false;
+  fitFxAmounts();
 });
 $("giz-input").addEventListener("input", () => {
   if (fxLock) return;
@@ -2058,12 +2095,29 @@ $("giz-input").addEventListener("input", () => {
   if (!digits) $("euro-input").value = "";
   else $("euro-input").value = euroText((BigInt(digits) * 100n) / euroRate());
   fxLock = false;
+  fitFxAmounts();
+});
+function liftCurrency() {
+  $("calc-pane").classList.add("is-typing");
+  setTimeout(liftAmount, 50);
+  setTimeout(liftAmount, 320);
+}
+$("euro-input").addEventListener("focus", liftCurrency);
+$("giz-input").addEventListener("focus", liftCurrency);
+$("calc-pane").addEventListener("focusout", () => {
+  setTimeout(() => {
+    const active = document.activeElement;
+    if (active !== $("euro-input") && active !== $("giz-input")) $("calc-pane").classList.remove("is-typing");
+  }, 40);
 });
 $("fx-swap").addEventListener("click", () => {
-  const euro = $("euro-input");
-  const giz = $("giz-input");
-  if (document.activeElement === euro) giz.focus();
-  else euro.focus();
+  fxEuroOnTop = !fxEuroOnTop;
+  const euroCard = $("fx-euro");
+  const gizCard = $("fx-giz");
+  if (fxEuroOnTop) euroCard.parentElement.insertBefore(euroCard, gizCard);
+  else gizCard.parentElement.insertBefore(gizCard, euroCard);
+  paintRate();
+  fitFxAmounts();
 });
 $("open-gov").addEventListener("click", () => {
   showGovTab("taxes");
@@ -2175,14 +2229,21 @@ function formatTyping(value) {
 
 function liftAmount() {
   const field = document.activeElement;
-  if (field !== $("other-amount") && field !== $("send-amount")) return;
+  const currency = field === $("euro-input") || field === $("giz-input");
+  const exchange = field === $("other-amount") || field === $("send-amount");
+  if (!currency && !exchange) return;
   if (!$("bank") || $("bank").hidden) return;
-  const pane = $("exchange-pane");
-  field.scrollIntoView({ block: "center", inline: "nearest" });
+  const pane = currency ? $("calc-pane") : $("exchange-pane");
+  const target = currency ? pane.querySelector(".fx-stack") : field;
+  $("stage").scrollLeft = 0;
   const paneRect = pane.getBoundingClientRect();
-  const fieldRect = field.getBoundingClientRect();
-  const overflow = fieldRect.bottom - (paneRect.bottom - 28);
-  if (overflow > 0) pane.scrollTop += overflow + 16;
+  const targetRect = target.getBoundingClientRect();
+  const mid = targetRect.top + targetRect.height / 2;
+  const paneMid = paneRect.top + paneRect.height / 2;
+  pane.scrollTop += mid - paneMid;
+  const next = target.getBoundingClientRect();
+  const limit = pane.getBoundingClientRect().bottom - (currency ? 12 : 28);
+  if (next.bottom > limit) pane.scrollTop += next.bottom - limit + 16;
 }
 
 function snapTyped(digits) {
