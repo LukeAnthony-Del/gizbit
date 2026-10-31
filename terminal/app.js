@@ -16,7 +16,7 @@ const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Gov
 const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.12.000";
+const VERSION = "2.13.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -853,6 +853,7 @@ function showHome() {
   stage.classList.remove("is-side");
   stage.scrollLeft = 0;
   ["exchange", "activity", "calc", "gov", "tax"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
+  closeTaxForm();
   if (sessionPh) $("logout").hidden = false;
 }
 
@@ -1782,7 +1783,7 @@ function renderTaxDash() {
     const title = document.createElement("strong");
     title.textContent = item.business;
     const meta = document.createElement("p");
-    meta.textContent = `Sheet ${item.sheet} · Session ${item.session} · Total invoice ${formatAmount(item.totals?.invoice || "0")} ₲`;
+    meta.textContent = `Invoice ${item.sheet} · Session ${item.session} · Total invoice ${formatAmount(item.totals?.invoice || "0")} ₲`;
     card.append(title, meta);
     panel.append(card);
   });
@@ -1807,98 +1808,96 @@ function fillBusinesses(selected) {
   add.textContent = "Add new";
   select.append(add);
   select.value = names.includes(selected) ? selected : "";
+  refreshAccountMenu(select);
 }
 
-function paintLine(card, line) {
-  const revenue = moneyText(line.revenue, false);
-  const rate = taxRates().vat;
-  if (revenue == null || line.revenue === "") {
-    card.querySelector(".tax-vat").textContent = `VAT due (${rate}%) —`;
-    card.querySelector(".tax-net").textContent = "Net profit —";
-    return;
+let taxStep = 1;
+
+function closeTaxForm() {
+  const pane = $("tax-pane");
+  if (pane) pane.classList.remove("is-up");
+  const cancel = $("tax-cancel");
+  if (cancel) cancel.hidden = true;
+}
+
+function showTaxStep(step) {
+  taxStep = step;
+  $("tax-track").dataset.step = String(step);
+  $("tax-back-label").textContent = step === 1 ? "Back" : "Cancel";
+  $("tax-next").hidden = step === 3;
+  $("tax-commit").hidden = step !== 3;
+  [...$("tax-dots").children].forEach((dot, index) => {
+    dot.classList.toggle("is-on", index + 1 === step);
+    dot.classList.toggle("is-done", index + 1 < step);
+  });
+  paintTaxNav();
+  if (step === 3) {
+    paintTaxTotals();
+    $("tax-terms-text").textContent = activeSettings().taxTerms;
+    taxPad.setEnabled(true);
+    requestAnimationFrame(() => taxPad.size());
   }
-  const due = (BigInt(revenue) * BigInt(rate)) / 100n;
-  const net = BigInt(revenue) - due;
-  card.querySelector(".tax-vat").textContent = `VAT due (${rate}%) ${formatAmount(due)} ₲`;
-  card.querySelector(".tax-net").textContent = `Net profit ${formatAmount(net)} ₲`;
+}
+
+function paintTaxNav() {
+  const productsReady = taxLines.length > 0 && taxLines.every(lineComplete);
+  $("tax-next").disabled = taxStep === 1 ? !chosenBusiness() : !productsReady;
 }
 
 function renderTaxLines() {
-  const box = $("tax-lines");
-  box.replaceChildren();
+  const body = $("tax-lines");
+  body.replaceChildren();
+  const rate = BigInt(taxRates().vat);
   taxLines.forEach((line, index) => {
-    const card = document.createElement("div");
-    card.className = "tax-line";
-    const name = document.createElement("input");
-    name.maxLength = 40;
-    name.autocomplete = "off";
-    name.value = line.name;
-    name.addEventListener("input", () => {
-      line.name = name.value;
-      markTaxDirty();
+    const row = document.createElement("tr");
+    const revenue = BigInt(line.revenue);
+    const due = (revenue * rate) / 100n;
+    const net = revenue - due;
+    [line.name, formatFull(line.qty), formatAmount(revenue), formatAmount(due), formatAmount(net)].forEach((text) => {
+      const cell = document.createElement("td");
+      cell.textContent = text;
+      row.append(cell);
     });
-    const qty = document.createElement("input");
-    qty.inputMode = "numeric";
-    qty.autocomplete = "off";
-    qty.value = line.qty ? formatFull(line.qty) : "";
-    qty.addEventListener("input", () => {
-      const digits = qty.value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
-      line.qty = digits;
-      const shown = digits ? formatFull(digits) : "";
-      if (qty.value !== shown) {
-        qty.value = shown;
-        qty.setSelectionRange(shown.length, shown.length);
-      }
-      paintLine(card, line);
-      markTaxDirty();
-    });
-    const revenue = document.createElement("input");
-    revenue.inputMode = "numeric";
-    revenue.autocomplete = "off";
-    revenue.value = line.revenue ? formatFull(line.revenue) : "";
-    revenue.addEventListener("input", () => {
-      let digits = revenue.value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
-      if (digits && BigInt(digits) > MAX) digits = MAX.toString();
-      line.revenue = digits;
-      const shown = digits ? formatFull(digits) : "";
-      if (revenue.value !== shown) {
-        revenue.value = shown;
-        revenue.setSelectionRange(shown.length, shown.length);
-      }
-      paintLine(card, line);
-      markTaxDirty();
-    });
-    const calc = document.createElement("div");
-    calc.className = "tax-calc";
-    const vat = document.createElement("p");
-    vat.className = "tax-vat";
-    const net = document.createElement("p");
-    net.className = "tax-net";
-    calc.append(vat, net);
+    const action = document.createElement("td");
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.className = "btn ghost slim";
-    remove.textContent = "Remove";
+    remove.className = "tax-trash";
+    remove.setAttribute("aria-label", `Remove ${line.name}`);
+    remove.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 7h14M9 7V5h6v2M8 7l1 13h6l1-13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     remove.addEventListener("click", () => {
       taxLines.splice(index, 1);
-      if (!taxLines.length) taxLines.push({ name: "", qty: "", revenue: "" });
+      markTaxDirty();
       renderTaxLines();
     });
-    card.append(labeled("Product", name), labeled("Total quantities sold", qty), labeled("Revenue", revenue), calc, remove);
-    paintLine(card, line);
-    box.append(card);
+    action.append(remove);
+    row.append(action);
+    body.append(row);
   });
-  paintTaxTotals();
-  paintTaxFinish();
+  paintTaxNav();
+  paintTaxCommit();
 }
 
-function labeled(text, input) {
-  const label = document.createElement("label");
-  label.className = "field";
-  const span = document.createElement("span");
-  span.textContent = text;
-  label.append(span, input);
-  return label;
+function addTaxProduct() {
+  const name = $("tax-product-name").value.trim().slice(0, 40);
+  const qty = $("tax-product-qty").value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  let revenue = $("tax-product-revenue").value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const message = $("tax-product-msg");
+  message.textContent = "";
+  if (!name || !qty || qty === "0" || !revenue) {
+    message.textContent = "Enter the product, quantity, and gross amount.";
+    return;
+  }
+  if (taxLines.length >= 12) {
+    message.textContent = "That is the last product this return can hold.";
+    return;
+  }
+  if (BigInt(revenue) > MAX) revenue = MAX.toString();
+  taxLines.push({ name, qty, revenue });
+  $("tax-product-name").value = "";
+  $("tax-product-qty").value = "";
+  $("tax-product-revenue").value = "";
+  markTaxDirty();
+  renderTaxLines();
 }
 
 function paintTaxTotals() {
@@ -1915,25 +1914,6 @@ function paintTaxTotals() {
   $("tax-rate-note").textContent = `VAT is ${rates.vat}% of revenue. Profit tax is ${rates.low}% up to ${formatAmount(rates.threshold)} ₲ and ${rates.high}% on anything over that. These rates are set on the network phone.`;
 }
 
-function paintTaxFinish() {
-  const ready = taxReady();
-  const finish = $("tax-finish");
-  if (!ready) {
-    if (!finish.hidden) {
-      $("tax-agree").checked = false;
-      taxPad.setEnabled(false);
-    }
-    finish.hidden = true;
-    paintTaxCommit();
-    return;
-  }
-  const opening = finish.hidden;
-  finish.hidden = false;
-  $("tax-terms-text").textContent = activeSettings().taxTerms;
-  if (opening) requestAnimationFrame(() => taxPad.size());
-  paintTaxCommit();
-}
-
 function paintTaxCommit() {
   $("tax-commit").disabled = taxBusy || !taxReady() || !$("tax-agree").checked || !taxSigned;
 }
@@ -1941,31 +1921,38 @@ function paintTaxCommit() {
 function markTaxDirty() {
   if ($("tax-agree").checked || taxSigned) {
     $("tax-agree").checked = false;
-    taxPad.setEnabled(false);
+    taxPad.setEnabled(taxStep === 3);
   }
   paintTaxTotals();
-  paintTaxFinish();
+  paintTaxNav();
+  paintTaxCommit();
 }
 
 function openTaxForm() {
   const account = currentAccount();
   if (!account) return;
-  taxLines = [{ name: "", qty: "", revenue: "" }];
+  taxLines = [];
   taxSigned = false;
   taxBusy = false;
   $("tax-msg").textContent = "";
   $("tax-biz-msg").textContent = "";
+  $("tax-product-msg").textContent = "";
   $("tax-owner").value = account.name;
   $("tax-session").value = "1";
   $("tax-sheet").value = nextSheet(account.id);
   fillBusinesses("");
   $("tax-new").hidden = true;
   $("tax-business-name").value = "";
+  $("tax-product-name").value = "";
+  $("tax-product-qty").value = "";
+  $("tax-product-revenue").value = "";
   $("tax-agree").checked = false;
   $("tax-terms-text").textContent = activeSettings().taxTerms;
   renderTaxLines();
+  paintTaxTotals();
   taxPad.setEnabled(false);
-  showSide("tax");
+  showTaxStep(1);
+  $("tax-pane").classList.add("is-up");
 }
 
 function saveBusiness() {
@@ -1984,7 +1971,7 @@ function saveBusiness() {
   fillBusinesses(name);
   $("tax-new").hidden = true;
   $("tax-business-name").value = "";
-  paintTaxFinish();
+  paintTaxNav();
 }
 
 async function commitTax() {
@@ -2127,12 +2114,29 @@ $("gov-back").addEventListener("click", () => showHome());
 $("gov-taxes").addEventListener("click", () => showGovTab("taxes"));
 $("gov-assets").addEventListener("click", () => showGovTab("assets"));
 $("gov-plus").addEventListener("click", () => openTaxForm());
-$("tax-back").addEventListener("click", () => showSide("gov"));
+$("tax-back").addEventListener("click", () => {
+  if (taxStep === 1) {
+    closeTaxForm();
+    return;
+  }
+  $("tax-cancel").hidden = false;
+});
+$("tax-cancel-no").addEventListener("click", () => {
+  $("tax-cancel").hidden = true;
+});
+$("tax-cancel-yes").addEventListener("click", () => closeTaxForm());
+$("tax-cancel").addEventListener("click", (event) => {
+  if (event.target === $("tax-cancel")) $("tax-cancel").hidden = true;
+});
+$("tax-next").addEventListener("click", () => {
+  if ($("tax-next").disabled) return;
+  showTaxStep(taxStep + 1);
+});
 $("tax-business").addEventListener("change", () => {
   const adding = $("tax-business").value === "__new__";
   $("tax-new").hidden = !adding;
   if (adding) $("tax-business-name").focus();
-  paintTaxFinish();
+  paintTaxNav();
 });
 $("tax-business-save").addEventListener("click", saveBusiness);
 $("tax-business-name").addEventListener("keydown", (event) => {
@@ -2141,15 +2145,26 @@ $("tax-business-name").addEventListener("keydown", (event) => {
     saveBusiness();
   }
 });
-$("tax-add-line").addEventListener("click", () => {
-  if (taxLines.length >= 12) return;
-  taxLines.push({ name: "", qty: "", revenue: "" });
-  renderTaxLines();
-});
+$("tax-add-line").addEventListener("click", addTaxProduct);
 $("tax-agree").addEventListener("change", () => {
-  taxPad.setEnabled($("tax-agree").checked);
-  if ($("tax-agree").checked) requestAnimationFrame(() => taxPad.size());
   paintTaxCommit();
+});
+$("tax-product-revenue").addEventListener("input", () => {
+  const input = $("tax-product-revenue");
+  const shown = formatTyping(input.value);
+  if (input.value !== shown) {
+    input.value = shown;
+    input.setSelectionRange(shown.length, shown.length);
+  }
+});
+$("tax-product-qty").addEventListener("input", () => {
+  const input = $("tax-product-qty");
+  const digits = input.value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const shown = digits ? formatFull(digits) : "";
+  if (input.value !== shown) {
+    input.value = shown;
+    input.setSelectionRange(shown.length, shown.length);
+  }
 });
 $("tax-commit").addEventListener("click", () => commitTax());
 $("tax-ok").addEventListener("click", () => {
@@ -2300,7 +2315,7 @@ $("account-pick").addEventListener("change", () => {
   renderSendAccounts();
   if (chosenOp) chooseOp(chosenOp);
   renderTaxDash();
-  if ($("tax-pane").classList.contains("is-front")) openTaxForm();
+  if ($("tax-pane").classList.contains("is-up")) openTaxForm();
 });
 $("agree").addEventListener("change", () => {
   if (!$("agree").checked) pad.setEnabled(false);

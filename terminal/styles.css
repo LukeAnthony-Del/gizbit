@@ -178,7 +178,7 @@ main {
   transition: transform 0.35s ease;
 }
 .pane-home { transform: translateX(0); z-index: 1; }
-.pane-exchange, .pane-activity, .pane-calc, .pane-gov, .pane-tax { transform: translateX(100%); z-index: 2; }
+.pane-exchange, .pane-activity, .pane-calc, .pane-gov { transform: translateX(100%); z-index: 2; }
 #stage.is-side > .pane-home { transform: translateX(-100%); }
 #stage.is-side > .is-front { transform: translateX(0%); }
 .back {
@@ -338,8 +338,83 @@ main {
   color: #f4f4f4;
 }
 .pane-tax.gov-app {
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
   background: #2a2a2a;
   color: #f4f4f4;
+  transform: translateY(110%);
+}
+.pane-tax.is-up { transform: translateY(0); }
+.pane-tax .gov-head { padding: 18px 16px 0; }
+.tax-launch { width: 100%; }
+.tax-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px 8px;
+}
+.tax-dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #555;
+}
+.tax-dots span.is-done, .tax-dots span.is-on { background: #fff; }
+.tax-viewport { flex: 1; min-height: 0; overflow: hidden; }
+.tax-track {
+  display: flex;
+  width: 300%;
+  height: 100%;
+  transition: transform 0.35s ease;
+}
+.tax-track[data-step="2"] { transform: translateX(-33.333%); }
+.tax-track[data-step="3"] { transform: translateX(-66.666%); }
+.tax-step {
+  width: 33.333%;
+  height: 100%;
+  overflow: auto;
+  padding: 0 16px 16px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.tax-step:first-child { overflow: visible; }
+.tax-step:nth-child(2) { gap: 8px; }
+.tax-step:nth-child(2) .field input { padding: 8px 12px; }
+.tax-foot {
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+}
+.tax-foot .btn { width: 100%; }
+.tax-table-wrap { overflow-x: auto; }
+.tax-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  background: transparent;
+  font-size: 11px;
+}
+.tax-table th, .tax-table td {
+  text-align: left;
+  padding: 8px 4px;
+  border-bottom: 1px solid #444;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  background: transparent;
+  color: #f4f4f4;
+}
+.tax-table th { color: #c8c8c8; font-weight: 700; }
+.tax-trash {
+  border: 0;
+  background: transparent;
+  color: #f4f4f4;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
 }
 .gov-body {
   flex: 1;
@@ -362,20 +437,7 @@ main {
 .gov-app input[readonly] { color: #d5d5d5; }
 .gov-app .btn { background: #111; color: #fff; }
 .gov-app .btn.ghost { background: #3d3d3d; color: #fff; }
-.gov-plus {
-  position: absolute;
-  right: 16px;
-  bottom: calc(84px + env(safe-area-inset-bottom));
-  z-index: 3;
-  width: 56px;
-  height: 56px;
-  border: 0;
-  border-radius: 999px;
-  background: #111;
-  color: #fff;
-  display: grid;
-  place-items: center;
-}
+.tax-launch { background: #111; }
 .tax-new { display: grid; gap: 8px; }
 .tax-line, .tax-card {
   background: #161616;
