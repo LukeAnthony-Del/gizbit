@@ -93,6 +93,14 @@
                 Activity
               </button>
               <div class="app-row">
+                <button type="button" id="open-prefs" class="app-tile grey">
+                  <span class="app-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="28" height="28">
+                      <path fill="currentColor" fill-rule="evenodd" d="M19.4 13.5a7.7 7.7 0 0 0 .1-1.5 7.7 7.7 0 0 0-.1-1.5l2-1.6a.5.5 0 0 0 .1-.6l-1.9-3.3a.5.5 0 0 0-.6-.2l-2.4 1a7.4 7.4 0 0 0-2.6-1.5l-.4-2.5a.5.5 0 0 0-.5-.4h-3.8a.5.5 0 0 0-.5.4l-.4 2.5a7.4 7.4 0 0 0-2.6 1.5l-2.4-1a.5.5 0 0 0-.6.2L2.4 8.3a.5.5 0 0 0 .1.6l2 1.6a7.7 7.7 0 0 0-.1 1.5 7.7 7.7 0 0 0 .1 1.5l-2 1.6a.5.5 0 0 0-.1.6l1.9 3.3a.5.5 0 0 0 .6.2l2.4-1a7.4 7.4 0 0 0 2.6 1.5l.4 2.5a.5.5 0 0 0 .5.4h3.8a.5.5 0 0 0 .5-.4l.4-2.5a7.4 7.4 0 0 0 2.6-1.5l2.4 1a.5.5 0 0 0 .6-.2l1.9-3.3a.5.5 0 0 0-.1-.6l-2-1.6zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/>
+                    </svg>
+                  </span>
+                  <span>Settings</span>
+                </button>
                 <button type="button" id="open-calc" class="app-tile">
                   <span class="app-icon" aria-hidden="true">€₲</span>
                   <span>Calculator</span>
@@ -250,6 +258,16 @@
                   </div>
                 </div>
               </div>
+            </div>
+            <div class="pane-prefs" id="prefs-pane">
+              <button type="button" id="prefs-back" class="back">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Back
+              </button>
+              <h1>Settings</h1>
+              <button type="button" id="change-password" class="btn">Change password</button>
             </div>
             <div class="pane-gov gov-app" id="gov-pane">
               <div class="gov-body">
@@ -432,6 +450,19 @@
         </section>
       </main>
       <button type="button" id="logout" class="logout" hidden>Log out</button>
+    </div>
+
+    <div id="pass-sheet" class="sheet" hidden>
+      <form id="pass-form" class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="pass-title">
+        <h2 id="pass-title">Enter current password</h2>
+        <label class="field">
+          <span class="quiet" id="pass-label">Password</span>
+          <input id="pass-input" type="password" maxlength="100" autocomplete="off" />
+        </label>
+        <p id="pass-msg" class="error" role="status"></p>
+        <button type="submit" class="btn" id="pass-next">Next</button>
+        <button type="button" id="pass-cancel" class="btn ghost">Cancel</button>
+      </form>
     </div>
 
     <div id="settings-lock" class="sheet" hidden>

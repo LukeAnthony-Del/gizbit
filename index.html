@@ -31,6 +31,7 @@
           </div>
           <div id="rows"></div>
           <p id="empty" class="empty">No accounts yet. Add one to start at 0 gizbits.</p>
+          <button type="button" id="add-account" class="btn add-account">+ Add account</button>
         </section>
 
         <section id="moves" class="page" role="tabpanel" hidden>
@@ -44,10 +45,10 @@
 
         <section id="requests" class="page" role="tabpanel" hidden>
           <div class="page-head">
-            <h1>Terminal Requests</h1>
+            <h1>terminal messages</h1>
           </div>
           <hr />
-          <p id="requests-empty" class="empty">Exchanges waiting for a decision show up here.</p>
+          <p id="requests-empty" class="empty">Messages from a terminal show up here.</p>
           <ul id="request-list" class="feed"></ul>
           <button type="button" id="notify-go" class="btn slim">Turn on notifications</button>
         </section>
@@ -138,15 +139,14 @@
         </section>
       </main>
 
-      <button type="button" id="add-account" class="fab" aria-label="Add account">
-        <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
-          <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
-        </svg>
-      </button>
-
       <nav class="tabs" role="tablist" aria-label="Sections">
         <button type="button" role="tab" data-tab="balances" aria-selected="true">
-          <span class="tab-mark" aria-hidden="true">₲</span>
+          <span class="tab-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22">
+              <circle cx="12" cy="8" r="3.1" fill="none" stroke="currentColor" stroke-width="1.8"/>
+              <path d="M5.2 19.4c1.3-3.3 3.6-4.8 6.8-4.8s5.5 1.5 6.8 4.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </span>
           <span>Balances</span>
         </button>
         <button type="button" role="tab" data-tab="moves" aria-selected="false">
@@ -163,7 +163,7 @@
               <path d="M4 6h16v10H7l-3 3V6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
             </svg>
           </span>
-          <span>Requests</span>
+          <span>Messages</span>
         </button>
         <button type="button" role="tab" data-tab="gfg" aria-selected="false">
           <span class="tab-mark" aria-hidden="true">

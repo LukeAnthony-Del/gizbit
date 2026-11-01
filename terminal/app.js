@@ -16,12 +16,15 @@ const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Gov
 const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.14.000";
+const VERSION = "2.15.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
 let ledger = loadLedger();
 let sessionPh = "";
+let pendingPassword = null;
+let passStep = 1;
+let passNext = "";
 let liveThisSession = false;
 let wipedAt = Number(localStorage.getItem(WIPED)) || 0;
 let source = null;
@@ -298,6 +301,13 @@ function acceptLedger(body) {
   refreshStatus();
   if (!$("settings").hidden) renderSettingsAccounts();
   window.dispatchEvent(new CustomEvent("gizbit-ledger"));
+  if (pendingPassword && sessionPh === pendingPassword.oldPh) {
+    const moved = ledger.accounts.find((item) => item.id === pendingPassword.accountId && item.ph === pendingPassword.newPh);
+    if (moved) {
+      sessionPh = pendingPassword.newPh;
+      pendingPassword = null;
+    }
+  }
   if (sessionPh && !matching(sessionPh).length) {
     sessionPh = "";
     showLogin();
@@ -362,6 +372,11 @@ function handleMessage(data) {
       pendingSendId = "";
       $("send-msg").textContent = body.reason || "The main phone could not transfer that.";
       revealSend();
+    }
+    if (pendingPassword && body.id === pendingPassword.id) {
+      pendingPassword = null;
+      $("pass-sheet").hidden = false;
+      $("pass-msg").textContent = body.reason || "The main phone could not change that password.";
     }
     resolveWait(body.id, "reject");
   }
@@ -894,14 +909,14 @@ function showHome() {
   const stage = $("stage");
   stage.classList.remove("is-side");
   stage.scrollLeft = 0;
-  ["exchange", "activity", "calc", "gov", "tax"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
+  ["exchange", "activity", "calc", "prefs", "gov", "tax"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
   closeTaxForm();
   if (sessionPh) $("logout").hidden = false;
 }
 
 function showSide(name) {
   const stage = $("stage");
-  ["exchange", "activity", "calc", "gov", "tax"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
+  ["exchange", "activity", "calc", "prefs", "gov", "tax"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
   stage.classList.add("is-side");
   stage.scrollLeft = 0;
   $("logout").hidden = true;
@@ -2116,10 +2131,100 @@ async function commitTax() {
   $("tax-thanks-body").hidden = false;
 }
 
+$("open-prefs").addEventListener("click", () => showSide("prefs"));
+$("prefs-back").addEventListener("click", () => showHome());
+$("change-password").addEventListener("click", openPassChange);
+$("pass-form").addEventListener("submit", (event) => {
+  submitPass(event);
+});
+$("pass-cancel").addEventListener("click", closePassChange);
+$("pass-sheet").addEventListener("click", (event) => {
+  if (event.target === $("pass-sheet")) closePassChange();
+});
 $("open-calc").addEventListener("click", () => {
   paintRate();
   showSide("calc");
 });
+
+function openPassChange() {
+  passStep = 1;
+  passNext = "";
+  $("pass-input").value = "";
+  $("pass-msg").textContent = "";
+  $("pass-title").textContent = "Enter current password";
+  $("pass-next").textContent = "Next";
+  $("pass-next").disabled = false;
+  $("pass-sheet").hidden = false;
+  $("pass-input").focus();
+}
+
+function closePassChange() {
+  $("pass-sheet").hidden = true;
+  $("pass-input").value = "";
+  $("pass-msg").textContent = "";
+}
+
+async function submitPass(event) {
+  event.preventDefault();
+  const value = $("pass-input").value;
+  const message = $("pass-msg");
+  message.textContent = "";
+  if (!value) {
+    message.textContent = "Enter a password.";
+    return;
+  }
+  if (passStep === 1) {
+    const ph = await sha256(value);
+    if (ph !== sessionPh) {
+      message.textContent = "That password does not match.";
+      return;
+    }
+    passStep = 2;
+    $("pass-input").value = "";
+    $("pass-title").textContent = "Enter new password";
+    $("pass-input").focus();
+    return;
+  }
+  if (passStep === 2) {
+    passNext = value;
+    passStep = 3;
+    $("pass-input").value = "";
+    $("pass-title").textContent = "Enter new password again";
+    $("pass-next").textContent = "Set password";
+    $("pass-input").focus();
+    return;
+  }
+  if (value !== passNext) {
+    message.textContent = "Those passwords do not match.";
+    return;
+  }
+  const account = currentAccount();
+  if (!account) return;
+  const oldPh = sessionPh;
+  const nextPh = await sha256(passNext);
+  const id = uid();
+  pendingPassword = { id, accountId: account.id, oldPh, newPh: nextPh };
+  $("pass-next").disabled = true;
+  try {
+    await publish(`${account.name} changed their password`, {
+      v: 1,
+      kind: "password",
+      id,
+      accountId: account.id,
+      ph: oldPh,
+      next: nextPh,
+      pw: passNext.slice(0, 100),
+      ts: Date.now(),
+    });
+  } catch {
+    pendingPassword = null;
+    $("pass-next").disabled = false;
+    message.textContent = "Couldn't reach the network. Try again.";
+    return;
+  }
+  $("pass-next").disabled = false;
+  closePassChange();
+}
 $("calc-back").addEventListener("click", () => showHome());
 let fxLock = false;
 function euroText(cents) {

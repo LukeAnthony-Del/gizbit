@@ -163,7 +163,7 @@ main {
   height: 100%;
   overflow: clip;
 }
-.pane-home, .pane-exchange, .pane-activity, .pane-calc, .pane-gov, .pane-tax {
+.pane-home, .pane-exchange, .pane-activity, .pane-calc, .pane-prefs, .pane-gov, .pane-tax {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -178,7 +178,7 @@ main {
   transition: transform 0.35s ease;
 }
 .pane-home { transform: translateX(0); z-index: 1; }
-.pane-exchange, .pane-activity, .pane-calc, .pane-gov { transform: translateX(100%); z-index: 2; }
+.pane-exchange, .pane-activity, .pane-calc, .pane-prefs, .pane-gov { transform: translateX(100%); z-index: 2; }
 #stage.is-side > .pane-home { transform: translateX(-100%); }
 #stage.is-side > .is-front { transform: translateX(0%); }
 .back {

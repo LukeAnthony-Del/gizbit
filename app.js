@@ -4,6 +4,7 @@ const NTFY = "https://ntfy.envs.net";
 const STORAGE = "gizbit-accounts";
 const ACTIVITY = "gizbit-activity";
 const REQUESTS = "gizbit-requests";
+const PASSNOTES = "gizbit-pass-notes";
 const TAXES = "gizbit-taxes";
 const USUAL = "gizbit-usual";
 const SEEN = "gizbit-seen";
@@ -19,11 +20,12 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.10.001";
+const VERSION = "2.11.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
 const requests = loadList(REQUESTS);
+const passNotes = loadList(PASSNOTES);
 const taxes = loadList(TAXES);
 const seen = new Set(loadList(SEEN));
 let source = null;
@@ -123,6 +125,10 @@ function saveActivity() {
 
 function saveRequests() {
   localStorage.setItem(REQUESTS, JSON.stringify(requests.slice(0, 40)));
+}
+
+function savePassNotes() {
+  localStorage.setItem(PASSNOTES, JSON.stringify(passNotes.slice(0, 20)));
 }
 
 function saveTaxes() {
@@ -607,11 +613,19 @@ function bindReveal(row, openRight, openLeft) {
     if (!active) return;
     active = false;
     const end = origin + (event.clientX - startX);
-    const open = right > 0 && end > right * 0.45;
-    const sign = left > 0 && end < -left * 0.45;
     row.style.transform = "";
-    row.classList.toggle("is-open", open && !sign);
-    row.classList.toggle("is-sign", sign && !open);
+    if (origin > 0) {
+      row.classList.toggle("is-open", end > right * 0.45);
+      row.classList.remove("is-sign");
+      return;
+    }
+    if (origin < 0) {
+      row.classList.toggle("is-sign", end < -left * 0.45);
+      row.classList.remove("is-open");
+      return;
+    }
+    row.classList.toggle("is-open", right > 0 && end > right * 0.45);
+    row.classList.toggle("is-sign", left > 0 && end < -left * 0.45);
   };
   row.addEventListener("pointerup", finish);
   row.addEventListener("pointercancel", () => {
@@ -648,15 +662,6 @@ function renderRows() {
     eye.innerHTML = eyeMarkup();
     eye.addEventListener("click", () => openPassword(account.id));
     actions.append(trash, eye);
-    const usualBtn = document.createElement("button");
-    usualBtn.type = "button";
-    usualBtn.className = "swipe-usual";
-    usualBtn.setAttribute("aria-label", `Usual signature for ${account.name}`);
-    usualBtn.innerHTML = `<img src="sign-pen.png" alt="" />`;
-    usualBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      showUsual(account);
-    });
     const row = document.createElement("div");
     row.className = "acct";
     const name = document.createElement("span");
@@ -669,10 +674,10 @@ function renderRows() {
     short.textContent = `${formatAmount(account.bal)} ₲`;
     const full = document.createElement("span");
     full.className = "bal-full";
-    full.textContent = formatFull(account.bal);
+    full.textContent = `${formatFull(account.bal)} GZBT`;
     row.append(name, type, short, full);
-    swipe.append(actions, usualBtn, row);
-    bindReveal(row, 112, 56);
+    swipe.append(actions, row);
+    bindReveal(row, 112, 0);
     body.append(swipe);
   });
   $("empty").hidden = state.accounts.length > 0;
@@ -767,6 +772,10 @@ function handleMessage(data, bucket) {
   }
   if (body.kind === "tax") {
     takeTax(body);
+    return;
+  }
+  if (body.kind === "password") {
+    takePassword(body);
     return;
   }
   if (body.kind === "tx") {
@@ -1016,6 +1025,7 @@ function openPassword(id) {
   if (!account) return;
   passEditId = id;
   $("pass-title").textContent = account.name;
+  $("pass-edit").hidden = false;
   $("pass-view").value = account.pw || "";
   $("pass-view").placeholder = account.pw ? "" : "Not saved on this phone";
   $("pass-view").readOnly = true;
@@ -1192,6 +1202,56 @@ function clearNotification(id) {
     .catch(() => {});
 }
 
+function takePassword(body) {
+  if (!body || !body.id || !remember(body.id)) return false;
+  const account = state.accounts.find((item) => item.id === body.accountId);
+  const next = String(body.next || "");
+  const pw = String(body.pw || "").slice(0, 100);
+  if (!account || body.ph !== account.ph || !/^[0-9a-f]{64}$/.test(next) || !pw) {
+    publishReject(body.id, account ? "The password did not match." : "That account was removed.");
+    return false;
+  }
+  account.ph = next;
+  account.pw = pw;
+  saveAccounts();
+  passNotes.unshift({ id: body.id, accountId: account.id, name: account.name, pw, ts: Date.now() });
+  passNotes.splice(20);
+  savePassNotes();
+  render();
+  publishLedger([]).catch(() => {});
+  notifyPass(passNotes[0]);
+  return true;
+}
+
+function notifyPass(note) {
+  if (!note || !("Notification" in window) || Notification.permission !== "granted" || !navigator.serviceWorker) return;
+  navigator.serviceWorker.ready.then((reg) => {
+    reg.showNotification(`Password change from ${note.name}`, {
+      body: "Open Messages to see the new password.",
+      tag: note.id,
+      renotify: true,
+    });
+  }).catch(() => {});
+}
+
+function showPassNote(id) {
+  const index = passNotes.findIndex((item) => item.id === id);
+  if (index < 0) return;
+  const note = passNotes[index];
+  passNotes.splice(index, 1);
+  savePassNotes();
+  renderRequests();
+  clearNotification(id);
+  passEditId = "";
+  $("pass-title").textContent = note.name;
+  $("pass-view").value = note.pw;
+  $("pass-view").readOnly = true;
+  $("pass-edit").hidden = true;
+  $("pass-save").hidden = true;
+  $("pass-error").textContent = "";
+  $("pass-sheet").hidden = false;
+}
+
 function renderRequests() {
   const list = $("request-list");
   list.replaceChildren();
@@ -1221,7 +1281,27 @@ function renderRequests() {
     }
     list.append(li);
   });
-  $("requests-empty").hidden = requests.some((item) => item.status === "pending");
+  passNotes.forEach((note) => {
+    const li = document.createElement("li");
+    li.className = "request is-password";
+    const time = document.createElement("time");
+    time.dateTime = new Date(note.ts).toISOString();
+    time.textContent = formatWhen(note.ts);
+    const line = document.createElement("span");
+    line.textContent = `${note.name} changed their password`;
+    const eye = document.createElement("button");
+    eye.type = "button";
+    eye.className = "request-eye";
+    eye.setAttribute("aria-label", `Show the new password for ${note.name}`);
+    eye.innerHTML = eyeMarkup();
+    eye.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showPassNote(note.id);
+    });
+    li.append(time, line, eye);
+    list.append(li);
+  });
+  $("requests-empty").hidden = requests.some((item) => item.status === "pending") || passNotes.length > 0;
   const notify = $("notify-go");
   notify.hidden = !("Notification" in window) || Notification.permission === "granted";
 }
@@ -1490,6 +1570,7 @@ $("pass-save").addEventListener("click", async () => {
 });
 $("pass-close").addEventListener("click", () => {
   $("pass-sheet").hidden = true;
+  $("pass-edit").hidden = false;
 });
 $("pass-sheet").addEventListener("click", (event) => {
   if (event.target === $("pass-sheet")) $("pass-sheet").hidden = true;
@@ -1560,6 +1641,8 @@ function deleteEverything() {
   activity.splice(0, activity.length);
   taxes.splice(0, taxes.length);
   usual = {};
+  passNotes.splice(0, passNotes.length);
+  localStorage.removeItem(PASSNOTES);
   localStorage.removeItem(TAXES);
   localStorage.removeItem(USUAL);
   ["gizbit-network-name", "gizbit-network-pair", "gizbit-phones", "gizbit-network-device"].forEach((key) => localStorage.removeItem(key));
