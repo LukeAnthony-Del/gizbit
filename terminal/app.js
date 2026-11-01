@@ -16,7 +16,7 @@ const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Gov
 const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.13.001";
+const VERSION = "2.14.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -438,6 +438,7 @@ function showLogin(keepKeyboard) {
   if (keepKeyboard) password.focus();
   $("bank").hidden = true;
   $("logout").hidden = true;
+  resetCalculator();
   password.value = "";
   password.type = "password";
   if (keepKeyboard) password.focus();
@@ -714,7 +715,20 @@ function renderHistory() {
   list.replaceChildren();
   if (empty) empty.hidden = items.length > 0;
   items.forEach((item) => {
-    const li = document.createElement("li");
+    const swipe = document.createElement("li");
+    swipe.className = "history-swipe";
+    const strokes = signs[item.id] || item.sign;
+    const signBtn = document.createElement("button");
+    signBtn.type = "button";
+    signBtn.className = "history-sign";
+    signBtn.setAttribute("aria-label", "Show signature");
+    signBtn.innerHTML = `<img src="sign-pen.png" alt="" />`;
+    signBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showSavedSignature(Array.isArray(strokes) ? strokes : []);
+    });
+    const row = document.createElement("div");
+    row.className = "history-row";
     const when = document.createElement("time");
     const ts = Number(item.ts) || Date.now();
     when.textContent = `${formatDate(ts)} · ${formatClock(ts)}`;
@@ -730,18 +744,46 @@ function renderHistory() {
     if (item.status === "denied") money.textContent = `${alleged} ₲ · Denied`;
     else if (actual && String(item.applied) !== String(item.amount)) money.textContent = `${alleged} ₲ asked · ${actual} ₲`;
     else money.textContent = `${alleged} ₲`;
-    li.append(when, kind, money);
-    const strokes = signs[item.id] || item.sign;
-    if (Array.isArray(strokes) && strokes.length) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "sign-btn";
-      button.setAttribute("aria-label", "Show signature");
-      button.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 16c2-3 3-3 4 0s2 3 3.5 0 2-5 3.5-1 2 2 3.5.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M14 4.5l4 4-7.5 7.5H6.5V12L14 4.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
-      button.addEventListener("click", () => showSavedSignature(strokes));
-      li.append(button);
-    }
-    list.append(li);
+    row.append(when, kind, money);
+    swipe.append(signBtn, row);
+    bindHistorySwipe(row);
+    list.append(swipe);
+  });
+}
+
+function bindHistorySwipe(row) {
+  const open = 64;
+  let startX = 0;
+  let startY = 0;
+  let active = false;
+  let origin = 0;
+  row.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (event.target.closest("button")) return;
+    startX = event.clientX;
+    startY = event.clientY;
+    origin = row.classList.contains("is-sign") ? -open : 0;
+    active = true;
+  });
+  row.addEventListener("pointermove", (event) => {
+    if (!active) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) return;
+    const next = Math.max(-open, Math.min(0, origin + dx));
+    row.style.transform = `translateX(${next}px)`;
+  });
+  const finish = (event) => {
+    if (!active) return;
+    active = false;
+    const end = origin + (event.clientX - startX);
+    row.style.transform = "";
+    row.classList.toggle("is-sign", end < -open * 0.45);
+  };
+  row.addEventListener("pointerup", finish);
+  row.addEventListener("pointercancel", () => {
+    active = false;
+    row.style.transform = "";
   });
 }
 
@@ -1218,6 +1260,7 @@ async function login(password) {
     $("bank").hidden = false;
     $("logout").hidden = false;
     showHome();
+    resetCalculator();
     resetExchange();
     resetSend();
     renderBank();
@@ -1473,8 +1516,9 @@ const taxPad = bindPad("tax-sign", "tax-sign-block", "tax-clear-sign", (on) => {
 function bindViewport() {
   const apply = () => {
     const viewport = window.visualViewport;
-    const height = viewport ? viewport.height : window.innerHeight;
-    const top = viewport ? viewport.offsetTop : 0;
+    const taxField = document.activeElement && document.activeElement.closest && document.activeElement.closest("#tax-pane input, #tax-pane textarea");
+    const height = viewport && !taxField ? viewport.height : window.innerHeight;
+    const top = viewport && !taxField ? viewport.offsetTop : 0;
     document.documentElement.style.setProperty("--vvh", `${height}px`);
     document.documentElement.style.setProperty("--vvtop", `${top}px`);
     requestAnimationFrame(() => {
@@ -1485,6 +1529,8 @@ function bindViewport() {
     });
   };
   apply();
+  document.addEventListener("focusin", apply);
+  document.addEventListener("focusout", () => setTimeout(apply, 80));
   if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", apply);
     window.visualViewport.addEventListener("scroll", apply);
@@ -1674,6 +1720,22 @@ function fitFxAmount(input) {
 function fitFxAmounts() {
   fitFxAmount($("euro-input"));
   fitFxAmount($("giz-input"));
+}
+
+function resetCalculator() {
+  fxEuroOnTop = true;
+  const euroCard = $("fx-euro");
+  const gizCard = $("fx-giz");
+  if (euroCard && gizCard && gizCard.parentElement) gizCard.parentElement.insertBefore(euroCard, gizCard);
+  const pane = $("calc-pane");
+  if (pane) pane.classList.remove("is-typing");
+  const euro = $("euro-input");
+  const giz = $("giz-input");
+  if (!euro || !giz) return;
+  euro.value = "1.00";
+  giz.value = formatTyping(euroRate().toString());
+  paintRate();
+  fitFxAmounts();
 }
 
 function readEuro(value) {
@@ -2233,7 +2295,7 @@ $("send-amount").addEventListener("change", () => {
 });
 $("send-agree").addEventListener("change", () => {
   revealSend();
-  if ($("send-agree").checked) requestAnimationFrame(() => bringSignIntoView($("send-sign-block")));
+  if ($("send-agree").checked) setTimeout(() => bringSignIntoView($("send-sign-block")), 50);
 });
 $("send-go").addEventListener("click", () => sendGizbits());
 $("send-terms-open").addEventListener("click", (event) => {
@@ -2259,13 +2321,11 @@ function formatTyping(value) {
 function bringSignIntoView(block) {
   if (!block || block.hidden) return;
   const pane = $("exchange-pane");
+  const button = block.id === "send-sign-block" ? $("send-go") : $("exchange");
+  const target = button && !button.hidden ? button : block;
   const paneRect = pane.getBoundingClientRect();
-  const rect = block.getBoundingClientRect();
-  if (rect.height >= paneRect.height - 24) {
-    pane.scrollTop += rect.top - paneRect.top - 8;
-    return;
-  }
-  const overflow = rect.bottom - (paneRect.bottom - 16);
+  const rect = target.getBoundingClientRect();
+  const overflow = rect.bottom - (paneRect.bottom - 20);
   if (overflow > 0) pane.scrollTop += overflow;
 }
 
@@ -2347,7 +2407,7 @@ $("account-pick").addEventListener("change", () => {
 $("agree").addEventListener("change", () => {
   if (!$("agree").checked) pad.setEnabled(false);
   revealSteps();
-  if ($("agree").checked) requestAnimationFrame(() => bringSignIntoView($("sign-block")));
+  if ($("agree").checked) setTimeout(() => bringSignIntoView($("sign-block")), 50);
 });
 $("terms-open").addEventListener("click", (event) => {
   event.preventDefault();

@@ -300,9 +300,10 @@ main {
 }
 .gov-crest { width: 48px; height: 36px; }
 .tax-mark {
-  width: 32px;
-  height: 32px;
+  width: 52px;
+  height: 52px;
   object-fit: contain;
+  background: transparent;
   transform: rotate(180deg);
   filter: invert(1);
 }
@@ -320,7 +321,7 @@ main {
   justify-content: center;
   gap: 4px;
   width: 100%;
-  min-height: 72px;
+  min-height: 96px;
   border: 0;
   border-radius: 0;
   background: #3a3a3a;
@@ -551,7 +552,23 @@ main {
   padding: 0;
 }
 .sign-block { display: grid; gap: 8px; }
+.sign-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sign-head .field, .sign-head h2 { margin: 0; }
+.pad-clear {
+  border: 0;
+  background: transparent;
+  color: var(--navy);
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 28px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+.gov-app .pad-clear { color: #fff; }
 .sign-block.is-locked { opacity: 0.45; }
+#send-go { width: 100%; margin-top: 20px; }
 .pad {
   width: 100%;
   height: 140px;
@@ -613,27 +630,42 @@ h1 {
   color: #fff;
 }
 .history { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 8px; }
-.history li {
-  background: #fff;
+.history-swipe {
+  position: relative;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 12px;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 2px 8px;
-  align-items: center;
+  background: #1f4d76;
+  touch-action: pan-y;
 }
-.history .sign-btn { grid-column: 2; grid-row: 1 / span 3; }
-.sign-btn {
+.history-sign {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 64px;
   border: 0;
-  background: #e7eef4;
-  color: var(--navy);
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  background: #1f4d76;
   display: grid;
   place-items: center;
+  padding: 0;
 }
+.history-sign img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
+}
+.history-row {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 2px;
+  padding: 12px;
+  background: #fff;
+  transition: transform 0.18s ease;
+}
+.history-row.is-sign { transform: translateX(-64px); }
 .sign-view {
   width: 100%;
   height: 180px;

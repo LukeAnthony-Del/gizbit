@@ -144,9 +144,11 @@
                 </label>
               </div>
               <div id="sign-block" class="sign-block" hidden>
-                <p class="field"><span>Signature</span></p>
+                <div class="sign-head">
+                  <p class="field"><span>Signature</span></p>
+                  <button type="button" id="clear-sign" class="pad-clear" aria-label="Clear signature">×</button>
+                </div>
                 <canvas id="sign" class="pad"></canvas>
-                <button type="button" id="clear-sign" class="btn ghost slim">Clear</button>
               </div>
               <p id="move-msg" class="error" role="status"></p>
               <button type="button" id="exchange" class="btn" hidden disabled>Exchange</button>
@@ -168,12 +170,14 @@
                   </label>
                 </div>
                 <div id="send-sign-block" class="sign-block" hidden>
-                  <p class="field"><span>Signature</span></p>
+                  <div class="sign-head">
+                    <p class="field"><span>Signature</span></p>
+                    <button type="button" id="send-clear-sign" class="pad-clear" aria-label="Clear signature">×</button>
+                  </div>
                   <canvas id="send-sign" class="pad"></canvas>
-                  <button type="button" id="send-clear-sign" class="btn ghost slim">Clear</button>
                 </div>
                 <p id="send-msg" class="error" role="status"></p>
-                <button type="button" id="send-go" class="btn" hidden disabled>Transfer gizbits</button>
+                <button type="button" id="send-go" class="btn" hidden disabled>Transfer</button>
               </div>
             </div>
             <div class="pane-activity" id="activity-pane">
@@ -279,7 +283,7 @@
               </div>
               <div class="gov-tabs" role="tablist">
                 <button type="button" id="gov-taxes" class="is-on" role="tab" aria-selected="true">
-                  <img class="tax-mark" src="tax-drop.png" alt="" width="32" height="32" />
+                  <img class="tax-mark" src="tax-drop.png" alt="" width="52" height="52" />
                   Taxes
                 </button>
                 <button type="button" id="gov-assets" role="tab" aria-selected="false">
@@ -395,9 +399,11 @@
                       I agree to the terms and conditions
                     </label>
                     <div id="tax-sign-block" class="sign-block">
-                      <h2>Signature</h2>
+                      <div class="sign-head">
+                        <h2>Signature</h2>
+                        <button type="button" id="tax-clear-sign" class="pad-clear" aria-label="Clear signature">×</button>
+                      </div>
                       <canvas id="tax-sign" class="pad"></canvas>
-                      <button type="button" id="tax-clear-sign" class="btn ghost">Clear signature</button>
                     </div>
                     <p id="tax-msg" class="error" role="status"></p>
                   </section>

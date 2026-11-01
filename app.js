@@ -19,7 +19,7 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.10.000";
+const VERSION = "2.10.001";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -327,7 +327,7 @@ function penMarkup() {
 }
 
 function signMarkup() {
-  return `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M14.6 3.6l5.8 5.8-1.15 1.15-5.8-5.8L14.6 3.6z" fill="currentColor"/><path d="M12.9 6.4l4.7 4.7-6.55 6.55-.55.15-2.35.62a.7.7 0 0 1-.85-.85l.62-2.35.15-.55L12.9 6.4z" fill="currentColor"/><path d="M3.2 18.2c1.5-2.15 2.55-3.05 3.85-1.75 1.15 1.15 1.7 2.35 3.05.85 1.2-1.35 2.05-3.55 3.45-2.35" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M16.2 5.2l2.6 2.6" fill="none" stroke="#fff" stroke-width="1.1" stroke-linecap="round"/></svg>`;
+  return `<img class="sign-mark" src="sign-pen.png" alt="" />`;
 }
 
 function cleanSign(value) {
@@ -652,7 +652,7 @@ function renderRows() {
     usualBtn.type = "button";
     usualBtn.className = "swipe-usual";
     usualBtn.setAttribute("aria-label", `Usual signature for ${account.name}`);
-    usualBtn.innerHTML = `<img src="sign-hand.png" alt="" />`;
+    usualBtn.innerHTML = `<img src="sign-pen.png" alt="" />`;
     usualBtn.addEventListener("click", (event) => {
       event.stopPropagation();
       showUsual(account);

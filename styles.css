@@ -300,10 +300,16 @@ body.standalone .hint { display: none; }
   place-items: center;
   padding: 8px;
 }
-.swipe-usual img {
+.swipe-usual img, .sign-mark {
   width: 36px;
   height: 36px;
   object-fit: contain;
+}
+.swipe-sign img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
 }
 .log-row.is-open { transform: translateX(56px); }
 .log-row.is-sign { transform: translateX(-56px); }
