@@ -238,6 +238,8 @@ main {
   gap: 8px;
 }
 .home-btn svg { flex: none; }
+.pane-exchange button { touch-action: pan-y; }
+#send-terms-step { margin-top: 28px; }
 .app-row {
   display: flex;
   justify-content: flex-start;

@@ -16,7 +16,7 @@ const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Gov
 const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.13.000";
+const VERSION = "2.13.001";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -929,7 +929,7 @@ function revealSteps() {
 function paintExchangeButton() {
   const button = $("exchange");
   if (!exchangeSent) {
-    button.textContent = "Exchange ₲";
+    button.textContent = "Exchange";
     return;
   }
   button.hidden = false;
@@ -1503,6 +1503,17 @@ function stopOverscroll(scroller) {
       return;
     }
     const delta = event.touches[0].clientY - startY;
+    let node = event.target instanceof Element ? event.target : event.target.parentElement;
+    while (node && node !== scroller) {
+      const style = getComputedStyle(node);
+      const scrollable = /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1;
+      if (scrollable) {
+        const atTop = node.scrollTop <= 0;
+        const atBottom = node.scrollTop + node.clientHeight >= node.scrollHeight - 1;
+        if (!(atTop && delta > 0) && !(atBottom && delta < 0)) return;
+      }
+      node = node.parentElement;
+    }
     const top = scroller.scrollTop <= 0;
     const bottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;
     if ((top && delta > 10) || (bottom && delta < -10)) {
@@ -1643,7 +1654,7 @@ function oneGzbtInEuro(rate) {
 function paintRate() {
   const rate = euroRate();
   $("rate-line").textContent = fxEuroOnTop
-    ? `1.00 EUR = ${formatAmount(rate)} ₲`
+    ? `1.00 EUR = ${formatFull(rate)} GZBT`
     : `1 GZBT = ${oneGzbtInEuro(rate)} EUR`;
 }
 
@@ -2220,7 +2231,10 @@ $("send-amount").addEventListener("change", () => {
   sendAmount = snapped;
   revealSend();
 });
-$("send-agree").addEventListener("change", revealSend);
+$("send-agree").addEventListener("change", () => {
+  revealSend();
+  if ($("send-agree").checked) requestAnimationFrame(() => bringSignIntoView($("send-sign-block")));
+});
 $("send-go").addEventListener("click", () => sendGizbits());
 $("send-terms-open").addEventListener("click", (event) => {
   event.preventDefault();
@@ -2240,6 +2254,19 @@ $("pick-transfer").addEventListener("click", () => chooseOp("transfer"));
 function formatTyping(value) {
   const digits = String(value || "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function bringSignIntoView(block) {
+  if (!block || block.hidden) return;
+  const pane = $("exchange-pane");
+  const paneRect = pane.getBoundingClientRect();
+  const rect = block.getBoundingClientRect();
+  if (rect.height >= paneRect.height - 24) {
+    pane.scrollTop += rect.top - paneRect.top - 8;
+    return;
+  }
+  const overflow = rect.bottom - (paneRect.bottom - 16);
+  if (overflow > 0) pane.scrollTop += overflow;
 }
 
 function liftAmount() {
@@ -2320,6 +2347,7 @@ $("account-pick").addEventListener("change", () => {
 $("agree").addEventListener("change", () => {
   if (!$("agree").checked) pad.setEnabled(false);
   revealSteps();
+  if ($("agree").checked) requestAnimationFrame(() => bringSignIntoView($("sign-block")));
 });
 $("terms-open").addEventListener("click", (event) => {
   event.preventDefault();
