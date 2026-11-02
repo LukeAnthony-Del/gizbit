@@ -20,7 +20,7 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.12.000";
+const VERSION = "2.13.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -63,6 +63,7 @@ function defaultSettings() {
     profitHigh: DEFAULT_PROFIT_HIGH,
     profitThreshold: DEFAULT_PROFIT_THRESHOLD,
     taxTerms: DEFAULT_TAX_TERMS,
+    taxAccountId: "",
   };
 }
 
@@ -89,6 +90,7 @@ function normalizeSettings(value) {
     profitHigh: percentText(value?.profitHigh, DEFAULT_PROFIT_HIGH),
     profitThreshold: moneyText(value?.profitThreshold, false) || DEFAULT_PROFIT_THRESHOLD,
     taxTerms: String(value?.taxTerms || DEFAULT_TAX_TERMS).slice(0, 400),
+    taxAccountId: typeof value?.taxAccountId === "string" && /^[\w-]{8,}$/.test(value.taxAccountId) ? value.taxAccountId : "",
   };
 }
 
@@ -183,7 +185,7 @@ function splitVat(revenue, rate) {
   const amount = floorBillion(revenue);
   const percent = BigInt(rate || "0");
   const net = (amount * 100n) / (100n + percent);
-  return { revenue: amount, vat: amount - net, profit: net };
+  return { revenue: amount, vat: floorBillion(amount - net), profit: floorBillion(net) };
 }
 
 function taxTotals(lines, rates) {
@@ -197,13 +199,15 @@ function taxTotals(lines, rates) {
     profit += parts.profit;
   });
   const threshold = BigInt(rates.threshold);
-  const tax = profit <= threshold
+  const rawTax = profit <= threshold
     ? (profit * BigInt(rates.low)) / 100n
     : (threshold * BigInt(rates.low)) / 100n + ((profit - threshold) * BigInt(rates.high)) / 100n;
+  const tax = floorBillion(rawTax);
   return {
     revenue: revenue.toString(),
     vat: vat.toString(),
     profit: profit.toString(),
+    expenses: "0",
     tax: tax.toString(),
     invoice: floorBillion(vat + tax).toString(),
   };
@@ -771,6 +775,7 @@ function render() {
   renderActivity();
   renderRequests();
   renderGovernment();
+  fillTaxAccount();
 }
 
 function showTab(name) {
@@ -839,6 +844,10 @@ function handleMessage(data, bucket) {
   }
   if (body.kind === "tax-delete") {
     takeTaxDelete(body);
+    return;
+  }
+  if (body.kind === "tax-clear") {
+    takeTaxClear(body);
     return;
   }
   if (body.kind === "password") {
@@ -915,6 +924,44 @@ function takeTax(body) {
     threshold: moneyText(body.threshold, false) || state.settings.profitThreshold,
   };
   const totals = taxTotals(lines, rates);
+  const invoice = BigInt(totals.invoice);
+  const sink = state.accounts.find((item) => item.id === state.settings.taxAccountId);
+  if (invoice > 0n) {
+    if (!sink) {
+      publishReject(body.id, "Set the account that receives tax payments in Settings.");
+      return false;
+    }
+    if (sink.id === account.id) {
+      publishReject(body.id, "Choose a different account for tax payments.");
+      return false;
+    }
+    if (BigInt(account.bal) < invoice) {
+      publishReject(body.id, "Not enough gizbits to pay that tax.");
+      return false;
+    }
+    const nextSink = BigInt(sink.bal) + invoice;
+    if (nextSink > MAX) {
+      publishReject(body.id, "That tax account cannot hold that much.");
+      return false;
+    }
+    account.bal = (BigInt(account.bal) - invoice).toString();
+    sink.bal = nextSink.toString();
+    saveAccounts();
+    requests.unshift({
+      id: `${body.id}-pay`,
+      accountId: account.id,
+      name: account.name,
+      op: "transfer",
+      amount: totals.invoice,
+      status: "done",
+      applied: totals.invoice,
+      toId: sink.id,
+      toName: sink.name,
+      ts: Number(body.ts) || Date.now(),
+    });
+    saveRequests();
+    renderActivity();
+  }
   taxes.unshift({
     id: body.id,
     accountId: account.id,
@@ -935,6 +982,7 @@ function takeTax(body) {
   noteSign(account.id, body.id, body.sign);
   renderGovernment();
   toast(`${business} filed a tax return`);
+  publishLedger([body.id]).catch(() => {});
   return true;
 }
 
@@ -945,6 +993,24 @@ function takeTaxDelete(body) {
   taxes.splice(index, 1);
   saveTaxes();
   renderGovernment();
+}
+
+function takeTaxClear(body) {
+  const stamp = Number(body?.ts) || 0;
+  if (!stamp || !remember(`tax-clear:${stamp}`)) return;
+  taxes.splice(0, taxes.length);
+  saveTaxes();
+  renderGovernment();
+}
+
+function deleteAllReturns() {
+  taxes.splice(0, taxes.length);
+  saveTaxes();
+  renderGovernment();
+  const ts = Date.now();
+  remember(`tax-clear:${ts}`);
+  publish("Tax returns removed", { v: 1, kind: "tax-clear", ts }).catch(() => {});
+  toast("Tax returns deleted");
 }
 
 function deleteTax(id) {
@@ -1592,6 +1658,25 @@ function fillSettings() {
   $("profit-high").value = state.settings.profitHigh;
   $("profit-threshold").value = state.settings.profitThreshold;
   $("tax-terms").value = state.settings.taxTerms;
+  fillTaxAccount();
+}
+
+function fillTaxAccount() {
+  const select = $("tax-account");
+  if (!select) return;
+  const current = select.value || state.settings.taxAccountId || "";
+  select.replaceChildren();
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "Choose an account";
+  select.append(blank);
+  state.accounts.forEach((account) => {
+    const option = document.createElement("option");
+    option.value = account.id;
+    option.textContent = account.name;
+    select.append(option);
+  });
+  if ([...select.options].some((option) => option.value === current)) select.value = current;
 }
 
 function bindViewport() {
@@ -1792,6 +1877,19 @@ function deleteEverything() {
   publish("Balances cleared", { v: 1, kind: "reset", ts: Date.now() })
     .catch(() => setStatus("Deleted on this phone. The terminal clears when the connection is back."));
 }
+$("delete-returns").addEventListener("click", () => {
+  $("delete-returns").hidden = true;
+  $("returns-confirm").hidden = false;
+});
+$("returns-no").addEventListener("click", () => {
+  $("returns-confirm").hidden = true;
+  $("delete-returns").hidden = false;
+});
+$("returns-yes").addEventListener("click", () => {
+  $("returns-confirm").hidden = true;
+  $("delete-returns").hidden = false;
+  deleteAllReturns();
+});
 $("delete-all").addEventListener("click", () => {
   $("delete-all").hidden = true;
   $("delete-confirm").hidden = false;
@@ -1869,6 +1967,7 @@ $("settings-form").addEventListener("submit", (event) => {
     profitHigh,
     profitThreshold,
     taxTerms: $("tax-terms").value.trim().slice(0, 400) || DEFAULT_TAX_TERMS,
+    taxAccountId: $("tax-account").value || "",
   };
   saveAccounts();
   fillSettings();

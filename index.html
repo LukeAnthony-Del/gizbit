@@ -101,12 +101,25 @@
               <span>Tax return terms</span>
               <textarea id="tax-terms" rows="4" maxlength="400"></textarea>
             </label>
+            <label class="field">
+              <span>Tax payments go to</span>
+              <select id="tax-account"></select>
+            </label>
+            <p class="quiet">When a terminal files a return, the tax is moved into this account.</p>
             <p id="settings-error" class="error" role="status"></p>
             <button type="submit" class="btn">Save settings</button>
           </form>
           <div class="panel">
             <button type="button" id="sync-go" class="btn">Sync</button>
             <p class="quiet">Shares every account and balance on this phone so the terminal matches.</p>
+          </div>
+          <div class="panel">
+            <button type="button" id="delete-returns" class="btn danger">Delete all returns</button>
+            <div id="returns-confirm" hidden>
+              <p class="quiet">This removes every tax return on this phone and the terminal.</p>
+              <button type="button" id="returns-yes" class="btn danger">Yes, delete returns</button>
+              <button type="button" id="returns-no" class="btn ghost">Cancel</button>
+            </div>
           </div>
           <div class="panel">
             <button type="button" id="delete-all" class="btn danger">Delete everything</button>

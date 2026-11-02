@@ -295,6 +295,7 @@
                 <div id="gov-dash-panel">
                   <p class="quiet">Total tax paid</p>
                   <p id="tax-paid" class="dash-figure">0 ₲</p>
+                  <div id="tax-bars" class="tax-bars"></div>
                 </div>
                 <div id="gov-taxes-panel" hidden>
                   <p class="quiet">No tax returns yet, file a return to get started.</p>
@@ -314,7 +315,10 @@
                   My Dashboard
                 </button>
                 <button type="button" id="gov-taxes" role="tab" aria-selected="false">
-                  <img class="tax-mark" src="tax-drop.png" alt="" width="52" height="52" />
+                  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                    <circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.7"/>
+                    <path d="M12 6.8v10.4M9.2 9.1c.5-.7 1.4-1.1 2.4-1.1 1.7 0 2.8.9 2.8 2.1S13.4 12 11.6 12.2l-2.2.3c1.6.2 2.8.9 2.8 2.1s-1.1 2.1-2.8 2.1c-1 0-1.9-.4-2.4-1.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
                   Taxes
                 </button>
                 <button type="button" id="gov-assets" role="tab" aria-selected="false">
@@ -398,32 +402,21 @@
                     </label>
                     <button type="button" id="tax-add-line" class="btn ghost">Add product</button>
                     <p id="tax-product-msg" class="error" role="status"></p>
-                    <div class="tax-table-wrap">
-                      <table class="tax-table">
-                        <thead>
-                          <tr>
-                            <th>Product name</th>
-                            <th>Quantity sold</th>
-                            <th>Gross Amount</th>
-                            <th>VAT</th>
-                            <th>Net profit</th>
-                            <th></th>
-                          </tr>
-                        </thead>
-                        <tbody id="tax-lines"></tbody>
-                      </table>
-                    </div>
+                    <div class="tax-table-wrap" id="tax-lines"></div>
                   </section>
                   <section class="tax-step">
-                    <h1>Total bill</h1>
+                    <h1>Total invoice</h1>
                     <div class="tax-totals" id="tax-totals">
                       <p><span>Gross revenue</span><strong id="tax-gross-revenue">—</strong></p>
-                      <p><span>Gross VAT</span><strong id="tax-gross-vat">—</strong></p>
                       <p><span>Gross profit</span><strong id="tax-gross-profit">—</strong></p>
-                      <p><span>Tax on gross profit</span><strong id="tax-profit-tax">—</strong></p>
-                      <p><span>Total invoice</span><strong id="tax-invoice">—</strong></p>
+                      <p><span>Gross expenses</span><strong id="tax-gross-expenses">—</strong></p>
                     </div>
-                    <p id="tax-rate-note" class="quiet"></p>
+                    <div class="tax-invoice-box">
+                      <p><span>Gross VAT</span><strong id="tax-gross-vat">—</strong></p>
+                      <p><span>Tax on gross profit</span><strong id="tax-profit-tax">—</strong></p>
+                      <hr />
+                      <p class="tax-invoice-total"><span>Total invoice</span><strong id="tax-invoice">—</strong></p>
+                    </div>
                     <div id="tax-terms-text" class="terms-box"></div>
                     <label class="check">
                       <input id="tax-agree" type="checkbox" />
