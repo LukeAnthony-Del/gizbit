@@ -291,8 +291,12 @@
                   </div>
                 </div>
                 <h1>My Gov Centre</h1>
-                <button type="button" id="gov-plus" class="btn tax-launch">+ New tax return</button>
-                <div id="gov-taxes-panel">
+                <button type="button" id="gov-plus" class="btn tax-launch" hidden>+ New tax return</button>
+                <div id="gov-dash-panel">
+                  <p class="quiet">Total tax paid</p>
+                  <p id="tax-paid" class="dash-figure">0 ₲</p>
+                </div>
+                <div id="gov-taxes-panel" hidden>
                   <p class="quiet">No tax returns yet, file a return to get started.</p>
                 </div>
                 <div id="gov-assets-panel" hidden>
@@ -300,7 +304,16 @@
                 </div>
               </div>
               <div class="gov-tabs" role="tablist">
-                <button type="button" id="gov-taxes" class="is-on" role="tab" aria-selected="true">
+                <button type="button" id="gov-dash" class="is-on" role="tab" aria-selected="true">
+                  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                    <rect x="3.5" y="3.5" width="7" height="7" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.7"/>
+                    <rect x="13.5" y="3.5" width="7" height="7" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.7"/>
+                    <rect x="3.5" y="13.5" width="7" height="7" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.7"/>
+                    <rect x="13.5" y="13.5" width="7" height="7" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.7"/>
+                  </svg>
+                  My Dashboard
+                </button>
+                <button type="button" id="gov-taxes" role="tab" aria-selected="false">
                   <img class="tax-mark" src="tax-drop.png" alt="" width="52" height="52" />
                   Taxes
                 </button>
@@ -429,7 +442,7 @@
               </div>
               <div class="tax-foot">
                 <button type="button" id="tax-next" class="btn" disabled>Next</button>
-                <button type="button" id="tax-commit" class="btn" hidden disabled>File Return</button>
+                <button type="button" id="tax-commit" class="btn" hidden disabled>File Return &amp; Pay</button>
               </div>
             </div>
           </div>
@@ -507,9 +520,8 @@
       <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="tax-thanks-title">
         <p id="tax-wait" class="dots" hidden><span></span><span></span><span></span></p>
         <div id="tax-thanks-body" hidden>
-          <h2 id="tax-thanks-title">Thank you</h2>
-          <p>Your tax return was sent to the National Gizbit Government centre.</p>
-          <button type="button" id="tax-ok" class="btn">Okay</button>
+          <h2 id="tax-thanks-title">Thank you. Your tax return has been sent.</h2>
+          <button type="button" id="tax-ok" class="btn">Back to dashboard</button>
         </div>
       </div>
     </div>

@@ -309,7 +309,7 @@ main {
 }
 .gov-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   width: 100%;
   flex: none;
   padding-bottom: env(safe-area-inset-bottom);
@@ -321,12 +321,14 @@ main {
   justify-content: center;
   gap: 4px;
   width: 100%;
-  min-height: 96px;
+  min-height: 84px;
   border: 0;
   border-radius: 0;
   background: #3a3a3a;
   color: #f4f4f4;
+  font-size: 12px;
   font-weight: 700;
+  padding: 8px 4px;
 }
 .gov-tabs button.is-on {
   background: #111;
@@ -378,16 +380,18 @@ main {
 .tax-step {
   width: 33.333%;
   height: 100%;
+  min-height: 0;
   overflow: auto;
-  padding: 0 16px 16px;
-  display: grid;
+  padding: 0 16px 24px;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  align-content: start;
 }
-.tax-step:first-child { overflow: visible; }
+.tax-step > * { flex: none; }
 .tax-step:nth-child(2) { gap: 8px; }
 .tax-step:nth-child(2) .field input { padding: 8px 12px; }
 .tax-foot {
+  flex: none;
   padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
 }
 .tax-foot .btn { width: 100%; }
@@ -510,7 +514,16 @@ main {
 #tax-thanks .sheet-card { background: #2a2a2a; color: #fff; }
 #tax-thanks .sheet-card h2, #tax-thanks .sheet-card p { color: #fff; }
 #tax-thanks .dots span { background: #fff; }
-#tax-thanks .btn { background: #fff; color: #111; }
+#tax-thanks-body:not([hidden]) { display: grid; gap: 28px; }
+#tax-thanks-body h2 { margin: 0; }
+#tax-thanks .btn { width: 100%; background: #fff; color: #111; }
+.dash-figure {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: #fff;
+}
 .login-brand {
   display: grid;
   justify-items: center;

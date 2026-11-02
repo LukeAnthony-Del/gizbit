@@ -227,6 +227,97 @@ input, select {
 .error:empty { display: none; }
 .quiet { margin: 0; color: var(--muted); font-size: 13px; }
 .feed { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.feed li.day-group {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+}
+.day-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #2a6fdb;
+  font-size: 16px;
+  font-weight: 800;
+  padding: 14px 2px 6px;
+}
+.day-head svg { transition: transform 0.18s ease; }
+.day-group.is-shut .day-head svg { transform: rotate(-90deg); }
+.day-group.is-shut .day-body { display: none; }
+.day-body { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.net-crest {
+  margin-left: auto;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  color: var(--navy);
+  text-align: right;
+  flex: none;
+}
+.net-crest p {
+  margin: 0;
+  max-width: 120px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--navy);
+}
+.net-crest svg { width: 42px; height: 32px; }
+.archive {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.35s ease;
+  pointer-events: none;
+}
+.archive.is-open { transform: translateX(0); pointer-events: auto; }
+.archive-head { padding: calc(env(safe-area-inset-top) + 16px) 16px 8px; }
+.archive-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--navy);
+  font-weight: 700;
+  padding: 0;
+  min-height: 40px;
+}
+.archive-body { flex: 1; min-height: 0; overflow: auto; padding: 0 16px 24px; }
+.tax-files { display: grid; gap: 12px; }
+.tax-swipe { border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.tax-file {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: #fff;
+  min-height: 100%;
+}
+.tax-file.is-open { transform: translateX(56px); }
+.tax-file.is-sign { transform: translateX(-56px); }
+.tax-file-top { display: flex; justify-content: space-between; gap: 12px; }
+.tax-file-top strong:last-child { text-align: right; }
+.tax-file .quiet { margin: 0; }
+.tax-table-wrap { overflow-x: auto; }
+#view-taxes { width: 100%; }
+.tax-file table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 11px; }
+.tax-file th, .tax-file td {
+  text-align: left;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.tax-file-totals { display: grid; gap: 4px; }
+.tax-file-totals p { display: flex; justify-content: space-between; gap: 12px; margin: 0; font-size: 13px; }
 .feed li {
   background: var(--card);
   border: 1px solid var(--line);
@@ -247,9 +338,13 @@ body.standalone .hint { display: none; }
 
 .cols, .acct {
   display: grid;
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.3fr);
   gap: 6px;
   align-items: start;
+}
+.cols { grid-template-columns: minmax(0, 1fr) auto; }
+.acct {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
 }
 .cols {
   color: var(--muted);
@@ -260,7 +355,13 @@ body.standalone .hint { display: none; }
   border-bottom: 1px solid var(--line);
 }
 .cols span:nth-child(2), .acct .acct-type { display: none; }
-.acct span:first-child { overflow-wrap: anywhere; }
+.acct > span:first-child {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  overflow-wrap: anywhere;
+}
+.acct .bal-short { grid-column: 2; grid-row: 1; white-space: nowrap; }
+.acct .bal-full { grid-column: 2; grid-row: 2; white-space: nowrap; }
 .cols span:last-child, .acct .bal { text-align: right; }
 .swipe {
   position: relative;
@@ -313,7 +414,7 @@ body.standalone .hint { display: none; }
 }
 .log-row.is-open { transform: translateX(56px); }
 .log-row.is-sign { transform: translateX(-56px); }
-.acct, .log-row {
+.acct, .log-row, .tax-file {
   position: relative;
   z-index: 1;
   transition: transform 0.18s ease;
@@ -416,13 +517,11 @@ body.standalone .hint { display: none; }
 }
 .bal-short { display: block; font-variant-numeric: tabular-nums; text-align: right; }
 .bal-full {
-  grid-column: 1 / -1;
   text-align: right;
   color: var(--muted);
   font-size: 12px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
 }
 .feed li.is-pending {
   background: #f6e7c1;

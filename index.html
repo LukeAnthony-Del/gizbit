@@ -45,7 +45,7 @@
 
         <section id="requests" class="page" role="tabpanel" hidden>
           <div class="page-head">
-            <h1>terminal messages</h1>
+            <h1>Terminal Messages</h1>
           </div>
           <hr />
           <p id="requests-empty" class="empty">Messages from a terminal show up here.</p>
@@ -131,11 +131,21 @@
 
         <section id="government" class="page" role="tabpanel" hidden>
           <div class="page-head">
-            <h1>National Gizbit Government centre</h1>
+            <h1>My Gov Center</h1>
+            <div class="net-crest">
+              <svg viewBox="0 0 64 48" aria-hidden="true">
+                <path fill="currentColor" d="M32 1.5 60 16H4L32 1.5z"/>
+                <path fill="currentColor" d="M2 16h60v5H2z"/>
+                <path fill="currentColor" d="M7 22h9v3H7zm13 0h9v3h-9zm13 0h9v3h-9zm13 0h9v3h-9z"/>
+                <path fill="currentColor" d="M8.2 25h6.6v12H8.2zm13 0h6.6v12h-6.6zm13 0h6.6v12h-6.6zm13 0h6.6v12h-6.6z"/>
+                <path fill="currentColor" d="M7 37h9v2.4H7zm13 0h9v2.4h-9zm13 0h9v2.4h-9zm13 0h9v2.4h-9z"/>
+                <path fill="currentColor" d="M6 40.2h52v2.6H6zM2 43.2h60v2.4H2zM0 46h64v2H0z"/>
+              </svg>
+              <p>National Gizbit Government</p>
+            </div>
           </div>
           <hr />
-          <p id="gov-empty" class="empty">Tax returns filed from a terminal show up here.</p>
-          <ul id="gov-list" class="feed"></ul>
+          <button type="button" id="view-taxes" class="btn">View all Tax returns</button>
         </section>
       </main>
 
@@ -187,7 +197,7 @@
               <path fill="currentColor" d="M6 40.2h52v2.6H6zM2 43.2h60v2.4H2zM0 46h64v2H0z"/>
             </svg>
           </span>
-          <span>Government</span>
+          <span>Gov</span>
         </button>
         <button type="button" role="tab" data-tab="settings" aria-selected="false">
           <span class="tab-mark" aria-hidden="true">
@@ -198,6 +208,21 @@
           <span>Settings</span>
         </button>
       </nav>
+      <section id="tax-archive" class="archive" aria-hidden="true">
+        <div class="archive-head">
+          <button type="button" id="tax-archive-back" class="archive-back">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Back
+          </button>
+          <h1>Tax returns</h1>
+        </div>
+        <div class="archive-body">
+          <p id="gov-empty" class="empty">Tax returns filed from a terminal show up here.</p>
+          <div id="gov-list" class="tax-files"></div>
+        </div>
+      </section>
     </div>
 
     <div id="sheet" class="sheet" hidden>

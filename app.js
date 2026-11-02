@@ -20,7 +20,7 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.11.000";
+const VERSION = "2.12.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -171,16 +171,30 @@ function formatFull(value) {
   return text.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+const BILLION = 1000000000n;
+
+function floorBillion(value) {
+  const amount = BigInt(value || "0");
+  if (amount <= 0n) return 0n;
+  return amount - (amount % BILLION);
+}
+
+function splitVat(revenue, rate) {
+  const amount = floorBillion(revenue);
+  const percent = BigInt(rate || "0");
+  const net = (amount * 100n) / (100n + percent);
+  return { revenue: amount, vat: amount - net, profit: net };
+}
+
 function taxTotals(lines, rates) {
   let revenue = 0n;
   let vat = 0n;
   let profit = 0n;
   lines.forEach((line) => {
-    const amount = BigInt(line.revenue);
-    const due = (amount * BigInt(rates.vat)) / 100n;
-    revenue += amount;
-    vat += due;
-    profit += amount - due;
+    const parts = splitVat(line.revenue, rates.vat);
+    revenue += parts.revenue;
+    vat += parts.vat;
+    profit += parts.profit;
   });
   const threshold = BigInt(rates.threshold);
   const tax = profit <= threshold
@@ -191,7 +205,7 @@ function taxTotals(lines, rates) {
     vat: vat.toString(),
     profit: profit.toString(),
     tax: tax.toString(),
-    invoice: (vat + tax).toString(),
+    invoice: floorBillion(vat + tax).toString(),
   };
 }
 
@@ -524,57 +538,106 @@ function isTransfer(item) {
   return item.op === "send" || item.op === "transfer";
 }
 
+const closedDays = new Set();
+
+function dayKey(ts) {
+  const date = new Date(ts);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function dayLabel(ts) {
+  const date = new Date(ts);
+  const now = new Date();
+  if (date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()) return "Today";
+  const day = date.getDate();
+  const teen = day % 100;
+  const suffix = teen >= 11 && teen <= 13 ? "th" : ["th", "st", "nd", "rd"][day % 10] || "th";
+  const month = date.toLocaleString(undefined, { month: "short" });
+  return `${day}${suffix} ${month}`;
+}
+
 function renderActivity() {
   const list = $("activity");
   list.replaceChildren();
   const done = requests.filter((item) => item.status && item.status !== "pending");
+  const groups = [];
   done.forEach((item) => {
-    const swipe = document.createElement("li");
-    swipe.className = "swipe log-swipe";
-    const actions = document.createElement("div");
-    actions.className = "swipe-actions one";
-    const trash = document.createElement("button");
-    trash.type = "button";
-    trash.className = "swipe-trash";
-    trash.setAttribute("aria-label", "Delete log");
-    trash.innerHTML = trashMarkup();
-    trash.addEventListener("click", () => deleteLog(item.id));
-    actions.append(trash);
-    const signBtn = document.createElement("button");
-    signBtn.type = "button";
-    signBtn.className = "swipe-sign";
-    signBtn.setAttribute("aria-label", "Show signature");
-    signBtn.innerHTML = signMarkup();
-    signBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      showSignature(item);
+    const key = dayKey(item.ts);
+    let group = groups.find((entry) => entry.key === key);
+    if (!group) {
+      group = { key, ts: item.ts, items: [] };
+      groups.push(group);
+    }
+    group.items.push(item);
+  });
+  groups.forEach((group) => {
+    const body = document.createElement("ul");
+    body.className = "day-body";
+    group.items.forEach((item) => {
+      const swipe = document.createElement("li");
+      swipe.className = "swipe log-swipe";
+      const actions = document.createElement("div");
+      actions.className = "swipe-actions one";
+      const trash = document.createElement("button");
+      trash.type = "button";
+      trash.className = "swipe-trash";
+      trash.setAttribute("aria-label", "Delete log");
+      trash.innerHTML = trashMarkup();
+      trash.addEventListener("click", () => deleteLog(item.id));
+      actions.append(trash);
+      const signBtn = document.createElement("button");
+      signBtn.type = "button";
+      signBtn.className = "swipe-sign";
+      signBtn.setAttribute("aria-label", "Show signature");
+      signBtn.innerHTML = signMarkup();
+      signBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        showSignature(item);
+      });
+      const row = document.createElement("div");
+      row.className = "log-row";
+      const time = document.createElement("time");
+      time.dateTime = new Date(item.ts).toISOString();
+      time.textContent = formatWhen(item.ts);
+      const line = document.createElement("span");
+      const alleged = formatAmount(item.amount);
+      const actual = item.applied ? formatAmount(item.applied) : "";
+      if (isTransfer(item)) {
+        line.textContent = `${item.name} transferred ${alleged} ₲ to ${item.toName || "another account"}`;
+      } else {
+        const verb = item.op === "withdraw" ? "Withdrawal" : "Deposit";
+        line.textContent = actual && actual !== alleged
+          ? `${item.name} · ${verb} · ${alleged} ₲ · received ${actual} ₲`
+          : `${item.name} · ${verb} · ${alleged} ₲`;
+      }
+      row.append(time, line);
+      if (item.status === "denied") {
+        const tag = document.createElement("span");
+        tag.className = "tag";
+        tag.textContent = "Denied";
+        row.append(tag);
+      }
+      swipe.append(actions, signBtn, row);
+      bindReveal(row, 56, 56);
+      body.append(swipe);
     });
-    const row = document.createElement("div");
-    row.className = "log-row";
-    const time = document.createElement("time");
-    time.dateTime = new Date(item.ts).toISOString();
-    time.textContent = formatWhen(item.ts);
-    const line = document.createElement("span");
-    const alleged = formatAmount(item.amount);
-    const actual = item.applied ? formatAmount(item.applied) : "";
-    if (isTransfer(item)) {
-      line.textContent = `${item.name} transferred ${alleged} ₲ to ${item.toName || "another account"}`;
-    } else {
-      const verb = item.op === "withdraw" ? "Withdrawal" : "Deposit";
-      line.textContent = actual && actual !== alleged
-        ? `${item.name} · ${verb} · ${alleged} ₲ · received ${actual} ₲`
-        : `${item.name} · ${verb} · ${alleged} ₲`;
-    }
-    row.append(time, line);
-    if (item.status === "denied") {
-      const tag = document.createElement("span");
-      tag.className = "tag";
-      tag.textContent = "Denied";
-      row.append(tag);
-    }
-    swipe.append(actions, signBtn, row);
-    bindReveal(row, 56, 56);
-    list.append(swipe);
+    const block = document.createElement("li");
+    block.className = "day-group";
+    if (closedDays.has(group.key)) block.classList.add("is-shut");
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "day-head";
+    const label = document.createElement("span");
+    label.textContent = dayLabel(group.ts);
+    toggle.append(label);
+    toggle.insertAdjacentHTML("beforeend", `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`);
+    toggle.addEventListener("click", () => {
+      block.classList.toggle("is-shut");
+      if (block.classList.contains("is-shut")) closedDays.add(group.key);
+      else closedDays.delete(group.key);
+    });
+    block.append(toggle, body);
+    list.append(block);
   });
   const empty = $("activity-empty");
   empty.textContent = "Reviewed exchanges and transfers show up here.";
@@ -774,6 +837,10 @@ function handleMessage(data, bucket) {
     takeTax(body);
     return;
   }
+  if (body.kind === "tax-delete") {
+    takeTaxDelete(body);
+    return;
+  }
   if (body.kind === "password") {
     takePassword(body);
     return;
@@ -871,6 +938,25 @@ function takeTax(body) {
   return true;
 }
 
+function takeTaxDelete(body) {
+  if (!body || typeof body.id !== "string" || !remember(`tax-delete:${body.id}`)) return;
+  const index = taxes.findIndex((item) => item.id === body.id);
+  if (index < 0) return;
+  taxes.splice(index, 1);
+  saveTaxes();
+  renderGovernment();
+}
+
+function deleteTax(id) {
+  const index = taxes.findIndex((item) => item.id === id);
+  if (index < 0) return;
+  taxes.splice(index, 1);
+  saveTaxes();
+  renderGovernment();
+  remember(`tax-delete:${id}`);
+  publish("Tax return removed", { v: 1, kind: "tax-delete", id, ts: Date.now() }).catch(() => {});
+}
+
 function renderGovernment() {
   const list = $("gov-list");
   const empty = $("gov-empty");
@@ -878,34 +964,83 @@ function renderGovernment() {
   list.replaceChildren();
   empty.hidden = taxes.length > 0;
   taxes.forEach((item) => {
-    const li = document.createElement("li");
-    const title = document.createElement("strong");
-    title.textContent = item.business;
+    const rates = {
+      vat: item.vatRate,
+      low: item.lowRate,
+      high: item.highRate,
+      threshold: item.threshold,
+    };
+    const totals = taxTotals(item.lines || [], rates);
+    const swipe = document.createElement("div");
+    swipe.className = "swipe tax-swipe";
+    const actions = document.createElement("div");
+    actions.className = "swipe-actions one";
+    const trash = document.createElement("button");
+    trash.type = "button";
+    trash.className = "swipe-trash";
+    trash.setAttribute("aria-label", `Remove the tax return for ${item.business}`);
+    trash.innerHTML = trashMarkup();
+    trash.addEventListener("click", () => deleteTax(item.id));
+    actions.append(trash);
+    const signBtn = document.createElement("button");
+    signBtn.type = "button";
+    signBtn.className = "swipe-sign";
+    signBtn.setAttribute("aria-label", "Show signature");
+    signBtn.innerHTML = signMarkup();
+    signBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showSignature(item);
+    });
+    const card = document.createElement("article");
+    card.className = "tax-file";
+    const top = document.createElement("div");
+    top.className = "tax-file-top";
+    const owner = document.createElement("strong");
+    owner.textContent = item.owner;
+    const business = document.createElement("strong");
+    business.textContent = item.business;
+    top.append(owner, business);
     const meta = document.createElement("p");
     meta.className = "quiet";
-    meta.textContent = `${item.owner} · Sheet ${item.sheet} · Session ${item.session}`;
-    const rows = document.createElement("ul");
-    rows.className = "gov-lines";
+    meta.textContent = `Sheet ${item.sheet} · Session ${item.session}`;
+    const wrap = document.createElement("div");
+    wrap.className = "tax-table-wrap";
+    const table = document.createElement("table");
+    table.innerHTML = "<thead><tr><th>Product name</th><th>Quantity sold</th><th>Gross Amount</th><th>VAT</th><th>Net profit</th></tr></thead>";
+    const body = document.createElement("tbody");
     (item.lines || []).forEach((line) => {
-      const row = document.createElement("li");
-      const due = (BigInt(line.revenue) * BigInt(item.vatRate)) / 100n;
-      const net = BigInt(line.revenue) - due;
-      row.textContent = `${line.name} · ${formatFull(line.qty)} sold · ${formatAmount(line.revenue)} ₲ · VAT ${formatAmount(due)} ₲ · Net ${formatAmount(net)} ₲`;
-      rows.append(row);
+      const parts = splitVat(line.revenue, item.vatRate);
+      const row = document.createElement("tr");
+      [line.name, formatFull(line.qty), formatAmount(parts.revenue), formatAmount(parts.vat), formatAmount(parts.profit)].forEach((text) => {
+        const cell = document.createElement("td");
+        cell.textContent = text;
+        row.append(cell);
+      });
+      body.append(row);
     });
-    const totals = document.createElement("p");
-    const totalsRow = item.totals || {};
-    totals.textContent = `Gross revenue ${formatAmount(totalsRow.revenue)} ₲. Gross VAT ${formatAmount(totalsRow.vat)} ₲. Gross profit ${formatAmount(totalsRow.profit)} ₲. Profit tax ${formatAmount(totalsRow.tax)} ₲. Total invoice ${formatAmount(totalsRow.invoice)} ₲.`;
-    li.append(title, meta, rows, totals);
-    if (item.sign && item.sign.length) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "btn slim";
-      button.textContent = "Signature";
-      button.addEventListener("click", () => showSignature(item));
-      li.append(button);
-    }
-    list.append(li);
+    table.append(body);
+    wrap.append(table);
+    const sums = document.createElement("div");
+    sums.className = "tax-file-totals";
+    [
+      ["Gross revenue", totals.revenue],
+      ["Gross VAT", totals.vat],
+      ["Gross profit", totals.profit],
+      ["Tax on gross profit", totals.tax],
+      ["Total invoice", totals.invoice],
+    ].forEach(([name, amount]) => {
+      const row = document.createElement("p");
+      const label = document.createElement("span");
+      label.textContent = name;
+      const value = document.createElement("strong");
+      value.textContent = `${formatAmount(amount)} ₲`;
+      row.append(label, value);
+      sums.append(row);
+    });
+    card.append(top, meta, wrap, sums);
+    swipe.append(actions, signBtn, card);
+    bindReveal(card, 56, 56);
+    list.append(swipe);
   });
 }
 
@@ -1743,8 +1878,19 @@ $("settings-form").addEventListener("submit", (event) => {
 document.querySelectorAll(".tabs button").forEach((button) => {
   button.addEventListener("click", () => {
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().then(() => renderRequests());
+    $("tax-archive").classList.remove("is-open");
+    $("tax-archive").setAttribute("aria-hidden", "true");
     showTab(button.dataset.tab);
   });
+});
+$("view-taxes").addEventListener("click", () => {
+  renderGovernment();
+  $("tax-archive").classList.add("is-open");
+  $("tax-archive").setAttribute("aria-hidden", "false");
+});
+$("tax-archive-back").addEventListener("click", () => {
+  $("tax-archive").classList.remove("is-open");
+  $("tax-archive").setAttribute("aria-hidden", "true");
 });
 
 bindViewport();
