@@ -306,18 +306,58 @@ input, select {
 .tax-file-top { display: flex; justify-content: space-between; gap: 12px; }
 .tax-file-top strong:last-child { text-align: right; }
 .tax-file .quiet { margin: 0; }
-.tax-table-wrap { overflow-x: auto; }
 #view-taxes { width: 100%; }
-.tax-file table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 11px; }
-.tax-file th, .tax-file td {
-  text-align: left;
-  padding: 6px 4px;
-  border-bottom: 1px solid var(--line);
-  vertical-align: top;
-  overflow-wrap: anywhere;
+.tax-grid { display: grid; }
+.tax-grid-head, .tax-grid-row {
+  display: grid;
+  grid-template-columns: 1.5fr 0.7fr 0.85fr 0.7fr 0.85fr;
+  gap: 4px;
+  align-items: start;
 }
-.tax-file-totals { display: grid; gap: 4px; }
-.tax-file-totals p { display: flex; justify-content: space-between; gap: 12px; margin: 0; font-size: 13px; }
+.tax-grid-head { color: #c8c8c8; font-size: 11px; padding-bottom: 4px; }
+.tax-grid-row {
+  padding: 6px 0;
+  border-bottom: 1px solid #444;
+  color: #f4f4f4;
+  font-size: 12px;
+}
+.tax-grid-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tax-stack, .money-stack { display: flex; flex-direction: column; line-height: 1.1; min-width: 0; }
+.tax-stack b, .money-stack b { font-weight: 700; }
+.tax-stack small, .money-stack small { font-size: 10px; font-weight: 600; color: #c8c8c8; }
+.tax-file-totals { display: grid; gap: 8px; }
+.tax-sum { display: grid; gap: 4px; }
+.tax-file-totals p, .tax-sum p { display: flex; justify-content: space-between; gap: 12px; margin: 0; font-size: 13px; }
+.tax-file-totals hr { border: 0; border-top: 1px solid #444; margin: 0; }
+.tax-file-totals .is-invoice strong { font-size: 22px; }
+.tax-file .btn { width: 100%; }
+body.gov-theme main,
+body.gov-theme #government.is-active,
+body.gov-theme .archive { background: #2a2a2a; color: #f4f4f4; }
+body.gov-theme #government h1,
+body.gov-theme .archive h1,
+body.gov-theme .net-crest,
+body.gov-theme .net-crest p,
+body.gov-theme .archive-back { color: #fff; }
+body.gov-theme #government hr { border: 0; border-top: 1px solid #444; }
+body.gov-theme #view-taxes,
+body.gov-theme .tax-file .btn { background: #111; color: #fff; }
+body.gov-theme .tabs { background: #3a3a3a; border-top-color: #111; }
+body.gov-theme .tabs button { background: #3a3a3a; color: #f4f4f4; }
+body.gov-theme .tabs button.is-active { background: #111; color: #fff; box-shadow: none; }
+.tax-swipe { background: #161616; border-color: #444; }
+.tax-file { background: #161616; color: #f4f4f4; }
+.archive { background: #2a2a2a; color: #f4f4f4; }
+.archive h1, .archive-back { color: #fff; }
+#tax-review .sheet-card { background: #2a2a2a; color: #fff; display: grid; gap: 10px; }
+#tax-review h2, #tax-review .field, #tax-review p { color: #fff; }
+#tax-review input { background: #161616; color: #fff; border-color: #555; }
+#tax-review hr { border: 0; border-top: 1px solid #444; margin: 0; }
+#tax-review .review-invoice input { font-size: 22px; font-weight: 800; }
+.review-lines { display: grid; gap: 4px; }
+.review-lines p { margin: 0; color: #ddd; font-size: 13px; }
+#tax-review .btn { background: #111; color: #fff; }
+#tax-review .btn.ghost { background: #3d3d3d; }
 .feed li {
   background: var(--card);
   border: 1px solid var(--line);

@@ -270,6 +270,23 @@
       </div>
     </div>
 
+    <div id="tax-review" class="sheet" hidden>
+      <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="review-title">
+        <h2 id="review-title">Tax return</h2>
+        <div id="review-lines" class="review-lines"></div>
+        <label class="field"><span>Gross revenue</span><input id="review-revenue" inputmode="numeric" autocomplete="off" /></label>
+        <label class="field"><span>Gross profit</span><input id="review-profit" inputmode="numeric" autocomplete="off" /></label>
+        <label class="field"><span>Gross expenses</span><input id="review-expenses" inputmode="numeric" autocomplete="off" /></label>
+        <hr />
+        <label class="field"><span>Gross VAT</span><input id="review-vat" inputmode="numeric" autocomplete="off" /></label>
+        <label class="field"><span>Tax on gross profit</span><input id="review-tax" inputmode="numeric" autocomplete="off" /></label>
+        <label class="field review-invoice"><span>Total invoice</span><input id="review-invoice" inputmode="numeric" autocomplete="off" /></label>
+        <p id="review-error" class="error" role="status"></p>
+        <button type="button" id="review-confirm" class="btn">Confirm</button>
+        <button type="button" id="review-close" class="btn ghost">Close</button>
+      </div>
+    </div>
+
     <div id="sign-sheet" class="sheet" hidden>
       <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sign-title">
         <h2 id="sign-title">Signature</h2>

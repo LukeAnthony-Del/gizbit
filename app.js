@@ -20,7 +20,7 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.13.000";
+const VERSION = "2.14.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -188,7 +188,7 @@ function splitVat(revenue, rate) {
   return { revenue: amount, vat: floorBillion(amount - net), profit: floorBillion(net) };
 }
 
-function taxTotals(lines, rates) {
+function taxTotals(lines, rates, expenses) {
   let revenue = 0n;
   let vat = 0n;
   let profit = 0n;
@@ -198,16 +198,18 @@ function taxTotals(lines, rates) {
     vat += parts.vat;
     profit += parts.profit;
   });
+  const spent = (expenses || []).reduce((sum, item) => sum + floorBillion(item.amount), 0n);
+  const taxable = profit > spent ? profit - spent : 0n;
   const threshold = BigInt(rates.threshold);
-  const rawTax = profit <= threshold
-    ? (profit * BigInt(rates.low)) / 100n
-    : (threshold * BigInt(rates.low)) / 100n + ((profit - threshold) * BigInt(rates.high)) / 100n;
+  const rawTax = taxable <= threshold
+    ? (taxable * BigInt(rates.low)) / 100n
+    : (threshold * BigInt(rates.low)) / 100n + ((taxable - threshold) * BigInt(rates.high)) / 100n;
   const tax = floorBillion(rawTax);
   return {
     revenue: revenue.toString(),
     vat: vat.toString(),
     profit: profit.toString(),
-    expenses: "0",
+    expenses: spent.toString(),
     tax: tax.toString(),
     invoice: floorBillion(vat + tax).toString(),
   };
@@ -790,6 +792,7 @@ function showTab(name) {
     button.setAttribute("aria-selected", on ? "true" : "false");
   });
   $("add-account").hidden = name !== "balances";
+  document.body.classList.toggle("gov-theme", name === "government");
   $("main").scrollTop = 0;
 }
 
@@ -891,6 +894,19 @@ function takeTx(tx) {
   return tx.id;
 }
 
+function sanitizeExpenses(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 12).map((item) => {
+    const name = String(item?.name || "").trim().slice(0, 40);
+    const note = String(item?.note || "").trim().slice(0, 120);
+    const amount = moneyText(item?.amount, false);
+    if (!name || !note || amount == null) return null;
+    const floored = floorBillion(amount);
+    if (floored <= 0n) return null;
+    return { name, note, amount: floored.toString() };
+  }).filter(Boolean);
+}
+
 function sanitizeTaxLines(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 12).map((line) => {
@@ -913,6 +929,7 @@ function takeTax(body) {
   const owner = String(body.owner || "").trim().slice(0, 40);
   const sheet = String(body.sheet || "").replace(/\D/g, "").replace(/^0+/, "");
   const lines = sanitizeTaxLines(body.lines);
+  const expenses = sanitizeExpenses(body.expenses);
   if (!business || owner !== account.name || !sheet || !lines.length) {
     publishReject(body.id, "That tax return could not be filed.");
     return false;
@@ -923,45 +940,7 @@ function takeTax(body) {
     high: percentText(body.highRate, state.settings.profitHigh),
     threshold: moneyText(body.threshold, false) || state.settings.profitThreshold,
   };
-  const totals = taxTotals(lines, rates);
-  const invoice = BigInt(totals.invoice);
-  const sink = state.accounts.find((item) => item.id === state.settings.taxAccountId);
-  if (invoice > 0n) {
-    if (!sink) {
-      publishReject(body.id, "Set the account that receives tax payments in Settings.");
-      return false;
-    }
-    if (sink.id === account.id) {
-      publishReject(body.id, "Choose a different account for tax payments.");
-      return false;
-    }
-    if (BigInt(account.bal) < invoice) {
-      publishReject(body.id, "Not enough gizbits to pay that tax.");
-      return false;
-    }
-    const nextSink = BigInt(sink.bal) + invoice;
-    if (nextSink > MAX) {
-      publishReject(body.id, "That tax account cannot hold that much.");
-      return false;
-    }
-    account.bal = (BigInt(account.bal) - invoice).toString();
-    sink.bal = nextSink.toString();
-    saveAccounts();
-    requests.unshift({
-      id: `${body.id}-pay`,
-      accountId: account.id,
-      name: account.name,
-      op: "transfer",
-      amount: totals.invoice,
-      status: "done",
-      applied: totals.invoice,
-      toId: sink.id,
-      toName: sink.name,
-      ts: Number(body.ts) || Date.now(),
-    });
-    saveRequests();
-    renderActivity();
-  }
+  const totals = taxTotals(lines, rates, expenses);
   taxes.unshift({
     id: body.id,
     accountId: account.id,
@@ -974,7 +953,9 @@ function takeTax(body) {
     highRate: rates.high,
     threshold: rates.threshold,
     lines,
+    expenses,
     totals,
+    status: "review",
     sign: cleanSign(body.sign),
     ts: Number(body.ts) || Date.now(),
   });
@@ -982,8 +963,45 @@ function takeTax(body) {
   noteSign(account.id, body.id, body.sign);
   renderGovernment();
   toast(`${business} filed a tax return`);
-  publishLedger([body.id]).catch(() => {});
   return true;
+}
+
+function payTax(item, totals) {
+  const account = state.accounts.find((entry) => entry.id === item.accountId);
+  const invoice = BigInt(totals.invoice || "0");
+  const sink = state.accounts.find((entry) => entry.id === state.settings.taxAccountId);
+  if (invoice > 0n) {
+    if (!account) return "That account is no longer on this phone.";
+    if (!sink) return "Set the account that receives tax payments in Settings.";
+    if (sink.id === account.id) return "Choose a different account for tax payments.";
+    if (BigInt(account.bal) < invoice) return "Not enough gizbits to pay that tax.";
+    const nextSink = BigInt(sink.bal) + invoice;
+    if (nextSink > MAX) return "That tax account cannot hold that much.";
+    account.bal = (BigInt(account.bal) - invoice).toString();
+    sink.bal = nextSink.toString();
+    saveAccounts();
+    requests.unshift({
+      id: `${item.id}-pay`,
+      accountId: account.id,
+      name: account.name,
+      op: "transfer",
+      amount: totals.invoice,
+      status: "done",
+      applied: totals.invoice,
+      toId: sink.id,
+      toName: sink.name,
+      ts: Date.now(),
+    });
+    saveRequests();
+    renderActivity();
+  }
+  item.totals = totals;
+  item.status = "paid";
+  saveTaxes();
+  renderGovernment();
+  publishLedger([item.id]).catch(() => {});
+  toast("Tax payment sent");
+  return "";
 }
 
 function takeTaxDelete(body) {
@@ -1023,6 +1041,121 @@ function deleteTax(id) {
   publish("Tax return removed", { v: 1, kind: "tax-delete", id, ts: Date.now() }).catch(() => {});
 }
 
+function amountParts(value) {
+  const text = formatAmount(value);
+  const split = text.match(/^(.*)\s(Billion|Trillion)$/);
+  if (!split) return { num: text, unit: "" };
+  return { num: split[1], unit: split[2] };
+}
+
+function stackLabel(top, bottom) {
+  const cell = document.createElement("span");
+  cell.className = "tax-stack";
+  const title = document.createElement("b");
+  title.textContent = top;
+  cell.append(title);
+  if (bottom) {
+    const sub = document.createElement("small");
+    sub.textContent = bottom;
+    cell.append(sub);
+  }
+  return cell;
+}
+
+function stackMoney(value) {
+  const parts = amountParts(value);
+  const cell = document.createElement("span");
+  cell.className = "money-stack";
+  const num = document.createElement("b");
+  num.textContent = parts.num;
+  cell.append(num);
+  if (parts.unit) {
+    const unit = document.createElement("small");
+    unit.textContent = parts.unit;
+    cell.append(unit);
+  }
+  return cell;
+}
+
+function sumRow(label, amount, big) {
+  const row = document.createElement("p");
+  if (big) row.className = "is-invoice";
+  const name = document.createElement("span");
+  name.textContent = label;
+  const value = document.createElement("strong");
+  value.textContent = `${formatAmount(amount)} ₲`;
+  row.append(name, value);
+  return row;
+}
+
+let reviewId = "";
+
+function openTaxReview(id) {
+  const item = taxes.find((entry) => entry.id === id);
+  if (!item || item.status !== "review") return;
+  reviewId = id;
+  const totals = item.totals || {};
+  const write = (field, amount) => {
+    $(field).value = formatFull(amount || "0");
+  };
+  write("review-revenue", totals.revenue);
+  write("review-profit", totals.profit);
+  write("review-expenses", totals.expenses);
+  write("review-vat", totals.vat);
+  write("review-tax", totals.tax);
+  write("review-invoice", totals.invoice);
+  $("review-title").textContent = item.business || "Tax return";
+  $("review-error").textContent = "";
+  const lines = $("review-lines");
+  lines.replaceChildren();
+  (item.lines || []).forEach((line) => {
+    const parts = splitVat(line.revenue, item.vatRate);
+    const row = document.createElement("p");
+    row.textContent = `${line.name} · ${formatAmount(parts.revenue)} ₲`;
+    lines.append(row);
+  });
+  $("tax-review").hidden = false;
+}
+
+function readReviewAmount(id) {
+  const digits = $(id).value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  if (!digits || digits === "0") return "0";
+  const floored = floorBillion(digits);
+  if (floored <= 0n) return null;
+  return floored.toString();
+}
+
+function confirmTaxReview() {
+  const item = taxes.find((entry) => entry.id === reviewId);
+  const error = $("review-error");
+  error.textContent = "";
+  if (!item || item.status !== "review") {
+    $("tax-review").hidden = true;
+    return;
+  }
+  const fields = ["review-revenue", "review-profit", "review-expenses", "review-vat", "review-tax", "review-invoice"];
+  const amounts = fields.map(readReviewAmount);
+  if (amounts.some((amount) => amount == null)) {
+    error.textContent = "Each amount is rounded down to 1 billion gizbits.";
+    return;
+  }
+  const totals = {
+    revenue: amounts[0],
+    profit: amounts[1],
+    expenses: amounts[2],
+    vat: amounts[3],
+    tax: amounts[4],
+    invoice: amounts[5],
+  };
+  const problem = payTax(item, totals);
+  if (problem) {
+    error.textContent = problem;
+    return;
+  }
+  reviewId = "";
+  $("tax-review").hidden = true;
+}
+
 function renderGovernment() {
   const list = $("gov-list");
   const empty = $("gov-empty");
@@ -1030,13 +1163,7 @@ function renderGovernment() {
   list.replaceChildren();
   empty.hidden = taxes.length > 0;
   taxes.forEach((item) => {
-    const rates = {
-      vat: item.vatRate,
-      low: item.lowRate,
-      high: item.highRate,
-      threshold: item.threshold,
-    };
-    const totals = taxTotals(item.lines || [], rates);
+    const totals = item.totals || { revenue: "0", vat: "0", profit: "0", expenses: "0", tax: "0", invoice: "0" };
     const swipe = document.createElement("div");
     swipe.className = "swipe tax-swipe";
     const actions = document.createElement("div");
@@ -1069,41 +1196,52 @@ function renderGovernment() {
     const meta = document.createElement("p");
     meta.className = "quiet";
     meta.textContent = `Sheet ${item.sheet} · Session ${item.session}`;
-    const wrap = document.createElement("div");
-    wrap.className = "tax-table-wrap";
-    const table = document.createElement("table");
-    table.innerHTML = "<thead><tr><th>Product name</th><th>Quantity sold</th><th>Gross Amount</th><th>VAT</th><th>Net profit</th></tr></thead>";
-    const body = document.createElement("tbody");
+    const grid = document.createElement("div");
+    grid.className = "tax-grid";
+    const head = document.createElement("div");
+    head.className = "tax-grid-head";
+    [["Product", "name"], ["Quantity", "sold"], ["Gross", "amount"], ["VAT", ""], ["Net", "profit"]].forEach(([label, sub]) => {
+      head.append(stackLabel(label, sub));
+    });
+    grid.append(head);
     (item.lines || []).forEach((line) => {
       const parts = splitVat(line.revenue, item.vatRate);
-      const row = document.createElement("tr");
-      [line.name, formatFull(line.qty), formatAmount(parts.revenue), formatAmount(parts.vat), formatAmount(parts.profit)].forEach((text) => {
-        const cell = document.createElement("td");
-        cell.textContent = text;
-        row.append(cell);
-      });
-      body.append(row);
+      const row = document.createElement("div");
+      row.className = "tax-grid-row";
+      const name = document.createElement("span");
+      name.className = "tax-grid-name";
+      name.textContent = line.name;
+      const qty = document.createElement("span");
+      qty.textContent = formatFull(line.qty);
+      row.append(name, qty, stackMoney(parts.revenue), stackMoney(parts.vat), stackMoney(parts.profit));
+      grid.append(row);
     });
-    table.append(body);
-    wrap.append(table);
     const sums = document.createElement("div");
     sums.className = "tax-file-totals";
-    [
-      ["Gross revenue", totals.revenue],
-      ["Gross VAT", totals.vat],
-      ["Gross profit", totals.profit],
-      ["Tax on gross profit", totals.tax],
-      ["Total invoice", totals.invoice],
-    ].forEach(([name, amount]) => {
-      const row = document.createElement("p");
-      const label = document.createElement("span");
-      label.textContent = name;
-      const value = document.createElement("strong");
-      value.textContent = `${formatAmount(amount)} ₲`;
-      row.append(label, value);
-      sums.append(row);
-    });
-    card.append(top, meta, wrap, sums);
+    const lead = document.createElement("div");
+    lead.className = "tax-sum";
+    lead.append(
+      sumRow("Gross revenue", totals.revenue),
+      sumRow("Gross profit", totals.profit),
+      sumRow("Gross expenses", totals.expenses || "0"),
+    );
+    const rule = document.createElement("hr");
+    const rest = document.createElement("div");
+    rest.className = "tax-sum";
+    rest.append(sumRow("Gross VAT", totals.vat), sumRow("Tax on gross profit", totals.tax));
+    sums.append(lead, rule, rest, sumRow("Total invoice", totals.invoice, true));
+    card.append(top, meta, grid, sums);
+    if (item.status === "review") {
+      const approve = document.createElement("button");
+      approve.type = "button";
+      approve.className = "btn";
+      approve.textContent = "Approve";
+      approve.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openTaxReview(item.id);
+      });
+      card.append(approve);
+    }
     swipe.append(actions, signBtn, card);
     bindReveal(card, 56, 56);
     list.append(swipe);
@@ -1800,6 +1938,27 @@ $("sign-close").addEventListener("click", () => {
 });
 $("sign-sheet").addEventListener("click", (event) => {
   if (event.target === $("sign-sheet")) $("sign-sheet").hidden = true;
+});
+["review-revenue", "review-profit", "review-expenses", "review-vat", "review-tax", "review-invoice"].forEach((id) => {
+  $(id).addEventListener("input", () => {
+    const input = $(id);
+    const shown = formatFull(input.value.replace(/\D/g, ""));
+    if (input.value !== shown) {
+      input.value = shown === "0" ? "" : shown;
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  });
+});
+$("review-confirm").addEventListener("click", confirmTaxReview);
+$("review-close").addEventListener("click", () => {
+  reviewId = "";
+  $("tax-review").hidden = true;
+});
+$("tax-review").addEventListener("click", (event) => {
+  if (event.target === $("tax-review")) {
+    reviewId = "";
+    $("tax-review").hidden = true;
+  }
 });
 $("sheet").addEventListener("click", (event) => {
   if (event.target === $("sheet")) closeSheet();

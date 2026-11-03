@@ -16,7 +16,7 @@ const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Gov
 const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.17.000";
+const VERSION = "2.18.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -34,6 +34,7 @@ let toastTimer = 0;
 let pendingExchangeId = "";
 let pendingSendId = "";
 let taxLines = [];
+let taxExpenses = [];
 let taxSigned = false;
 let taxBusy = false;
 const waits = new Map();
@@ -576,15 +577,52 @@ function bindAccountMenu(select) {
       item.className = "account-menu-item";
       item.setAttribute("role", "option");
       if (option.value === select.value) item.classList.add("is-on");
-      item.textContent = option.textContent;
+      if (option.value === "__new__") {
+        item.classList.add("is-add");
+        const plus = document.createElement("span");
+        plus.className = "menu-plus";
+        plus.textContent = "+";
+        const label = document.createElement("span");
+        label.textContent = "Add new";
+        item.append(plus, label);
+      } else item.textContent = option.textContent;
+      let dragged = false;
       item.addEventListener("click", () => {
+        if (dragged) {
+          dragged = false;
+          return;
+        }
         select.value = option.value;
         select.dispatchEvent(new Event("change", { bubbles: true }));
         list.hidden = true;
         button.setAttribute("aria-expanded", "false");
         refresh();
       });
-      list.append(item);
+      const removable = select.id === "tax-business" && option.value && option.value !== "__new__";
+      if (!removable) {
+        list.append(item);
+        return;
+      }
+      const swipe = document.createElement("div");
+      swipe.className = "menu-swipe";
+      const bin = document.createElement("button");
+      bin.type = "button";
+      bin.className = "menu-bin";
+      bin.textContent = "Delete";
+      bin.setAttribute("aria-label", `Delete ${option.textContent}`);
+      bin.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (businessUsed(option.value)) {
+          $("tax-menu-msg").textContent = "That business is already on a return.";
+          return;
+        }
+        deleteBusiness(option.value);
+      });
+      bindMenuSwipe(item, option.value, () => {
+        dragged = true;
+      });
+      swipe.append(bin, item);
+      list.append(swipe);
     });
   }
   button.addEventListener("click", () => {
@@ -1574,19 +1612,28 @@ const taxPad = bindPad("tax-sign", "tax-sign-block", "tax-clear-sign", (on) => {
   paintTaxCommit();
 });
 
+function revealTaxField() {
+  const field = document.activeElement;
+  if (!(field instanceof HTMLElement) || !field.closest("#tax-pane")) return;
+  const step = field.closest(".tax-step");
+  if (!step) return;
+  const edge = step.getBoundingClientRect();
+  const rect = field.getBoundingClientRect();
+  if (rect.bottom > edge.bottom - 12) step.scrollTop += rect.bottom - (edge.bottom - 12);
+  else if (rect.top < edge.top + 8) step.scrollTop -= (edge.top + 8) - rect.top;
+}
+
 function bindViewport() {
   const apply = () => {
     const viewport = window.visualViewport;
-    const taxOpen = $("tax-pane") && $("tax-pane").classList.contains("is-up");
-    const height = viewport && !taxOpen ? viewport.height : window.innerHeight;
-    const top = viewport && !taxOpen ? viewport.offsetTop : 0;
-    document.documentElement.style.setProperty("--vvh", `${height}px`);
-    document.documentElement.style.setProperty("--vvtop", `${top}px`);
+    const height = viewport ? viewport.height : window.innerHeight;
+    document.documentElement.style.setProperty("--vvh", `${Math.round(height)}px`);
+    document.documentElement.style.setProperty("--vvtop", "0px");
+    if (window.scrollY) window.scrollTo(0, 0);
     requestAnimationFrame(() => {
-      if (!$("login").hidden) $("login-go").scrollIntoView({ block: "end" });
+      revealTaxField();
       fitFxAmounts();
       liftAmount();
-      setTimeout(liftAmount, 80);
     });
   };
   apply();
@@ -1594,7 +1641,10 @@ function bindViewport() {
   document.addEventListener("focusout", () => setTimeout(apply, 80));
   if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", apply);
-    window.visualViewport.addEventListener("scroll", apply);
+    window.visualViewport.addEventListener("scroll", () => {
+      if (window.visualViewport.offsetTop > 0) window.scrollTo(0, 0);
+      apply();
+    });
   }
   window.addEventListener("resize", apply);
 }
@@ -1672,7 +1722,7 @@ $("settings-lock-form").addEventListener("submit", (event) => {
   openSettings();
 });
 $("settings-password").addEventListener("focus", () => {
-  setTimeout(() => $("settings-open").scrollIntoView({ block: "end" }), 50);
+  setTimeout(() => window.scrollTo(0, 0), 50);
 });
 $("settings-back").addEventListener("click", closeSettings);
 $("sync-phones").addEventListener("click", async () => {
@@ -1696,7 +1746,7 @@ $("login-form").addEventListener("submit", (event) => {
   login($("password").value);
 });
 $("password").addEventListener("focus", () => {
-  setTimeout(() => $("login-go").scrollIntoView({ block: "end" }), 50);
+  setTimeout(() => window.scrollTo(0, 0), 50);
 });
 let peekTimer = 0;
 $("peek").addEventListener("pointerdown", (event) => {
@@ -1879,6 +1929,66 @@ function businessesFor(accountId) {
   return list.filter((name) => typeof name === "string" && name.trim()).map((name) => name.slice(0, 60));
 }
 
+function businessUsed(name) {
+  const accountId = currentAccount()?.id;
+  return loadTaxes().some((item) => item.accountId === accountId && item.business === name);
+}
+
+function deleteBusiness(name) {
+  const account = currentAccount();
+  if (!account || businessUsed(name)) return;
+  const map = loadBizMap();
+  map[account.id] = businessesFor(account.id).filter((item) => item !== name);
+  localStorage.setItem(LOCAL_BIZ, JSON.stringify(map));
+  const select = $("tax-business");
+  const next = select.value === name ? "" : select.value;
+  if (!next) taxPicked = false;
+  $("tax-menu-msg").textContent = "";
+  fillBusinesses(next);
+  closeAccountMenus();
+}
+
+function bindMenuSwipe(row, name, onDrag) {
+  const open = 72;
+  let startX = 0;
+  let startY = 0;
+  let active = false;
+  let origin = 0;
+  row.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    startX = event.clientX;
+    startY = event.clientY;
+    origin = row.classList.contains("is-open") ? open : 0;
+    active = true;
+  });
+  row.addEventListener("pointermove", (event) => {
+    if (!active || businessUsed(name)) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) return;
+    onDrag();
+    const next = Math.max(0, Math.min(open, origin + dx));
+    row.style.transform = `translateX(${next}px)`;
+  });
+  const finish = (event) => {
+    if (!active) return;
+    active = false;
+    const end = origin + (event.clientX - startX);
+    row.style.transform = "";
+    if (businessUsed(name)) {
+      row.classList.remove("is-open");
+      if (end > open * 0.45) $("tax-menu-msg").textContent = "That business is already on a return.";
+      return;
+    }
+    row.classList.toggle("is-open", end > open * 0.45);
+  };
+  row.addEventListener("pointerup", finish);
+  row.addEventListener("pointercancel", () => {
+    active = false;
+    row.style.transform = "";
+  });
+}
+
 function nextSheet(accountId) {
   const filed = loadTaxes().filter((item) => item.accountId === accountId);
   const max = filed.reduce((highest, item) => Math.max(highest, Number(String(item.sheet || "").replace(/\D/g, "")) || 0), 0);
@@ -1898,7 +2008,7 @@ function splitVat(revenue, rate) {
   return { revenue: amount, vat: floorBillion(amount - net), profit: floorBillion(net) };
 }
 
-function taxTotals(lines, rates) {
+function taxTotals(lines, rates, expenses) {
   let revenue = 0n;
   let vat = 0n;
   let profit = 0n;
@@ -1908,16 +2018,18 @@ function taxTotals(lines, rates) {
     vat += parts.vat;
     profit += parts.profit;
   });
+  const spent = (expenses || []).reduce((sum, item) => sum + floorBillion(item.amount), 0n);
+  const taxable = profit > spent ? profit - spent : 0n;
   const threshold = BigInt(rates.threshold);
-  const rawTax = profit <= threshold
-    ? (profit * BigInt(rates.low)) / 100n
-    : (threshold * BigInt(rates.low)) / 100n + ((profit - threshold) * BigInt(rates.high)) / 100n;
+  const rawTax = taxable <= threshold
+    ? (taxable * BigInt(rates.low)) / 100n
+    : (threshold * BigInt(rates.low)) / 100n + ((taxable - threshold) * BigInt(rates.high)) / 100n;
   const tax = floorBillion(rawTax);
   return {
     revenue: revenue.toString(),
     vat: vat.toString(),
     profit: profit.toString(),
-    expenses: "0",
+    expenses: spent.toString(),
     tax: tax.toString(),
     invoice: floorBillion(vat + tax).toString(),
   };
@@ -2011,9 +2123,7 @@ function closeTaxForm() {
 function showTaxStep(step) {
   taxStep = step;
   $("tax-track").dataset.step = String(step);
-  $("tax-back-label").textContent = step === 3 ? "Cancel" : "Back";
-  $("tax-next").hidden = step === 3;
-  $("tax-commit").hidden = step !== 3;
+  $("tax-back-label").textContent = "Back";
   document.querySelectorAll("#tax-pane .tax-step").forEach((node) => {
     node.scrollTop = 0;
   });
@@ -2022,7 +2132,7 @@ function showTaxStep(step) {
     dot.classList.toggle("is-done", index + 1 < step);
   });
   paintTaxNav();
-  if (step === 3) {
+  if (step === 4) {
     paintTaxTotals();
     $("tax-terms-text").textContent = activeSettings().taxTerms;
     taxPad.setEnabled($("tax-agree").checked);
@@ -2032,7 +2142,12 @@ function showTaxStep(step) {
 
 function paintTaxNav() {
   const productsReady = taxLines.length > 0 && taxLines.every(lineComplete);
-  $("tax-next").disabled = taxStep === 1 ? !chosenBusiness() : !productsReady;
+  const hasExpenses = taxExpenses.length > 0;
+  const onExpenses = taxStep === 3;
+  $("tax-next").hidden = taxStep === 4 || (onExpenses && !hasExpenses);
+  $("tax-skip").hidden = !onExpenses || hasExpenses;
+  $("tax-commit").hidden = taxStep !== 4;
+  $("tax-next").disabled = taxStep === 1 ? !chosenBusiness() : taxStep === 2 ? !productsReady : false;
 }
 
 function bindTaxLineSwipe(row) {
@@ -2071,15 +2186,43 @@ function bindTaxLineSwipe(row) {
   });
 }
 
+function stackLabel(top, bottom) {
+  const cell = document.createElement("span");
+  cell.className = "tax-stack";
+  const title = document.createElement("b");
+  title.textContent = top;
+  cell.append(title);
+  if (bottom) {
+    const sub = document.createElement("small");
+    sub.textContent = bottom;
+    cell.append(sub);
+  }
+  return cell;
+}
+
+function stackMoney(value) {
+  const text = formatAmount(value);
+  const split = text.match(/^(.*)\s(Billion|Trillion)$/);
+  const cell = document.createElement("span");
+  cell.className = "money-stack";
+  const num = document.createElement("b");
+  num.textContent = split ? split[1] : text;
+  cell.append(num);
+  if (split) {
+    const unit = document.createElement("small");
+    unit.textContent = split[2];
+    cell.append(unit);
+  }
+  return cell;
+}
+
 function renderTaxLines() {
   const body = $("tax-lines");
   body.replaceChildren();
   const head = document.createElement("div");
   head.className = "tax-line-head";
-  ["Product name", "Quantity sold", "Gross Amount", "VAT", "Net profit"].forEach((label) => {
-    const cell = document.createElement("span");
-    cell.textContent = label;
-    head.append(cell);
+  [["Product", "name"], ["Quantity", "sold"], ["Gross", "amount"], ["VAT", ""], ["Net", "profit"]].forEach(([label, sub]) => {
+    head.append(stackLabel(label, sub));
   });
   body.append(head);
   const rate = taxRates().vat;
@@ -2099,12 +2242,12 @@ function renderTaxLines() {
     const row = document.createElement("div");
     row.className = "tax-line-row";
     const parts = splitVat(line.revenue, rate);
-    [line.name, formatFull(line.qty), formatAmount(parts.revenue), formatAmount(parts.vat), formatAmount(parts.profit)].forEach((text, cellIndex) => {
-      const cell = document.createElement("span");
-      if (cellIndex === 0) cell.className = "tax-line-name";
-      cell.textContent = text;
-      row.append(cell);
-    });
+    const name = document.createElement("span");
+    name.className = "tax-line-name";
+    name.textContent = line.name;
+    const qty = document.createElement("span");
+    qty.textContent = formatFull(line.qty);
+    row.append(name, qty, stackMoney(parts.revenue), stackMoney(parts.vat), stackMoney(parts.profit));
     bindTaxLineSwipe(row);
     swipe.append(remove, row);
     body.append(swipe);
@@ -2145,12 +2288,83 @@ function addTaxProduct() {
   if (step && wrap) step.scrollTop = wrap.offsetTop;
 }
 
+function renderTaxExpenses() {
+  const body = $("tax-expenses");
+  body.replaceChildren();
+  const head = document.createElement("div");
+  head.className = "tax-line-head expense-head";
+  head.append(stackLabel("Expense", "name"), stackLabel("Expense", "amount"));
+  body.append(head);
+  let spent = 0n;
+  taxExpenses.forEach((item, index) => {
+    spent += BigInt(item.amount);
+    const swipe = document.createElement("div");
+    swipe.className = "tax-line-swipe";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "tax-line-bin";
+    remove.setAttribute("aria-label", `Remove ${item.name}`);
+    remove.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 7h14M9 7V5h6v2M8 7l1 13h6l1-13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    remove.addEventListener("click", () => {
+      taxExpenses.splice(index, 1);
+      markTaxDirty();
+      renderTaxExpenses();
+    });
+    const row = document.createElement("div");
+    row.className = "tax-line-row expense-row";
+    const name = document.createElement("span");
+    name.className = "tax-line-name";
+    name.textContent = item.name;
+    row.append(name, stackMoney(item.amount));
+    bindTaxLineSwipe(row);
+    swipe.append(remove, row);
+    body.append(swipe);
+  });
+  const total = document.createElement("div");
+  total.className = "expense-total";
+  const label = document.createElement("span");
+  label.textContent = "Total";
+  const value = document.createElement("strong");
+  value.textContent = `${formatAmount(spent.toString())} ₲`;
+  total.append(label, value);
+  body.append(total);
+  paintTaxNav();
+}
+
+function addTaxExpense() {
+  const name = $("tax-expense-name").value.trim().slice(0, 40);
+  const note = $("tax-expense-note").value.trim().slice(0, 120);
+  let amount = $("tax-expense-amount").value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const message = $("tax-expense-msg");
+  message.textContent = "";
+  if (!name || !note || !amount) {
+    message.textContent = "Enter the expense name, description, and amount.";
+    return;
+  }
+  if (taxExpenses.length >= 12) {
+    message.textContent = "That is the last expense this return can hold.";
+    return;
+  }
+  if (BigInt(amount) > MAX) amount = MAX.toString();
+  const floored = floorBillion(amount);
+  if (floored <= 0n) {
+    message.textContent = "Enter at least 1 billion gizbits.";
+    return;
+  }
+  taxExpenses.push({ name, note, amount: floored.toString() });
+  $("tax-expense-name").value = "";
+  $("tax-expense-note").value = "";
+  $("tax-expense-amount").value = "";
+  markTaxDirty();
+  renderTaxExpenses();
+}
+
 function paintTaxTotals() {
   const rates = taxRates();
   const lines = taxLines.filter((line) => moneyText(line.revenue, false) != null && line.revenue !== "").map((line) => ({
     revenue: moneyText(line.revenue, false),
   }));
-  const totals = lines.length ? taxTotals(lines, rates) : null;
+  const totals = lines.length ? taxTotals(lines, rates, taxExpenses) : null;
   const money = (value) => `${formatAmount(value)} ₲`;
   $("tax-gross-revenue").textContent = totals ? money(totals.revenue) : "—";
   $("tax-gross-profit").textContent = totals ? money(totals.profit) : "—";
@@ -2178,6 +2392,7 @@ function openTaxForm() {
   const account = currentAccount();
   if (!account) return;
   taxLines = [];
+  taxExpenses = [];
   taxSigned = false;
   taxBusy = false;
   taxPicked = false;
@@ -2193,9 +2408,15 @@ function openTaxForm() {
   $("tax-product-name").value = "";
   $("tax-product-qty").value = "";
   $("tax-product-revenue").value = "";
+  $("tax-expense-name").value = "";
+  $("tax-expense-note").value = "";
+  $("tax-expense-amount").value = "";
+  $("tax-expense-msg").textContent = "";
+  $("tax-menu-msg").textContent = "";
   $("tax-agree").checked = false;
   $("tax-terms-text").textContent = activeSettings().taxTerms;
   renderTaxLines();
+  renderTaxExpenses();
   paintTaxTotals();
   taxPad.setEnabled(false);
   const pane = $("tax-pane");
@@ -2233,7 +2454,7 @@ async function commitTax() {
     qty: moneyText(line.qty, false),
     revenue: moneyText(line.revenue, false),
   }));
-  const totals = taxTotals(lines, rates);
+  const totals = taxTotals(lines, rates, taxExpenses);
   const id = uid();
   const ts = Date.now();
   const payload = {
@@ -2251,6 +2472,11 @@ async function commitTax() {
     highRate: rates.high,
     threshold: rates.threshold,
     lines,
+    expenses: taxExpenses.map((item) => ({
+      name: item.name,
+      note: item.note,
+      amount: item.amount,
+    })),
     sign: taxPad.strokes(),
     ts,
   };
@@ -2263,25 +2489,14 @@ async function commitTax() {
   $("tax-thanks").hidden = false;
   $("tax-wait").hidden = false;
   $("tax-thanks-body").hidden = true;
-  const pending = waitFor(id, 15000);
+  const started = Date.now();
   try {
     await publish(`${account.name} filed a tax return`, payload);
   } catch {
-    resolveWait(id, "timeout");
-    taxBusy = false;
-    paintTaxCommit();
-    $("tax-thanks").hidden = true;
-    $("tax-msg").textContent = "Couldn't reach the network. Try again.";
-    return;
+    /* The network phone still receives the return once the connection returns. */
   }
-  const outcome = await pending;
-  if (outcome !== "ok") {
-    taxBusy = false;
-    paintTaxCommit();
-    $("tax-thanks").hidden = true;
-    $("tax-msg").textContent = reasons.get(id) || "The network did not take that payment.";
-    return;
-  }
+  const wait = 900 - (Date.now() - started);
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   const stored = loadTaxes();
   stored.unshift({
     id,
@@ -2466,10 +2681,6 @@ $("tax-back").addEventListener("click", () => {
     closeTaxForm();
     return;
   }
-  if (taxStep === 3) {
-    $("tax-cancel").hidden = false;
-    return;
-  }
   showTaxStep(taxStep - 1);
 });
 $("tax-cancel-no").addEventListener("click", () => {
@@ -2483,6 +2694,7 @@ $("tax-next").addEventListener("click", () => {
   if ($("tax-next").disabled) return;
   showTaxStep(taxStep + 1);
 });
+$("tax-skip").addEventListener("click", () => showTaxStep(4));
 $("tax-business").addEventListener("change", () => {
   const select = $("tax-business");
   if (select.value) {
@@ -2506,9 +2718,23 @@ $("tax-business-name").addEventListener("keydown", (event) => {
   }
 });
 $("tax-add-line").addEventListener("click", addTaxProduct);
+$("tax-add-expense").addEventListener("click", addTaxExpense);
+$("tax-expense-amount").addEventListener("input", () => {
+  const input = $("tax-expense-amount");
+  const shown = formatTyping(input.value);
+  if (input.value !== shown) {
+    input.value = shown;
+    input.setSelectionRange(shown.length, shown.length);
+  }
+});
 $("tax-agree").addEventListener("change", () => {
   taxPad.setEnabled($("tax-agree").checked);
-  if ($("tax-agree").checked) requestAnimationFrame(() => taxPad.size());
+  if ($("tax-agree").checked) {
+    const step = document.querySelector("#tax-pane .tax-step:nth-child(4)");
+    const block = $("tax-sign-block");
+    if (step && block) step.scrollTop = Math.max(0, block.offsetTop - 12);
+    requestAnimationFrame(() => taxPad.size());
+  }
   paintTaxCommit();
 });
 function taxTyping(node) {

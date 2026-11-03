@@ -356,6 +356,7 @@
                 <span class="is-on"></span>
                 <span></span>
                 <span></span>
+                <span></span>
               </div>
               <div class="tax-viewport">
                 <div class="tax-track" id="tax-track" data-step="1">
@@ -365,6 +366,7 @@
                       <span>Business name</span>
                       <select id="tax-business" hidden></select>
                     </label>
+                    <p id="tax-menu-msg" class="error" role="status"></p>
                     <div id="tax-new" class="tax-new" hidden>
                       <label class="field">
                         <span>New business name</span>
@@ -387,7 +389,7 @@
                     </label>
                   </section>
                   <section class="tax-step">
-                    <h1>Products</h1>
+                    <h1>Add products</h1>
                     <label class="field">
                       <span>Product name</span>
                       <input id="tax-product-name" maxlength="40" autocomplete="off" />
@@ -403,6 +405,24 @@
                     <button type="button" id="tax-add-line" class="btn ghost">Add product</button>
                     <p id="tax-product-msg" class="error" role="status"></p>
                     <div class="tax-table-wrap" id="tax-lines"></div>
+                  </section>
+                  <section class="tax-step">
+                    <h1>Add expenses</h1>
+                    <label class="field">
+                      <span>Expense name</span>
+                      <input id="tax-expense-name" maxlength="40" autocomplete="off" />
+                    </label>
+                    <label class="field">
+                      <span>Description of expense</span>
+                      <input id="tax-expense-note" maxlength="120" autocomplete="off" />
+                    </label>
+                    <label class="field">
+                      <span>Expense amount</span>
+                      <input id="tax-expense-amount" inputmode="numeric" autocomplete="off" />
+                    </label>
+                    <button type="button" id="tax-add-expense" class="btn ghost">Add expense</button>
+                    <p id="tax-expense-msg" class="error" role="status"></p>
+                    <div class="tax-table-wrap" id="tax-expenses"></div>
                   </section>
                   <section class="tax-step">
                     <h1>Total invoice</h1>
@@ -435,6 +455,7 @@
               </div>
               <div class="tax-foot">
                 <button type="button" id="tax-next" class="btn" disabled>Next</button>
+                <button type="button" id="tax-skip" class="btn" hidden>Continue without adding expense</button>
                 <button type="button" id="tax-commit" class="btn" hidden disabled>File Return &amp; Pay</button>
               </div>
             </div>
