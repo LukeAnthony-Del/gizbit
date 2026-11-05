@@ -19,7 +19,13 @@
   <body>
     <div class="app">
       <main id="main">
-        <section id="balances" class="page is-active" role="tabpanel">
+        <section id="home" class="page is-active" role="tabpanel">
+          <div class="page-head">
+            <h1>Welcome back, Luke.</h1>
+          </div>
+        </section>
+
+        <section id="balances" class="page" role="tabpanel" hidden>
           <div class="page-head">
             <h1>Registered Accounts</h1>
           </div>
@@ -32,6 +38,23 @@
           <div id="rows"></div>
           <p id="empty" class="empty">No accounts yet. Add one to start at 0 gizbits.</p>
           <button type="button" id="add-account" class="btn add-account">+ Add account</button>
+        </section>
+
+        <section id="sessions" class="page" role="tabpanel" hidden>
+          <div class="page-head">
+            <h1>Sessions</h1>
+          </div>
+          <hr />
+          <div id="session-live" hidden>
+            <p class="session-note">Session started</p>
+            <p class="session-status">Session active</p>
+            <p id="session-clock" class="session-clock">0:00</p>
+            <button type="button" id="end-session" class="btn">End session</button>
+          </div>
+          <div id="session-idle">
+            <button type="button" id="start-session" class="btn">Start session</button>
+          </div>
+          <ul id="session-list" class="feed"></ul>
         </section>
 
         <section id="moves" class="page" role="tabpanel" hidden>
@@ -106,6 +129,9 @@
               <select id="tax-account"></select>
             </label>
             <p class="quiet">When a terminal files a return, the tax is moved into this account.</p>
+            <p class="field"><span>Skip interest</span></p>
+            <div id="interest-skips"></div>
+            <p class="quiet">Checked accounts do not earn the 0.05% interest.</p>
             <p id="settings-error" class="error" role="status"></p>
             <button type="submit" class="btn">Save settings</button>
           </form>
@@ -140,6 +166,7 @@
             <h1>Gizbit Financial Group</h1>
           </div>
           <hr />
+          <button type="button" id="open-interest" class="btn">Interest</button>
         </section>
 
         <section id="government" class="page" role="tabpanel" hidden>
@@ -163,7 +190,15 @@
       </main>
 
       <nav class="tabs" role="tablist" aria-label="Sections">
-        <button type="button" role="tab" data-tab="balances" aria-selected="true">
+        <button type="button" role="tab" data-tab="home" aria-selected="true">
+          <span class="tab-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22">
+              <path d="M4 11.5 12 4l8 7.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-8.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span>Dashboard</span>
+        </button>
+        <button type="button" role="tab" data-tab="balances" aria-selected="false">
           <span class="tab-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="22" height="22">
               <circle cx="12" cy="8" r="3.1" fill="none" stroke="currentColor" stroke-width="1.8"/>
@@ -179,6 +214,15 @@
             </svg>
           </span>
           <span>Exchanges</span>
+        </button>
+        <button type="button" role="tab" data-tab="sessions" aria-selected="false">
+          <span class="tab-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22">
+              <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/>
+              <path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <span>Sessions</span>
         </button>
         <button type="button" role="tab" data-tab="requests" aria-selected="false">
           <span class="tab-mark" aria-hidden="true">
@@ -221,6 +265,29 @@
           <span>Settings</span>
         </button>
       </nav>
+      <section id="interest" class="interest-page" aria-hidden="true">
+        <div class="archive-head">
+          <button type="button" id="interest-back" class="interest-back">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Back
+          </button>
+          <h1>Interest</h1>
+        </div>
+        <div class="archive-body">
+          <div class="interest-track" aria-hidden="true"><div id="interest-fill"></div></div>
+          <p id="interest-clock" class="session-clock">5:00:00</p>
+          <p id="interest-state" class="quiet">Paused until a session is on</p>
+          <button type="button" id="pay-interest" class="btn">Pay now</button>
+          <p class="quiet">Current interest that will be paid.</p>
+          <div class="cols interest-cols" aria-hidden="true">
+            <span>Full name</span>
+            <span>Current interest</span>
+          </div>
+          <div id="interest-rows"></div>
+        </div>
+      </section>
       <section id="tax-archive" class="archive" aria-hidden="true">
         <div class="archive-head">
           <button type="button" id="tax-archive-back" class="archive-back">

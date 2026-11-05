@@ -7,6 +7,10 @@ const REQUESTS = "gizbit-requests";
 const PASSNOTES = "gizbit-pass-notes";
 const TAXES = "gizbit-taxes";
 const USUAL = "gizbit-usual";
+const SESSIONS = "gizbit-sessions";
+const SESSION = "gizbit-session";
+const INTEREST = "gizbit-interest";
+const INTEREST_MS = 5 * 60 * 60 * 1000;
 const SEEN = "gizbit-seen";
 const CURSOR = "gizbit-cursor";
 const MAX = 10n ** 18n;
@@ -20,13 +24,16 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.14.000";
+const VERSION = "2.15.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
 const requests = loadList(REQUESTS);
 const passNotes = loadList(PASSNOTES);
 const taxes = loadList(TAXES);
+const sessions = loadList(SESSIONS);
+let sessionLive = loadSession();
+let interest = loadInterest();
 const seen = new Set(loadList(SEEN));
 let source = null;
 let streamOpen = false;
@@ -64,6 +71,7 @@ function defaultSettings() {
     profitThreshold: DEFAULT_PROFIT_THRESHOLD,
     taxTerms: DEFAULT_TAX_TERMS,
     taxAccountId: "",
+    skipInterest: [],
   };
 }
 
@@ -91,6 +99,9 @@ function normalizeSettings(value) {
     profitThreshold: moneyText(value?.profitThreshold, false) || DEFAULT_PROFIT_THRESHOLD,
     taxTerms: String(value?.taxTerms || DEFAULT_TAX_TERMS).slice(0, 400),
     taxAccountId: typeof value?.taxAccountId === "string" && /^[\w-]{8,}$/.test(value.taxAccountId) ? value.taxAccountId : "",
+    skipInterest: Array.isArray(value?.skipInterest)
+      ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
+      : [],
   };
 }
 
@@ -627,6 +638,9 @@ function renderActivity() {
       bindReveal(row, 56, 56);
       body.append(swipe);
     });
+    const fold = document.createElement("div");
+    fold.className = "day-fold";
+    fold.append(body);
     const block = document.createElement("li");
     block.className = "day-group";
     if (closedDays.has(group.key)) block.classList.add("is-shut");
@@ -642,7 +656,7 @@ function renderActivity() {
       if (block.classList.contains("is-shut")) closedDays.add(group.key);
       else closedDays.delete(group.key);
     });
-    block.append(toggle, body);
+    block.append(toggle, fold);
     list.append(block);
   });
   const empty = $("activity-empty");
@@ -771,6 +785,265 @@ function renderAccounts() {
   else if (state.accounts.length === 1) select.value = state.accounts[0].id;
 }
 
+function loadSession() {
+  try {
+    const data = JSON.parse(localStorage.getItem(SESSION) || "null");
+    if (!data || !Number.isFinite(data.started) || !Array.isArray(data.opening)) return null;
+    return { id: String(data.id || uid()), started: data.started, opening: data.opening };
+  } catch {
+    return null;
+  }
+}
+
+function loadInterest() {
+  try {
+    const data = JSON.parse(localStorage.getItem(INTEREST) || "");
+    return interestRecord(data);
+  } catch {
+    return freshInterest();
+  }
+}
+
+function freshInterest() {
+  return { joined: false, left: INTEREST_MS, mark: 0 };
+}
+
+function interestRecord(data) {
+  const left = Number(data?.left);
+  return {
+    joined: Boolean(data?.joined),
+    left: Number.isFinite(left) && left > 0 ? Math.min(left, INTEREST_MS) : INTEREST_MS,
+    mark: Number(data?.mark) || 0,
+  };
+}
+
+function saveSessions() {
+  localStorage.setItem(SESSIONS, JSON.stringify(sessions.slice(0, 40)));
+}
+
+function saveSession() {
+  if (!sessionLive) localStorage.removeItem(SESSION);
+  else localStorage.setItem(SESSION, JSON.stringify(sessionLive));
+}
+
+function saveInterest() {
+  localStorage.setItem(INTEREST, JSON.stringify(interest));
+}
+
+function snapshotBooks() {
+  return state.accounts.map((account) => ({ id: account.id, name: account.name, bal: account.bal }));
+}
+
+function formatMinutes(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatHours(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function interestGain(bal) {
+  const amount = BigInt(bal || "0");
+  let gain = amount * 5n / 10000n;
+  if (gain <= 0n) return "0";
+  const room = MAX - amount;
+  if (room <= 0n) return "0";
+  if (gain > room) gain = room;
+  return gain.toString();
+}
+
+function applyInterest() {
+  const skip = new Set(state.settings.skipInterest || []);
+  let moved = false;
+  state.accounts.forEach((account) => {
+    if (skip.has(account.id)) return;
+    const gain = interestGain(account.bal);
+    if (gain === "0") return;
+    account.bal = (BigInt(account.bal) + BigInt(gain)).toString();
+    moved = true;
+  });
+  return moved;
+}
+
+function awardInterest() {
+  const moved = applyInterest();
+  if (moved) {
+    saveAccounts();
+    render();
+    publishLedger([]).catch(() => setStatus("Interest saved on this phone. The terminal will catch up when the connection is back."));
+  }
+  return moved;
+}
+
+function catchInterest() {
+  if (!interest.joined || !sessionLive) {
+    if (interest.mark) {
+      interest.mark = 0;
+      saveInterest();
+    }
+    return;
+  }
+  const now = Date.now();
+  if (!interest.mark) {
+    interest.mark = now;
+    saveInterest();
+    return;
+  }
+  let spent = now - interest.mark;
+  if (spent < 0) spent = 0;
+  interest.mark = now;
+  let moved = false;
+  while (spent >= interest.left) {
+    spent -= interest.left;
+    if (applyInterest()) moved = true;
+    interest.left = INTEREST_MS;
+  }
+  interest.left -= spent;
+  saveInterest();
+  if (moved) {
+    saveAccounts();
+    render();
+    publishLedger([]).catch(() => setStatus("Interest saved on this phone. The terminal will catch up when the connection is back."));
+  }
+}
+
+function paintSessionClock() {
+  const clock = $("session-clock");
+  if (!clock || !sessionLive) return;
+  clock.textContent = formatMinutes(Date.now() - sessionLive.started);
+}
+
+function paintSessions() {
+  const live = $("session-live");
+  const idle = $("session-idle");
+  if (!live || !idle) return;
+  const on = Boolean(sessionLive);
+  live.hidden = !on;
+  idle.hidden = on;
+  paintSessionClock();
+  const list = $("session-list");
+  list.replaceChildren();
+  sessions.forEach((item) => {
+    const li = document.createElement("li");
+    const title = document.createElement("strong");
+    title.textContent = `${formatWhen(item.started)} to ${formatWhen(item.ended)}`;
+    const length = document.createElement("p");
+    length.className = "quiet";
+    length.textContent = `Lasted ${formatMinutes(item.ended - item.started)}`;
+    li.append(title, length);
+    const opening = item.opening || [];
+    const closing = item.closing || [];
+    const seen = new Set();
+    [...opening, ...closing].forEach((row) => {
+      if (seen.has(row.id)) return;
+      seen.add(row.id);
+      const open = opening.find((book) => book.id === row.id);
+      const close = closing.find((book) => book.id === row.id);
+      const line = document.createElement("p");
+      line.className = "session-book";
+      line.textContent = `${(close || open).name}: ${formatAmount(open ? open.bal : "0")} ₲ → ${formatAmount(close ? close.bal : "0")} ₲`;
+      li.append(line);
+    });
+    list.append(li);
+  });
+}
+
+function startSession() {
+  if (sessionLive) return;
+  sessionLive = { id: uid(), started: Date.now(), opening: snapshotBooks() };
+  saveSession();
+  if (interest.joined) {
+    interest.mark = Date.now();
+    saveInterest();
+  }
+  paintSessions();
+  paintInterest();
+}
+
+function endSession() {
+  if (!sessionLive) return;
+  catchInterest();
+  sessions.unshift({
+    id: sessionLive.id,
+    started: sessionLive.started,
+    ended: Date.now(),
+    opening: sessionLive.opening,
+    closing: snapshotBooks(),
+  });
+  sessions.splice(40);
+  sessionLive = null;
+  interest.mark = 0;
+  saveSessions();
+  saveSession();
+  saveInterest();
+  paintSessions();
+  paintInterest();
+}
+
+function paintInterest() {
+  const fill = $("interest-fill");
+  const clock = $("interest-clock");
+  const note = $("interest-state");
+  if (!fill || !clock || !note) return;
+  const left = Math.max(0, interest.left);
+  fill.style.width = `${(left / INTEREST_MS) * 100}%`;
+  clock.textContent = formatHours(left);
+  note.textContent = interest.joined && sessionLive ? "Counting down" : "Paused until a session is on";
+}
+
+function renderInterestRows() {
+  const rows = $("interest-rows");
+  if (!rows) return;
+  const skip = new Set(state.settings.skipInterest || []);
+  rows.replaceChildren();
+  state.accounts.forEach((account) => {
+    const row = document.createElement("div");
+    row.className = "interest-row";
+    const name = document.createElement("span");
+    name.textContent = account.name;
+    const due = document.createElement("span");
+    due.textContent = skip.has(account.id) ? "Skipped" : `${formatAmount(interestGain(account.bal))} ₲`;
+    row.append(name, due);
+    rows.append(row);
+  });
+  paintInterest();
+}
+
+function openInterest() {
+  if (!interest.joined) {
+    interest.joined = true;
+    interest.left = INTEREST_MS;
+    interest.mark = sessionLive ? Date.now() : 0;
+    saveInterest();
+  }
+  const page = $("interest");
+  page.classList.add("is-open");
+  page.setAttribute("aria-hidden", "false");
+  renderInterestRows();
+}
+
+function closeInterest() {
+  const page = $("interest");
+  page.classList.remove("is-open");
+  page.setAttribute("aria-hidden", "true");
+}
+
+function payInterestNow() {
+  const moved = awardInterest();
+  interest.left = INTEREST_MS;
+  interest.mark = sessionLive ? Date.now() : 0;
+  saveInterest();
+  renderInterestRows();
+  toast(moved ? "Interest paid" : "No interest was due");
+}
+
 function render() {
   renderRows();
   renderAccounts();
@@ -778,6 +1051,9 @@ function render() {
   renderRequests();
   renderGovernment();
   fillTaxAccount();
+  fillInterestSkips(false);
+  paintSessions();
+  renderInterestRows();
 }
 
 function showTab(name) {
@@ -1797,6 +2073,27 @@ function fillSettings() {
   $("profit-threshold").value = state.settings.profitThreshold;
   $("tax-terms").value = state.settings.taxTerms;
   fillTaxAccount();
+  fillInterestSkips(true);
+}
+
+function fillInterestSkips(fromSaved) {
+  const box = $("interest-skips");
+  if (!box) return;
+  const saved = new Set(state.settings.skipInterest || []);
+  const picked = fromSaved || box.childElementCount === 0
+    ? saved
+    : new Set([...box.querySelectorAll("input:checked")].map((input) => input.value));
+  box.replaceChildren();
+  state.accounts.forEach((account) => {
+    const label = document.createElement("label");
+    label.className = "check";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = account.id;
+    input.checked = picked.has(account.id);
+    label.append(input, document.createTextNode(account.name));
+    box.append(label);
+  });
 }
 
 function fillTaxAccount() {
@@ -2024,6 +2321,12 @@ function deleteEverything() {
   localStorage.removeItem(PASSNOTES);
   localStorage.removeItem(TAXES);
   localStorage.removeItem(USUAL);
+  sessions.splice(0, sessions.length);
+  sessionLive = null;
+  interest = freshInterest();
+  localStorage.removeItem(SESSIONS);
+  localStorage.removeItem(SESSION);
+  localStorage.removeItem(INTEREST);
   ["gizbit-network-name", "gizbit-network-pair", "gizbit-phones", "gizbit-network-device"].forEach((key) => localStorage.removeItem(key));
   saveAccounts();
   saveRequests();
@@ -2127,6 +2430,7 @@ $("settings-form").addEventListener("submit", (event) => {
     profitThreshold,
     taxTerms: $("tax-terms").value.trim().slice(0, 400) || DEFAULT_TAX_TERMS,
     taxAccountId: $("tax-account").value || "",
+    skipInterest: [...document.querySelectorAll("#interest-skips input:checked")].map((input) => input.value),
   };
   saveAccounts();
   fillSettings();
@@ -2150,6 +2454,16 @@ $("tax-archive-back").addEventListener("click", () => {
   $("tax-archive").classList.remove("is-open");
   $("tax-archive").setAttribute("aria-hidden", "true");
 });
+$("start-session").addEventListener("click", startSession);
+$("end-session").addEventListener("click", endSession);
+$("open-interest").addEventListener("click", openInterest);
+$("interest-back").addEventListener("click", closeInterest);
+$("pay-interest").addEventListener("click", payInterestNow);
+setInterval(() => {
+  catchInterest();
+  paintSessionClock();
+  paintInterest();
+}, 1000);
 
 bindViewport();
 stopOverscroll($("main"));
@@ -2161,7 +2475,7 @@ fillSettings();
 $("app-version").textContent = VERSION;
 absorbStoredSigns();
 render();
-showTab("balances");
+showTab("home");
 maybeOpenLinked();
 
 if ("serviceWorker" in navigator) {
