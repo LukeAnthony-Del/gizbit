@@ -479,6 +479,17 @@
       <button type="button" id="logout" class="logout" hidden>Log out</button>
     </div>
 
+    <div id="listed-sheet" class="sheet" hidden>
+      <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="listed-name">
+        <h2 id="listed-name">Asset</h2>
+        <p id="listed-note"></p>
+        <p id="listed-price" class="quiet"></p>
+        <p id="listed-msg" class="error" role="status"></p>
+        <button type="button" id="listed-request" class="btn">Request to own</button>
+        <button type="button" id="listed-close" class="btn ghost">Close</button>
+      </div>
+    </div>
+
     <div id="pass-sheet" class="sheet" hidden>
       <form id="pass-form" class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="pass-title">
         <h2 id="pass-title">Enter current password</h2>

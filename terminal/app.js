@@ -15,8 +15,9 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
+const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.18.000";
+const VERSION = "2.19.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -87,6 +88,8 @@ function defaultSettings() {
     profitThreshold: DEFAULT_PROFIT_THRESHOLD,
     taxTerms: DEFAULT_TAX_TERMS,
     taxAccountId: "",
+    interestAccountId: "",
+    skipInterest: [],
   };
 }
 
@@ -114,6 +117,10 @@ function normalizeSettings(value) {
     profitThreshold: moneyText(value?.profitThreshold, false) || DEFAULT_PROFIT_THRESHOLD,
     taxTerms: String(value?.taxTerms || DEFAULT_TAX_TERMS).slice(0, 400),
     taxAccountId: typeof value?.taxAccountId === "string" && /^[\w-]{8,}$/.test(value.taxAccountId) ? value.taxAccountId : "",
+    interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
+    skipInterest: Array.isArray(value?.skipInterest)
+      ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
+      : [],
   };
 }
 
@@ -375,6 +382,7 @@ function handleMessage(data) {
       renderDash();
     }
   }
+  if (body.kind === "assets") acceptAssets(body);
   if (body.kind === "tax-clear") {
     localStorage.setItem(LOCAL_TAXES, "[]");
     if (sessionPh) {
@@ -823,7 +831,8 @@ function renderHistory() {
     const incoming = account && item.toId === account.id && item.accountId !== account.id;
     const kind = document.createElement("p");
     kind.className = "who";
-    if (item.op === "send" || item.op === "transfer") kind.textContent = incoming ? `Received from ${item.name}` : `Transferred to ${item.toName || "another account"}`;
+    if (item.note) kind.textContent = incoming ? `Sold ${item.note}` : `Bought ${item.note}`;
+    else if (item.op === "send" || item.op === "transfer") kind.textContent = incoming ? `Received from ${item.name}` : `Transferred to ${item.toName || "another account"}`;
     else kind.textContent = item.op === "withdraw" ? "Withdrawal" : "Deposit";
     const money = document.createElement("p");
     money.className = "quiet";
@@ -1858,6 +1867,96 @@ function readEuro(value) {
   return { text, whole: wholeRaw || "0", frac, empty: !wholeRaw && frac === "" && dot === -1 };
 }
 
+function loadListed() {
+  try {
+    const data = JSON.parse(localStorage.getItem(LOCAL_ASSETS) || "[]");
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+function acceptAssets(body) {
+  if (!Array.isArray(body?.items)) return;
+  const ts = Number(body.ts) || 0;
+  const prev = Number(localStorage.getItem(`${LOCAL_ASSETS}-ts`) || "0");
+  if (ts && prev && ts < prev) return;
+  const items = body.items.slice(0, 40).map((item) => {
+    const id = String(item?.id || "");
+    const name = String(item?.name || "").trim().slice(0, 40);
+    const note = String(item?.note || "").trim().slice(0, 200);
+    const price = moneyText(item?.price, false);
+    if (!/^[\w-]{8,}$/.test(id) || !name || !price) return null;
+    return { id, name, note, price };
+  }).filter(Boolean);
+  localStorage.setItem(LOCAL_ASSETS, JSON.stringify(items));
+  if (ts) localStorage.setItem(`${LOCAL_ASSETS}-ts`, String(ts));
+  renderListed();
+}
+
+function renderListed() {
+  const panel = $("gov-assets-panel");
+  if (!panel) return;
+  panel.replaceChildren();
+  const items = loadListed();
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "quiet";
+    empty.textContent = "No assets yet.";
+    panel.append(empty);
+    return;
+  }
+  items.forEach((item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "asset-card";
+    const name = document.createElement("strong");
+    name.textContent = item.name;
+    const price = document.createElement("span");
+    price.textContent = `${formatAmount(item.price)} ₲`;
+    button.append(name, price);
+    button.addEventListener("click", () => openListed(item.id));
+    panel.append(button);
+  });
+}
+
+let listedId = "";
+
+function openListed(id) {
+  const item = loadListed().find((entry) => entry.id === id);
+  if (!item) return;
+  listedId = id;
+  $("listed-name").textContent = item.name;
+  $("listed-note").textContent = item.note || "";
+  $("listed-price").textContent = `${formatAmount(item.price)} ₲`;
+  $("listed-msg").textContent = "";
+  $("listed-sheet").hidden = false;
+}
+
+function requestListed() {
+  const item = loadListed().find((entry) => entry.id === listedId);
+  const account = currentAccount();
+  const msg = $("listed-msg");
+  if (!item || !account || !sessionPh) {
+    msg.textContent = "Log in before requesting an asset.";
+    return;
+  }
+  publish("Asset request", {
+    v: 1,
+    kind: "asset-buy",
+    id: uid(),
+    assetId: item.id,
+    accountId: account.id,
+    ph: sessionPh,
+    ts: Date.now(),
+  }).then(() => {
+    $("listed-sheet").hidden = true;
+    toast("Request sent");
+  }).catch(() => {
+    msg.textContent = "The request could not be sent. Try again when the connection is back.";
+  });
+}
+
 function showGovTab(name) {
   $("gov-dash-panel").hidden = name !== "dash";
   $("gov-taxes-panel").hidden = name !== "taxes";
@@ -1870,6 +1969,7 @@ function showGovTab(name) {
   $("gov-plus").hidden = name !== "taxes";
   if (name === "taxes") renderTaxDash();
   if (name === "dash") renderDash();
+  if (name === "assets") renderListed();
 }
 
 function renderDash() {
@@ -2675,6 +2775,13 @@ $("gov-back").addEventListener("click", () => showHome());
 $("gov-dash").addEventListener("click", () => showGovTab("dash"));
 $("gov-taxes").addEventListener("click", () => showGovTab("taxes"));
 $("gov-assets").addEventListener("click", () => showGovTab("assets"));
+$("listed-request").addEventListener("click", requestListed);
+$("listed-close").addEventListener("click", () => {
+  $("listed-sheet").hidden = true;
+});
+$("listed-sheet").addEventListener("click", (event) => {
+  if (event.target === $("listed-sheet")) $("listed-sheet").hidden = true;
+});
 $("gov-plus").addEventListener("click", () => openTaxForm());
 $("tax-back").addEventListener("click", () => {
   if (taxStep === 1) {

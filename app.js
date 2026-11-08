@@ -11,6 +11,8 @@ const SESSIONS = "gizbit-sessions";
 const SESSION = "gizbit-session";
 const INTEREST = "gizbit-interest";
 const INTEREST_MS = 5 * 60 * 60 * 1000;
+const LISTED = "gizbit-assets";
+const ASSET_BUYS = "gizbit-asset-buys";
 const SEEN = "gizbit-seen";
 const CURSOR = "gizbit-cursor";
 const MAX = 10n ** 18n;
@@ -24,13 +26,15 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.15.000";
+const VERSION = "2.16.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
 const requests = loadList(REQUESTS);
 const passNotes = loadList(PASSNOTES);
 const taxes = loadList(TAXES);
+const assets = loadList(LISTED);
+const assetBuys = loadList(ASSET_BUYS);
 const sessions = loadList(SESSIONS);
 let sessionLive = loadSession();
 let interest = loadInterest();
@@ -71,6 +75,7 @@ function defaultSettings() {
     profitThreshold: DEFAULT_PROFIT_THRESHOLD,
     taxTerms: DEFAULT_TAX_TERMS,
     taxAccountId: "",
+    interestAccountId: "",
     skipInterest: [],
   };
 }
@@ -99,6 +104,7 @@ function normalizeSettings(value) {
     profitThreshold: moneyText(value?.profitThreshold, false) || DEFAULT_PROFIT_THRESHOLD,
     taxTerms: String(value?.taxTerms || DEFAULT_TAX_TERMS).slice(0, 400),
     taxAccountId: typeof value?.taxAccountId === "string" && /^[\w-]{8,}$/.test(value.taxAccountId) ? value.taxAccountId : "",
+    interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
       : [],
@@ -291,7 +297,7 @@ function publishLedger(applied, answered) {
       ph: account.ph,
     })),
     settings: state.settings,
-    requests: requests.slice(0, 30).map((item) => {
+    requests: requests.filter((item) => item.op !== "interest").slice(0, 30).map((item) => {
       const row = {
         id: item.id,
         accountId: item.accountId,
@@ -304,11 +310,14 @@ function publishLedger(applied, answered) {
       };
       if (item.toId) row.toId = item.toId;
       if (item.toName) row.toName = item.toName;
+      if (item.note) row.note = String(item.note).slice(0, 40);
       return row;
     }),
     ts: Date.now(),
   };
-  return publish("Balances updated", payload);
+  const sent = publish("Balances updated", payload);
+  publishAssets();
+  return sent;
 }
 
 function publishReject(id, reason) {
@@ -592,7 +601,7 @@ function renderActivity() {
     body.className = "day-body";
     group.items.forEach((item) => {
       const swipe = document.createElement("li");
-      swipe.className = "swipe log-swipe";
+      swipe.className = item.op === "interest" ? "swipe log-swipe is-interest" : "swipe log-swipe";
       const actions = document.createElement("div");
       actions.className = "swipe-actions one";
       const trash = document.createElement("button");
@@ -619,7 +628,11 @@ function renderActivity() {
       const line = document.createElement("span");
       const alleged = formatAmount(item.amount);
       const actual = item.applied ? formatAmount(item.applied) : "";
-      if (isTransfer(item)) {
+      if (item.op === "interest") {
+        line.textContent = `${item.name} paid ${alleged} ₲ interest to ${item.toName || "an account"}`;
+      } else if (item.note) {
+        line.textContent = `${item.name} bought ${item.note} for ${alleged} ₲`;
+      } else if (isTransfer(item)) {
         line.textContent = `${item.name} transferred ${alleged} ₲ to ${item.toName || "another account"}`;
       } else {
         const verb = item.op === "withdraw" ? "Withdrawal" : "Deposit";
@@ -851,35 +864,60 @@ function formatHours(ms) {
 
 function interestGain(bal) {
   const amount = BigInt(bal || "0");
-  let gain = amount * 5n / 10000n;
+  let gain = floorBillion(amount * 5n / 10000n);
   if (gain <= 0n) return "0";
   const room = MAX - amount;
   if (room <= 0n) return "0";
-  if (gain > room) gain = room;
-  return gain.toString();
+  if (gain > room) gain = floorBillion(room);
+  return gain > 0n ? gain.toString() : "0";
 }
+
+let interestWarn = 0;
 
 function applyInterest() {
+  const source = state.accounts.find((account) => account.id === state.settings.interestAccountId);
+  if (!source) return "missing";
   const skip = new Set(state.settings.skipInterest || []);
-  let moved = false;
+  const payouts = [];
   state.accounts.forEach((account) => {
-    if (skip.has(account.id)) return;
+    if (account.id === source.id || skip.has(account.id)) return;
     const gain = interestGain(account.bal);
     if (gain === "0") return;
-    account.bal = (BigInt(account.bal) + BigInt(gain)).toString();
-    moved = true;
+    payouts.push({ account, give: BigInt(gain) });
   });
-  return moved;
+  if (!payouts.length) return "none";
+  const total = payouts.reduce((sum, row) => sum + row.give, 0n);
+  if (BigInt(source.bal) < total) return "short";
+  source.bal = (BigInt(source.bal) - total).toString();
+  const stamp = Date.now();
+  payouts.forEach((row, index) => {
+    row.account.bal = (BigInt(row.account.bal) + row.give).toString();
+    requests.unshift({
+      id: uid(),
+      accountId: source.id,
+      name: source.name,
+      op: "interest",
+      amount: row.give.toString(),
+      status: "done",
+      applied: row.give.toString(),
+      toId: row.account.id,
+      toName: row.account.name,
+      ts: stamp - index,
+    });
+  });
+  requests.splice(80);
+  return "paid";
 }
 
-function awardInterest() {
-  const moved = applyInterest();
-  if (moved) {
+function settleInterest() {
+  const result = applyInterest();
+  if (result === "paid") {
     saveAccounts();
+    saveRequests();
     render();
     publishLedger([]).catch(() => setStatus("Interest saved on this phone. The terminal will catch up when the connection is back."));
   }
-  return moved;
+  return result;
 }
 
 function catchInterest() {
@@ -899,19 +937,25 @@ function catchInterest() {
   let spent = now - interest.mark;
   if (spent < 0) spent = 0;
   interest.mark = now;
-  let moved = false;
+  let hold = false;
   while (spent >= interest.left) {
+    const result = settleInterest();
+    if (result !== "paid" && result !== "none") {
+      hold = true;
+      interest.left = 60000;
+      if (Date.now() - interestWarn > 20000) {
+        interestWarn = Date.now();
+        toast(result === "missing"
+          ? "Choose the account that pays interest in Settings."
+          : "The interest account does not have enough gizbits.");
+      }
+      break;
+    }
     spent -= interest.left;
-    if (applyInterest()) moved = true;
     interest.left = INTEREST_MS;
   }
-  interest.left -= spent;
+  if (!hold && spent < interest.left) interest.left -= spent;
   saveInterest();
-  if (moved) {
-    saveAccounts();
-    render();
-    publishLedger([]).catch(() => setStatus("Interest saved on this phone. The terminal will catch up when the connection is back."));
-  }
 }
 
 function paintSessionClock() {
@@ -1009,7 +1053,9 @@ function renderInterestRows() {
     const name = document.createElement("span");
     name.textContent = account.name;
     const due = document.createElement("span");
-    due.textContent = skip.has(account.id) ? "Skipped" : `${formatAmount(interestGain(account.bal))} ₲`;
+    if (skip.has(account.id)) due.textContent = "Skipped";
+    else if (account.id === state.settings.interestAccountId) due.textContent = "Pays interest";
+    else due.textContent = `${formatAmount(interestGain(account.bal))} ₲`;
     row.append(name, due);
     rows.append(row);
   });
@@ -1036,12 +1082,211 @@ function closeInterest() {
 }
 
 function payInterestNow() {
-  const moved = awardInterest();
-  interest.left = INTEREST_MS;
-  interest.mark = sessionLive ? Date.now() : 0;
-  saveInterest();
-  renderInterestRows();
-  toast(moved ? "Interest paid" : "No interest was due");
+  const result = settleInterest();
+  if (result === "paid" || result === "none") {
+    interest.left = INTEREST_MS;
+    interest.mark = sessionLive ? Date.now() : 0;
+    saveInterest();
+    renderInterestRows();
+  }
+  const notes = {
+    paid: "Interest paid",
+    none: "No interest was due",
+    missing: "Choose the account that pays interest in Settings.",
+    short: "The interest account does not have enough gizbits.",
+  };
+  toast(notes[result] || "Interest was not paid");
+}
+
+function saveAssets() {
+  localStorage.setItem(LISTED, JSON.stringify(assets.slice(0, 40)));
+}
+
+function saveAssetBuys() {
+  localStorage.setItem(ASSET_BUYS, JSON.stringify(assetBuys.slice(0, 40)));
+}
+
+function publishAssets() {
+  return publish("Assets listed", {
+    v: 1,
+    kind: "assets",
+    items: assets.map((item) => ({ id: item.id, name: item.name, note: item.note, price: item.price })),
+    ts: Date.now(),
+  }).catch(() => {});
+}
+
+function readBillion(value) {
+  const amount = parseAmount(value);
+  if (amount == null) return "";
+  const floored = floorBillion(amount);
+  return floored > 0n ? floored.toString() : "";
+}
+
+function renderAssetList() {
+  const list = $("asset-list");
+  if (!list) return;
+  list.replaceChildren();
+  const empty = $("asset-empty");
+  if (empty) empty.hidden = assets.length > 0;
+  assets.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "asset-card";
+    const name = document.createElement("strong");
+    name.textContent = item.name;
+    const note = document.createElement("p");
+    note.textContent = item.note || "";
+    const price = document.createElement("p");
+    price.textContent = `${formatAmount(item.price)} ₲`;
+    card.append(name, note, price);
+    list.append(card);
+  });
+}
+
+function listAsset(event) {
+  event.preventDefault();
+  const error = $("asset-error");
+  error.textContent = "";
+  const name = $("asset-name").value.trim().slice(0, 40);
+  const note = $("asset-note").value.trim().slice(0, 200);
+  const price = readBillion($("asset-price").value);
+  if (!name) {
+    error.textContent = "Enter the asset name.";
+    return;
+  }
+  if (!price) {
+    error.textContent = "Enter at least 1 billion gizbits.";
+    return;
+  }
+  assets.unshift({ id: uid(), name, note, price, ts: Date.now() });
+  assets.splice(40);
+  saveAssets();
+  renderAssetList();
+  publishAssets();
+  $("asset-sheet").hidden = true;
+  $("asset-form").reset();
+  toast("Asset listed");
+}
+
+function takeAssetBuy(body) {
+  if (!body || typeof body.id !== "string" || !remember(body.id)) return;
+  const account = state.accounts.find((item) => item.id === body.accountId);
+  const asset = assets.find((item) => item.id === body.assetId);
+  if (!account || body.ph !== account.ph || !asset) {
+    publishReject(body.id, !account ? "That account was removed." : !asset ? "That asset is no longer listed." : "The password did not match.");
+    return;
+  }
+  assetBuys.unshift({
+    id: body.id,
+    assetId: asset.id,
+    assetName: asset.name,
+    assetNote: asset.note,
+    amount: asset.price,
+    accountId: account.id,
+    name: account.name,
+    status: "pending",
+    ts: Date.now(),
+  });
+  assetBuys.splice(40);
+  saveAssetBuys();
+  renderRequests();
+  toast(`${account.name} wants to own ${asset.name}`);
+  if ("Notification" in window && Notification.permission === "granted" && navigator.serviceWorker) {
+    navigator.serviceWorker.ready.then((reg) => {
+      reg.showNotification(`Asset request from ${account.name}`, {
+        body: asset.name,
+        tag: body.id,
+        renotify: true,
+        data: { id: body.id },
+      });
+    }).catch(() => {});
+  }
+}
+
+let assetBuyId = "";
+
+function openAssetBuy(id) {
+  const buy = assetBuys.find((item) => item.id === id && item.status === "pending");
+  if (!buy) return;
+  assetBuyId = id;
+  $("asset-buy-title").textContent = buy.assetName;
+  $("asset-buy-note").textContent = buy.assetNote || "";
+  $("asset-buy-who").textContent = `${buy.name} wants to own this.`;
+  $("asset-buy-amount").value = formatFull(buy.amount);
+  $("asset-buy-error").textContent = "";
+  $("asset-buy").hidden = false;
+}
+
+function closeAssetBuy() {
+  assetBuyId = "";
+  $("asset-buy").hidden = true;
+}
+
+function confirmAssetBuy() {
+  const buy = assetBuys.find((item) => item.id === assetBuyId && item.status === "pending");
+  const error = $("asset-buy-error");
+  if (!buy) return;
+  error.textContent = "";
+  const amount = readBillion($("asset-buy-amount").value);
+  if (!amount) {
+    error.textContent = "Enter at least 1 billion gizbits.";
+    return;
+  }
+  const buyer = state.accounts.find((item) => item.id === buy.accountId);
+  const sink = state.accounts.find((item) => item.id === state.settings.taxAccountId);
+  const asset = assets.find((item) => item.id === buy.assetId);
+  if (!buyer) {
+    error.textContent = "That account is no longer on this phone.";
+    return;
+  }
+  if (!asset) {
+    error.textContent = "That asset is no longer listed.";
+    return;
+  }
+  if (!sink) {
+    error.textContent = "Set the account that receives tax payments in Settings.";
+    return;
+  }
+  if (sink.id === buyer.id) {
+    error.textContent = "Choose a different account for tax payments.";
+    return;
+  }
+  if (BigInt(buyer.bal) < BigInt(amount)) {
+    error.textContent = "Not enough gizbits in that account.";
+    return;
+  }
+  const nextSink = BigInt(sink.bal) + BigInt(amount);
+  if (nextSink > MAX) {
+    error.textContent = "That tax account cannot hold that much.";
+    return;
+  }
+  buyer.bal = (BigInt(buyer.bal) - BigInt(amount)).toString();
+  sink.bal = nextSink.toString();
+  const index = assets.findIndex((item) => item.id === asset.id);
+  if (index >= 0) assets.splice(index, 1);
+  buy.status = "done";
+  saveAccounts();
+  saveAssets();
+  saveAssetBuys();
+  requests.unshift({
+    id: buy.id,
+    accountId: buyer.id,
+    name: buyer.name,
+    op: "transfer",
+    amount,
+    status: "done",
+    applied: amount,
+    toId: sink.id,
+    toName: sink.name,
+    note: asset.name,
+    ts: Date.now(),
+  });
+  requests.splice(80);
+  saveRequests();
+  render();
+  closeAssetBuy();
+  clearNotification(buy.id);
+  publishLedger([buy.id]).catch(() => setStatus("Saved on this phone. The terminal will catch up when the connection is back."));
+  toast("Asset sold");
 }
 
 function render() {
@@ -1051,9 +1296,11 @@ function render() {
   renderRequests();
   renderGovernment();
   fillTaxAccount();
+  fillInterestAccount();
   fillInterestSkips(false);
   paintSessions();
   renderInterestRows();
+  renderAssetList();
 }
 
 function showTab(name) {
@@ -1131,6 +1378,10 @@ function handleMessage(data, bucket) {
   }
   if (body.kind === "password") {
     takePassword(body);
+    return;
+  }
+  if (body.kind === "asset-buy") {
+    takeAssetBuy(body);
     return;
   }
   if (body.kind === "tx") {
@@ -1432,7 +1683,16 @@ function confirmTaxReview() {
   $("tax-review").hidden = true;
 }
 
+function taxCollected() {
+  return taxes.reduce((sum, item) => {
+    if (item.status === "review") return sum;
+    return sum + BigInt(item.totals?.invoice || "0");
+  }, 0n);
+}
+
 function renderGovernment() {
+  const collected = $("tax-collected");
+  if (collected) collected.textContent = `${formatAmount(taxCollected().toString())} ₲`;
   const list = $("gov-list");
   const empty = $("gov-empty");
   if (!list || !empty) return;
@@ -1870,6 +2130,18 @@ function showPassNote(id) {
 function renderRequests() {
   const list = $("request-list");
   list.replaceChildren();
+  assetBuys.filter((item) => item.status === "pending").forEach((item) => {
+    const li = document.createElement("li");
+    li.className = "request is-pending";
+    const time = document.createElement("time");
+    time.dateTime = new Date(item.ts).toISOString();
+    time.textContent = formatWhen(item.ts);
+    const line = document.createElement("span");
+    line.textContent = `${item.name} wants to own ${item.assetName}`;
+    li.append(time, line);
+    li.addEventListener("click", () => openAssetBuy(item.id));
+    list.append(li);
+  });
   requests.filter((item) => item.status === "pending").forEach((item) => {
     const li = document.createElement("li");
     li.className = `request is-${item.status}`;
@@ -1916,7 +2188,7 @@ function renderRequests() {
     li.append(time, line, eye);
     list.append(li);
   });
-  $("requests-empty").hidden = requests.some((item) => item.status === "pending") || passNotes.length > 0;
+  $("requests-empty").hidden = requests.some((item) => item.status === "pending") || assetBuys.some((item) => item.status === "pending") || passNotes.length > 0;
   const notify = $("notify-go");
   notify.hidden = !("Notification" in window) || Notification.permission === "granted";
 }
@@ -2073,7 +2345,26 @@ function fillSettings() {
   $("profit-threshold").value = state.settings.profitThreshold;
   $("tax-terms").value = state.settings.taxTerms;
   fillTaxAccount();
+  fillInterestAccount();
   fillInterestSkips(true);
+}
+
+function fillInterestAccount() {
+  const select = $("interest-account");
+  if (!select) return;
+  const current = select.value || state.settings.interestAccountId || "";
+  select.replaceChildren();
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "Choose an account";
+  select.append(blank);
+  state.accounts.forEach((account) => {
+    const option = document.createElement("option");
+    option.value = account.id;
+    option.textContent = account.name;
+    select.append(option);
+  });
+  if ([...select.options].some((option) => option.value === current)) select.value = current;
 }
 
 function fillInterestSkips(fromSaved) {
@@ -2327,6 +2618,10 @@ function deleteEverything() {
   localStorage.removeItem(SESSIONS);
   localStorage.removeItem(SESSION);
   localStorage.removeItem(INTEREST);
+  assets.splice(0, assets.length);
+  assetBuys.splice(0, assetBuys.length);
+  localStorage.removeItem(LISTED);
+  localStorage.removeItem(ASSET_BUYS);
   ["gizbit-network-name", "gizbit-network-pair", "gizbit-phones", "gizbit-network-device"].forEach((key) => localStorage.removeItem(key));
   saveAccounts();
   saveRequests();
@@ -2430,6 +2725,7 @@ $("settings-form").addEventListener("submit", (event) => {
     profitThreshold,
     taxTerms: $("tax-terms").value.trim().slice(0, 400) || DEFAULT_TAX_TERMS,
     taxAccountId: $("tax-account").value || "",
+    interestAccountId: $("interest-account").value || "",
     skipInterest: [...document.querySelectorAll("#interest-skips input:checked")].map((input) => input.value),
   };
   saveAccounts();
@@ -2440,19 +2736,49 @@ $("settings-form").addEventListener("submit", (event) => {
 document.querySelectorAll(".tabs button").forEach((button) => {
   button.addEventListener("click", () => {
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().then(() => renderRequests());
-    $("tax-archive").classList.remove("is-open");
-    $("tax-archive").setAttribute("aria-hidden", "true");
+    ["tax-archive", "earnings", "assets-archive"].forEach((id) => {
+      $(id).classList.remove("is-open");
+      $(id).setAttribute("aria-hidden", "true");
+    });
     showTab(button.dataset.tab);
   });
 });
+function openArchive(id) {
+  ["tax-archive", "earnings", "assets-archive"].forEach((name) => {
+    const node = $(name);
+    const on = name === id;
+    node.classList.toggle("is-open", on);
+    node.setAttribute("aria-hidden", on ? "false" : "true");
+  });
+}
 $("view-taxes").addEventListener("click", () => {
   renderGovernment();
-  $("tax-archive").classList.add("is-open");
-  $("tax-archive").setAttribute("aria-hidden", "false");
+  openArchive("tax-archive");
 });
-$("tax-archive-back").addEventListener("click", () => {
-  $("tax-archive").classList.remove("is-open");
-  $("tax-archive").setAttribute("aria-hidden", "true");
+$("view-earnings").addEventListener("click", () => openArchive("earnings"));
+$("view-assets").addEventListener("click", () => {
+  renderAssetList();
+  openArchive("assets-archive");
+});
+$("tax-archive-back").addEventListener("click", () => openArchive(""));
+$("earnings-back").addEventListener("click", () => openArchive(""));
+$("assets-back").addEventListener("click", () => openArchive(""));
+$("list-asset").addEventListener("click", () => {
+  $("asset-error").textContent = "";
+  $("asset-sheet").hidden = false;
+  $("asset-name").focus();
+});
+$("asset-cancel").addEventListener("click", () => {
+  $("asset-sheet").hidden = true;
+});
+$("asset-sheet").addEventListener("click", (event) => {
+  if (event.target === $("asset-sheet")) $("asset-sheet").hidden = true;
+});
+$("asset-form").addEventListener("submit", listAsset);
+$("asset-buy-close").addEventListener("click", closeAssetBuy);
+$("asset-buy-confirm").addEventListener("click", confirmAssetBuy);
+$("asset-buy").addEventListener("click", (event) => {
+  if (event.target === $("asset-buy")) closeAssetBuy();
 });
 $("start-session").addEventListener("click", startSession);
 $("end-session").addEventListener("click", endSession);
@@ -2483,7 +2809,8 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("message", (event) => {
     if (event.data?.type !== "open-request") return;
     showTab("requests");
-    openDecision(event.data.id);
+    if (assetBuys.some((item) => item.id === event.data.id && item.status === "pending")) openAssetBuy(event.data.id);
+    else openDecision(event.data.id);
   });
 }
 

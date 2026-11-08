@@ -129,6 +129,11 @@
               <select id="tax-account"></select>
             </label>
             <p class="quiet">When a terminal files a return, the tax is moved into this account.</p>
+            <label class="field">
+              <span>Interest is paid from</span>
+              <select id="interest-account"></select>
+            </label>
+            <p class="quiet">Interest is taken from this account and paid to the others.</p>
             <p class="field"><span>Skip interest</span></p>
             <div id="interest-skips"></div>
             <p class="quiet">Checked accounts do not earn the 0.05% interest.</p>
@@ -185,7 +190,13 @@
             </div>
           </div>
           <hr />
-          <button type="button" id="view-taxes" class="btn">View all Tax returns</button>
+          <div class="gov-actions">
+            <p class="gov-kicker">Tax collected</p>
+            <p id="tax-collected" class="gov-figure">0 ₲</p>
+            <button type="button" id="view-taxes" class="btn">View all Tax returns</button>
+            <button type="button" id="view-earnings" class="btn">Government earnings</button>
+            <button type="button" id="view-assets" class="btn">Assets</button>
+          </div>
         </section>
       </main>
 
@@ -280,12 +291,39 @@
           <p id="interest-clock" class="session-clock">5:00:00</p>
           <p id="interest-state" class="quiet">Paused until a session is on</p>
           <button type="button" id="pay-interest" class="btn">Pay now</button>
-          <p class="quiet">Current interest that will be paid.</p>
           <div class="cols interest-cols" aria-hidden="true">
             <span>Full name</span>
-            <span>Current interest</span>
+            <span>Interest due</span>
           </div>
           <div id="interest-rows"></div>
+        </div>
+      </section>
+      <section id="earnings" class="archive" aria-hidden="true">
+        <div class="archive-head">
+          <button type="button" id="earnings-back" class="archive-back">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Back
+          </button>
+          <h1>Government earnings</h1>
+        </div>
+        <div class="archive-body"></div>
+      </section>
+      <section id="assets-archive" class="archive" aria-hidden="true">
+        <div class="archive-head">
+          <button type="button" id="assets-back" class="archive-back">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Back
+          </button>
+          <h1>Assets</h1>
+        </div>
+        <div class="archive-body">
+          <button type="button" id="list-asset" class="btn">List asset</button>
+          <p id="asset-empty" class="empty">No assets listed yet.</p>
+          <div id="asset-list" class="asset-list"></div>
         </div>
       </section>
       <section id="tax-archive" class="archive" aria-hidden="true">
@@ -334,6 +372,30 @@
         <p id="pass-error" class="error" role="status"></p>
         <button type="button" id="pass-save" class="btn" hidden>Save</button>
         <button type="button" id="pass-close" class="btn ghost">Close</button>
+      </div>
+    </div>
+
+    <div id="asset-sheet" class="sheet" hidden>
+      <form id="asset-form" class="sheet-card">
+        <h2>List asset</h2>
+        <label class="field"><span>Asset name</span><input id="asset-name" maxlength="40" autocomplete="off" /></label>
+        <label class="field"><span>Asset description</span><textarea id="asset-note" rows="3" maxlength="200"></textarea></label>
+        <label class="field"><span>Asking price</span><input id="asset-price" inputmode="numeric" autocomplete="off" /></label>
+        <p id="asset-error" class="error" role="status"></p>
+        <button type="submit" class="btn">Save and list</button>
+        <button type="button" id="asset-cancel" class="btn ghost">Cancel</button>
+      </form>
+    </div>
+
+    <div id="asset-buy" class="sheet" hidden>
+      <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="asset-buy-title">
+        <h2 id="asset-buy-title">Asset</h2>
+        <p id="asset-buy-note"></p>
+        <p id="asset-buy-who" class="quiet"></p>
+        <label class="field"><span>Amount</span><input id="asset-buy-amount" inputmode="numeric" autocomplete="off" /></label>
+        <p id="asset-buy-error" class="error" role="status"></p>
+        <button type="button" id="asset-buy-confirm" class="btn">Confirm</button>
+        <button type="button" id="asset-buy-close" class="btn ghost">Close</button>
       </div>
     </div>
 

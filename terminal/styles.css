@@ -464,6 +464,18 @@ main {
 }
 .gov-app input[readonly] { color: #d5d5d5; }
 .gov-app .btn { background: #111; color: #fff; }
+.gov-app .asset-card {
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 12px;
+  border: 0;
+  border-radius: 14px;
+  background: #161616;
+  color: #f4f4f4;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+}
 .gov-app .btn.ghost { background: #3d3d3d; color: #fff; }
 .tax-launch { background: #111; }
 .tax-new { display: grid; gap: 8px; }
