@@ -23,6 +23,10 @@
           <div class="page-head">
             <h1>Welcome back, Luke.</h1>
           </div>
+          <hr />
+          <p id="requests-empty" class="empty">Messages from a terminal show up here.</p>
+          <ul id="request-list" class="feed"></ul>
+          <button type="button" id="notify-go" class="btn slim">Turn on notifications</button>
         </section>
 
         <section id="balances" class="page" role="tabpanel" hidden>
@@ -33,7 +37,7 @@
           <div class="cols" aria-hidden="true">
             <span>Full Name</span>
             <span>Account Type</span>
-            <span>Current Balance (₲)</span>
+            <span id="bal-head">Current Balance (₲)</span>
           </div>
           <div id="rows"></div>
           <p id="empty" class="empty">No accounts yet. Add one to start at 0 gizbits.</p>
@@ -52,28 +56,18 @@
             <button type="button" id="end-session" class="btn">End session</button>
           </div>
           <div id="session-idle">
-            <button type="button" id="start-session" class="btn">Start session</button>
+            <button type="button" id="start-session" class="btn">+ Start session</button>
           </div>
           <ul id="session-list" class="feed"></ul>
         </section>
 
         <section id="moves" class="page" role="tabpanel" hidden>
           <div class="page-head">
-            <h1>Exchanges</h1>
+            <h1>Registered Exchanges</h1>
           </div>
           <hr />
           <p id="activity-empty" class="empty">Reviewed exchanges and transfers show up here.</p>
           <ul id="activity" class="feed"></ul>
-        </section>
-
-        <section id="requests" class="page" role="tabpanel" hidden>
-          <div class="page-head">
-            <h1>Terminal Messages</h1>
-          </div>
-          <hr />
-          <p id="requests-empty" class="empty">Messages from a terminal show up here.</p>
-          <ul id="request-list" class="feed"></ul>
-          <button type="button" id="notify-go" class="btn slim">Turn on notifications</button>
         </section>
 
         <section id="settings" class="page" role="tabpanel" hidden>
@@ -209,6 +203,15 @@
           </span>
           <span>Dashboard</span>
         </button>
+        <button type="button" role="tab" data-tab="sessions" aria-selected="false">
+          <span class="tab-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22">
+              <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/>
+              <path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <span>Sessions</span>
+        </button>
         <button type="button" role="tab" data-tab="balances" aria-selected="false">
           <span class="tab-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="22" height="22">
@@ -225,23 +228,6 @@
             </svg>
           </span>
           <span>Exchanges</span>
-        </button>
-        <button type="button" role="tab" data-tab="sessions" aria-selected="false">
-          <span class="tab-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22">
-              <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/>
-              <path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            </svg>
-          </span>
-          <span>Sessions</span>
-        </button>
-        <button type="button" role="tab" data-tab="requests" aria-selected="false">
-          <span class="tab-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22">
-              <path d="M4 6h16v10H7l-3 3V6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-            </svg>
-          </span>
-          <span>Messages</span>
         </button>
         <button type="button" role="tab" data-tab="gfg" aria-selected="false">
           <span class="tab-mark" aria-hidden="true">

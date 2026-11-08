@@ -758,7 +758,8 @@ h1 {
   border-radius: 12px;
   background: #fff;
 }
-.history time, .history .who, .history .quiet { grid-column: 1; }
+.history time, .history .who, .history .quiet, .history .memo { grid-column: 1; }
+.history .memo { margin: 2px 0 0; color: var(--muted); font-size: 13px; font-weight: 650; }
 .history time, .history .quiet { color: var(--muted); font-size: 12px; }
 .empty-note {
   margin: 0;

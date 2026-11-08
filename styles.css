@@ -355,6 +355,7 @@ input, select {
   font-weight: 650;
 }
 .interest-row span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+#start-session { width: 100%; }
 #open-interest, #pay-interest { width: 100%; }
 #pay-interest { margin-bottom: 8px; }
 .gov-actions { display: grid; gap: 10px; }
@@ -362,6 +363,8 @@ input, select {
 .gov-figure { margin: 2px 0 6px; font-size: 34px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
 .gov-actions .btn { width: 100%; }
 .log-swipe.is-interest .log-row { background: #e4e4e4; color: #6b6b6b; }
+.log-memo { color: var(--muted); font-size: 13px; font-weight: 650; }
+.log-swipe.is-interest .log-memo { color: #8a8a8a; }
 .asset-list { display: grid; gap: 10px; margin-top: 14px; }
 .asset-card {
   display: grid;
@@ -522,7 +525,8 @@ body.standalone .hint { display: none; }
 }
 .swipe-trash { background: #a33b3b; }
 .swipe-eye { background: #8d99a6; }
-.acct.is-open { transform: translateX(112px); }
+.acct.is-open { transform: translateX(56px); }
+body.show-passwords .acct .bal-short { white-space: normal; overflow-wrap: anywhere; }
 .acct.is-sign { transform: translateX(-56px); }
 .swipe-usual {
   position: absolute;
@@ -553,6 +557,9 @@ body.standalone .hint { display: none; }
   position: relative;
   z-index: 1;
   transition: transform 0.18s ease;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 .log-row {
   display: grid;
@@ -697,7 +704,7 @@ textarea {
 .request .tag { display: block; margin-top: 6px; font-weight: 800; }
 .tabs {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   background: #fff;
   border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);

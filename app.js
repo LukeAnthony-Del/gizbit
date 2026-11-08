@@ -26,7 +26,7 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.16.000";
+const VERSION = "2.17.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -311,6 +311,7 @@ function publishLedger(applied, answered) {
       if (item.toId) row.toId = item.toId;
       if (item.toName) row.toName = item.toName;
       if (item.note) row.note = String(item.note).slice(0, 40);
+      if (item.memo) row.memo = String(item.memo).slice(0, 40);
       return row;
     }),
     ts: Date.now(),
@@ -564,6 +565,18 @@ function isTransfer(item) {
   return item.op === "send" || item.op === "transfer";
 }
 
+function exchangeMemo(item) {
+  const saved = String(item.memo || "").trim();
+  if (saved) return saved.slice(0, 40);
+  if (item.op === "interest") return "Interest payment";
+  if (String(item.id || "").endsWith("-pay")) return "Income tax invoice";
+  if (item.note) return "Asset purchase";
+  if (item.op === "withdraw") return "Withdrawal";
+  if (item.op === "deposit") return "Deposit";
+  if (isTransfer(item)) return "Transfer";
+  return "Exchange";
+}
+
 const closedDays = new Set();
 
 function dayKey(ts) {
@@ -640,7 +653,10 @@ function renderActivity() {
           ? `${item.name} · ${verb} · ${alleged} ₲ · received ${actual} ₲`
           : `${item.name} · ${verb} · ${alleged} ₲`;
       }
-      row.append(time, line);
+      const memo = document.createElement("span");
+      memo.className = "log-memo";
+      memo.textContent = exchangeMemo(item);
+      row.append(time, line, memo);
       if (item.status === "denied") {
         const tag = document.createElement("span");
         tag.className = "tag";
@@ -751,13 +767,8 @@ function renderRows() {
     trash.setAttribute("aria-label", `Delete ${account.name}`);
     trash.innerHTML = trashMarkup();
     trash.addEventListener("click", () => deleteAccount(account.id));
-    const eye = document.createElement("button");
-    eye.type = "button";
-    eye.className = "swipe-eye";
-    eye.setAttribute("aria-label", `Show password for ${account.name}`);
-    eye.innerHTML = eyeMarkup();
-    eye.addEventListener("click", () => openPassword(account.id));
-    actions.append(trash, eye);
+    actions.className = "swipe-actions one";
+    actions.append(trash);
     const row = document.createElement("div");
     row.className = "acct";
     const name = document.createElement("span");
@@ -767,16 +778,78 @@ function renderRows() {
     type.textContent = account.type;
     const short = document.createElement("span");
     short.className = "bal-short";
+    short.dataset.pw = account.pw || "";
     short.textContent = `${formatAmount(account.bal)} ₲`;
     const full = document.createElement("span");
     full.className = "bal-full";
     full.textContent = `${formatFull(account.bal)} GZBT`;
     row.append(name, type, short, full);
     swipe.append(actions, row);
-    bindReveal(row, 112, 0);
+    bindReveal(row, 56, 0);
+    bindPasswordHold(row);
     body.append(swipe);
   });
   $("empty").hidden = state.accounts.length > 0;
+}
+
+function showBalancePasswords() {
+  document.body.classList.add("show-passwords");
+  const head = $("bal-head");
+  if (head) head.textContent = "Password";
+  document.querySelectorAll(".acct").forEach((row) => {
+    const short = row.querySelector(".bal-short");
+    const full = row.querySelector(".bal-full");
+    if (!short || !full) return;
+    if (!short.dataset.bal) short.dataset.bal = short.textContent;
+    short.textContent = short.dataset.pw || "Not saved";
+    full.hidden = true;
+  });
+}
+
+function hideBalancePasswords() {
+  document.body.classList.remove("show-passwords");
+  const head = $("bal-head");
+  if (head) head.textContent = "Current Balance (₲)";
+  document.querySelectorAll(".acct").forEach((row) => {
+    const short = row.querySelector(".bal-short");
+    const full = row.querySelector(".bal-full");
+    if (!short || !full) return;
+    if (short.dataset.bal) short.textContent = short.dataset.bal;
+    full.hidden = false;
+  });
+}
+
+function bindPasswordHold(row) {
+  let timer = 0;
+  let startX = 0;
+  let startY = 0;
+  const stop = () => {
+    clearTimeout(timer);
+    timer = 0;
+    hideBalancePasswords();
+  };
+  row.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    startX = event.clientX;
+    startY = event.clientY;
+    clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = 0;
+      showBalancePasswords();
+    }, 400);
+  });
+  row.addEventListener("pointermove", (event) => {
+    if (!timer) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    if (dx * dx + dy * dy > 100) {
+      clearTimeout(timer);
+      timer = 0;
+    }
+  });
+  row.addEventListener("pointerup", stop);
+  row.addEventListener("pointercancel", stop);
+  row.addEventListener("contextmenu", (event) => event.preventDefault());
 }
 
 function renderAccounts() {
@@ -1517,6 +1590,7 @@ function payTax(item, totals) {
       applied: totals.invoice,
       toId: sink.id,
       toName: sink.name,
+      memo: "Income tax invoice",
       ts: Date.now(),
     });
     saveRequests();
@@ -2102,7 +2176,7 @@ function notifyPass(note) {
   if (!note || !("Notification" in window) || Notification.permission !== "granted" || !navigator.serviceWorker) return;
   navigator.serviceWorker.ready.then((reg) => {
     reg.showNotification(`Password change from ${note.name}`, {
-      body: "Open Messages to see the new password.",
+      body: "Open the dashboard to see the new password.",
       tag: note.id,
       renotify: true,
     });
@@ -2306,7 +2380,7 @@ function publishDecision(item) {
 function maybeOpenLinked() {
   const params = new URLSearchParams(location.search);
   if (params.get("tab") !== "requests") return;
-  showTab("requests");
+  showTab("home");
   const id = params.get("request");
   if (id) openDecision(id);
 }
@@ -2808,7 +2882,7 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js");
   navigator.serviceWorker.addEventListener("message", (event) => {
     if (event.data?.type !== "open-request") return;
-    showTab("requests");
+    showTab("home");
     if (assetBuys.some((item) => item.id === event.data.id && item.status === "pending")) openAssetBuy(event.data.id);
     else openDecision(event.data.id);
   });

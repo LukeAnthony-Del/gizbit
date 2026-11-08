@@ -17,7 +17,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.19.000";
+const VERSION = "2.20.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 
@@ -798,6 +798,17 @@ function saveSign(id, strokes) {
   localStorage.setItem(SIGNS, JSON.stringify(all));
 }
 
+function exchangeMemo(item) {
+  const saved = String(item.memo || "").trim();
+  if (saved) return saved.slice(0, 40);
+  if (String(item.id || "").endsWith("-pay")) return "Income tax invoice";
+  if (item.note) return "Asset purchase";
+  if (item.op === "withdraw") return "Withdrawal";
+  if (item.op === "deposit") return "Deposit";
+  if (item.op === "send" || item.op === "transfer") return "Transfer";
+  return "Exchange";
+}
+
 function renderHistory() {
   const list = $("history");
   const empty = $("activity-empty");
@@ -841,7 +852,10 @@ function renderHistory() {
     if (item.status === "denied") money.textContent = `${alleged} ₲ · Denied`;
     else if (actual && String(item.applied) !== String(item.amount)) money.textContent = `${alleged} ₲ asked · ${actual} ₲`;
     else money.textContent = `${alleged} ₲`;
-    row.append(when, kind, money);
+    const memo = document.createElement("p");
+    memo.className = "memo";
+    memo.textContent = exchangeMemo(item);
+    row.append(when, kind, money, memo);
     swipe.append(signBtn, row);
     bindHistorySwipe(row);
     list.append(swipe);
