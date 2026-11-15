@@ -17,9 +17,11 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.20.000";
+const VERSION = "2.21.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
+const WAIT_EXCHANGE = "gizbit-terminal-wait-exchange";
+const WAIT_SEND = "gizbit-terminal-wait-send";
 
 let ledger = loadLedger();
 let sessionPh = "";
@@ -30,10 +32,11 @@ let liveThisSession = false;
 let wipedAt = Number(localStorage.getItem(WIPED)) || 0;
 let source = null;
 let streamOpen = false;
+let lastStream = 0;
 let lastPing = 0;
 let toastTimer = 0;
-let pendingExchangeId = "";
-let pendingSendId = "";
+let pendingExchangeId = loadHold(WAIT_EXCHANGE);
+let pendingSendId = loadHold(WAIT_SEND);
 let taxLines = [];
 let taxExpenses = [];
 let taxSigned = false;
@@ -42,6 +45,28 @@ const waits = new Map();
 const reasons = new Map();
 
 const $ = (id) => document.getElementById(id);
+
+function loadHold(key) {
+  try {
+    const data = JSON.parse(localStorage.getItem(key) || "null");
+    if (data && typeof data.id === "string") return data.id;
+  } catch {
+    /* Nothing is waiting. */
+  }
+  return "";
+}
+
+function holdExchange(id) {
+  pendingExchangeId = id || "";
+  if (pendingExchangeId) localStorage.setItem(WAIT_EXCHANGE, JSON.stringify({ id: pendingExchangeId, ts: Date.now() }));
+  else localStorage.removeItem(WAIT_EXCHANGE);
+}
+
+function holdSend(id) {
+  pendingSendId = id || "";
+  if (pendingSendId) localStorage.setItem(WAIT_SEND, JSON.stringify({ id: pendingSendId, ts: Date.now() }));
+  else localStorage.removeItem(WAIT_SEND);
+}
 
 function loadLedger() {
   try {
@@ -260,8 +285,8 @@ function toast(text) {
 }
 
 function refreshStatus() {
-  const fresh = streamOpen && ledger && Date.now() - (ledger.ts || 0) < 20000;
-  setLink(Boolean(fresh));
+  const heard = ledger && Date.now() - (ledger.ts || 0) < 45000;
+  setLink(Boolean(heard));
 }
 
 function matching(ph) {
@@ -283,7 +308,8 @@ function acceptReset(body) {
   wipedAt = ts;
   localStorage.setItem(WIPED, String(ts));
   sessionPh = "";
-  pendingExchangeId = "";
+  holdExchange("");
+  holdSend("");
   forgetBook();
   showLogin();
   $("login-msg").textContent = "The main phone deleted every account.";
@@ -395,7 +421,7 @@ function handleMessage(data) {
     reasons.set(body.id, body.reason || "The main phone refused that.");
     if (body.id === pendingExchangeId) finishExchange(body.id, "denied");
     if (body.id === pendingSendId) {
-      pendingSendId = "";
+      holdSend("");
       $("send-msg").textContent = body.reason || "The main phone could not transfer that.";
       revealSend();
     }
@@ -432,6 +458,7 @@ function listen() {
   source = new EventSource(`${NTFY}/${TOPIC}/sse?since=${encodeURIComponent(sinceQuery())}`);
   source.onopen = () => {
     streamOpen = true;
+    lastStream = Date.now();
     refreshStatus();
   };
   source.onerror = () => {
@@ -439,6 +466,7 @@ function listen() {
     refreshStatus();
   };
   source.onmessage = (event) => {
+    lastStream = Date.now();
     try {
       handleMessage(JSON.parse(event.data));
     } catch {
@@ -991,13 +1019,11 @@ function inGov() {
 
 function bumpIdle() {
   clearIdle();
-  if (!sessionPh || inGov()) return;
+  if (!sessionPh || inGov() || pendingExchangeId || pendingSendId) return;
   idleTimer = setTimeout(() => {
     if (!sessionPh) return;
     const typing = document.activeElement && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
     sessionPh = "";
-    pendingExchangeId = "";
-    pendingSendId = "";
     showHome();
     showLogin(typing);
     $("login-msg").textContent = "Timer ran out, log in again.";
@@ -1182,7 +1208,7 @@ function waitForLiveLedger(before, ms) {
 
 function finishExchange(id, status) {
   if (!id || id !== pendingExchangeId || !status || status === "pending") return;
-  pendingExchangeId = "";
+  holdExchange("");
   if (status === "denied") {
     $("move-msg").textContent = reasons.get(id) || "The network denied this exchange.";
     revealSteps();
@@ -1271,7 +1297,6 @@ function resetSend() {
   sendAccountId = "";
   sendAmount = "";
   sendSigned = false;
-  pendingSendId = "";
   $("send-amount").value = "";
   $("send-agree").checked = false;
   $("send-msg").textContent = "";
@@ -1287,7 +1312,7 @@ function checkSendResult() {
   if (!pendingSendId) return;
   const found = (ledger?.requests || []).find((item) => item.id === pendingSendId);
   if (!found) return;
-  pendingSendId = "";
+  holdSend("");
   if (found.status === "denied") {
     $("send-msg").textContent = reasons.get(found.id) || "The main phone could not transfer that.";
     revealSend();
@@ -1340,7 +1365,7 @@ async function sendGizbits() {
     return;
   }
   saveSign(id, strokes);
-  pendingSendId = id;
+  holdSend(id);
   message.textContent = "Transferred. The main phone moves the gizbits as soon as it receives this.";
   checkSendResult();
 }
@@ -1387,6 +1412,8 @@ async function login(password) {
     resetSend();
     renderBank();
     bumpIdle();
+    checkExchangeResult();
+    checkSendResult();
     message.textContent = "";
   } catch {
     message.textContent = "This page needs a secure connection before it can check a password.";
@@ -1467,7 +1494,7 @@ async function exchange() {
   }
   const id = uid();
   unlockSound();
-  pendingExchangeId = id;
+  holdExchange(id);
   exchangeSent = true;
   paintExchangeButton();
   message.textContent = "Asking the main phone…";
@@ -1485,7 +1512,7 @@ async function exchange() {
     });
     saveSign(id, pad.strokes());
   } catch {
-    pendingExchangeId = "";
+    holdExchange("");
     exchangeSent = false;
     message.textContent = "Couldn't reach the bank. Try again.";
     revealSteps();
@@ -1792,8 +1819,6 @@ $("peek").addEventListener("click", () => {
 });
 $("logout").addEventListener("click", () => {
   sessionPh = "";
-  pendingExchangeId = "";
-  pendingSendId = "";
   showHome();
   showLogin();
   $("login-msg").textContent = "";
@@ -3099,8 +3124,23 @@ catchUp().catch(() => refreshStatus()).finally(() => {
   publishPing().catch(() => {});
 });
 
+function wakeLink() {
+  if (!streamOpen || Date.now() - lastStream > 25000) listen();
+  return catchUp().catch(() => refreshStatus()).finally(() => {
+    checkExchangeResult();
+    checkSendResult();
+  });
+}
+
+setInterval(() => {
+  if (document.visibilityState !== "visible") return;
+  wakeLink();
+  publishPing().catch(() => {});
+}, 12000);
+
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
-  catchUp().catch(() => {});
+  listen();
+  wakeLink();
   publishPing().catch(() => {});
 });

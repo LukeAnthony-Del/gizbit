@@ -756,6 +756,22 @@ textarea {
 #government .feed strong { font-size: 16px; }
 #government .btn.slim { justify-self: start; }
 
+.incoming {
+  position: fixed;
+  z-index: 40;
+  left: 50%;
+  top: calc(env(safe-area-inset-top) + 12px);
+  transform: translateX(-50%);
+  width: min(440px, calc(100% - 24px));
+  border: 0;
+  border-radius: 16px;
+  background: var(--navy);
+  color: #fff;
+  text-align: left;
+  font-weight: 750;
+  padding: 14px 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
 .toast {
   position: fixed;
   z-index: 30;

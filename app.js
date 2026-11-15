@@ -26,7 +26,7 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.17.000";
+const VERSION = "2.18.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -41,6 +41,7 @@ let interest = loadInterest();
 const seen = new Set(loadList(SEEN));
 let source = null;
 let streamOpen = false;
+let lastStream = 0;
 let lastAnnounce = 0;
 let announced = false;
 let postChain = Promise.resolve();
@@ -271,12 +272,20 @@ function decode(message) {
 
 function publish(sentence, payload) {
   const job = postChain.then(async () => {
-    const res = await fetch(`${NTFY}/${TOPIC}`, {
-      method: "POST",
-      body: encode(sentence, payload),
-      cache: "no-store",
-    });
-    if (!res.ok) throw new Error(String(res.status));
+    const attempt = async () => {
+      const res = await fetch(`${NTFY}/${TOPIC}`, {
+        method: "POST",
+        body: encode(sentence, payload),
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error(String(res.status));
+    };
+    try {
+      await attempt();
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      await attempt();
+    }
   });
   postChain = job.catch(() => {});
   return job;
@@ -1262,7 +1271,7 @@ function takeAssetBuy(body) {
   assetBuys.splice(40);
   saveAssetBuys();
   renderRequests();
-  toast(`${account.name} wants to own ${asset.name}`);
+  showIncoming(`${account.name} wants to own ${asset.name}. Tap to open it.`);
   if ("Notification" in window && Notification.permission === "granted" && navigator.serviceWorker) {
     navigator.serviceWorker.ready.then((reg) => {
       reg.showNotification(`Asset request from ${account.name}`, {
@@ -1886,6 +1895,7 @@ function listen() {
   source = new EventSource(`${NTFY}/${TOPIC}/sse?since=${encodeURIComponent(sinceQuery())}`);
   source.onopen = () => {
     streamOpen = true;
+    lastStream = Date.now();
     setStatus("Listening for the other phone");
   };
   source.onerror = () => {
@@ -1893,6 +1903,7 @@ function listen() {
     setStatus("Reconnecting…");
   };
   source.onmessage = (event) => {
+    lastStream = Date.now();
     let data;
     try {
       data = JSON.parse(event.data);
@@ -2130,7 +2141,17 @@ function takeRequest(req) {
   return true;
 }
 
+function showIncoming(text) {
+  const node = $("incoming");
+  if (!node) return;
+  node.textContent = text;
+  node.hidden = false;
+  playSuccess();
+}
+
 function notifyPending(item) {
+  const verb = item.op === "withdraw" ? "withdrawal" : "deposit";
+  showIncoming(`${item.name} sent a ${verb}. Tap to open it.`);
   if (!("Notification" in window) || Notification.permission !== "granted" || !navigator.serviceWorker) return;
   const title = `Exchange pending from ${item.name}`;
   navigator.serviceWorker.ready.then((reg) => {
@@ -2173,7 +2194,9 @@ function takePassword(body) {
 }
 
 function notifyPass(note) {
-  if (!note || !("Notification" in window) || Notification.permission !== "granted" || !navigator.serviceWorker) return;
+  if (!note) return;
+  showIncoming(`${note.name} changed their password. Tap to open it.`);
+  if (!("Notification" in window) || Notification.permission !== "granted" || !navigator.serviceWorker) return;
   navigator.serviceWorker.ready.then((reg) => {
     reg.showNotification(`Password change from ${note.name}`, {
       body: "Open the dashboard to see the new password.",
@@ -2264,7 +2287,12 @@ function renderRequests() {
   });
   $("requests-empty").hidden = requests.some((item) => item.status === "pending") || assetBuys.some((item) => item.status === "pending") || passNotes.length > 0;
   const notify = $("notify-go");
-  notify.hidden = !("Notification" in window) || Notification.permission === "granted";
+  if (!("Notification" in window) || Notification.permission === "granted") {
+    notify.hidden = true;
+  } else {
+    notify.hidden = false;
+    notify.textContent = Notification.permission === "denied" ? "Notifications are blocked in iPhone Settings" : "Turn on notifications";
+  }
 }
 
 let decisionId = "";
@@ -2666,9 +2694,17 @@ $("decision").addEventListener("click", (event) => {
 });
 $("part-go").addEventListener("click", () => decide("part", $("part-amount").value));
 $("notify-go").addEventListener("click", async () => {
-  if (!("Notification" in window)) return;
-  await Notification.requestPermission();
+  if (!("Notification" in window)) {
+    toast("This phone cannot show notifications.");
+    return;
+  }
+  const result = await Notification.requestPermission();
+  if (result !== "granted") toast("Turn on notifications for Gizbit Network in iPhone Settings, then open the app again.");
   renderRequests();
+});
+$("incoming").addEventListener("click", () => {
+  $("incoming").hidden = true;
+  showTab("home");
 });
 $("review-no").addEventListener("click", closeReview);
 $("review-yes").addEventListener("click", markReviewed);
@@ -2895,8 +2931,19 @@ catchUp()
     listen();
   });
 
+function wakeLink() {
+  if (!streamOpen || Date.now() - lastStream > 25000) listen();
+  return catchUp().catch(() => setStatus("Reconnecting…"));
+}
+
+setInterval(() => {
+  if (document.visibilityState !== "visible") return;
+  wakeLink();
+}, 10000);
+
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
+  listen();
   catchUp()
     .catch(() => setStatus("Reconnecting…"))
     .finally(() => {
