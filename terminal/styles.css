@@ -299,6 +299,19 @@ main {
   border: 1px solid var(--line);
   font-weight: 700;
 }
+.board-out-title { margin: 18px 0 8px; color: #8a9098; font-size: 15px; }
+.board-out { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.board-out li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  background: #e6e8ec;
+  border: 1px solid #d5d8de;
+  color: #8a9098;
+  font-weight: 700;
+}
 .gov-head {
   display: flex;
   align-items: flex-start;

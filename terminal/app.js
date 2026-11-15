@@ -17,7 +17,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.22.000";
+const VERSION = "2.23.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 const WAIT_EXCHANGE = "gizbit-terminal-wait-exchange";
@@ -115,7 +115,7 @@ function defaultSettings() {
     taxAccountId: "",
     interestAccountId: "",
     skipInterest: [],
-    leaderboard: [],
+    boardSkip: [],
   };
 }
 
@@ -147,11 +147,11 @@ function normalizeSettings(value) {
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
       : [],
-    leaderboard: cleanLeaderboard(value?.leaderboard),
+    boardSkip: cleanIdList(value?.boardSkip, 40),
   };
 }
 
-function cleanLeaderboard(value) {
+function cleanIdList(value, limit) {
   const seen = new Set();
   const ids = [];
   (Array.isArray(value) ? value : []).forEach((id) => {
@@ -159,7 +159,7 @@ function cleanLeaderboard(value) {
     seen.add(id);
     ids.push(id);
   });
-  return ids.slice(0, 3);
+  return ids.slice(0, limit);
 }
 
 function activeSettings() {
@@ -814,23 +814,43 @@ function renderBank() {
   renderBoard();
 }
 
+function boardLine(account) {
+  const item = document.createElement("li");
+  const name = document.createElement("span");
+  name.textContent = account.name;
+  const money = document.createElement("span");
+  money.textContent = `${formatAmount(account.bal)} ₲`;
+  item.append(name, money);
+  return item;
+}
+
+function byRichest(a, b) {
+  const left = BigInt(b.bal || "0");
+  const right = BigInt(a.bal || "0");
+  if (left > right) return 1;
+  if (left < right) return -1;
+  return String(a.name).localeCompare(String(b.name));
+}
+
 function renderBoard() {
   const top = $("board-top");
   const rest = $("board-rest");
-  if (!top || !rest) return;
+  const out = $("board-out");
+  const outTitle = $("board-out-title");
+  if (!top || !rest || !out) return;
   const accounts = ledger?.accounts || [];
-  const picked = activeSettings().leaderboard
-    .map((id) => accounts.find((account) => account.id === id))
-    .filter(Boolean);
+  const skip = new Set(activeSettings().boardSkip || []);
+  const playing = accounts.filter((account) => !skip.has(account.id)).sort(byRichest);
+  const aside = accounts.filter((account) => skip.has(account.id)).sort(byRichest);
   const places = ["1st", "2nd", "3rd"];
   top.replaceChildren();
-  if (!picked.length) {
+  if (!playing.length) {
     const empty = document.createElement("p");
     empty.className = "quiet";
-    empty.textContent = "The network has not chosen the top three yet.";
+    empty.textContent = accounts.length ? "No accounts are on the leaderboard." : "No accounts yet.";
     top.append(empty);
   }
-  picked.forEach((account, index) => {
+  playing.slice(0, 3).forEach((account, index) => {
     const card = document.createElement("article");
     card.className = "board-place";
     const place = document.createElement("p");
@@ -845,24 +865,11 @@ function renderBoard() {
     card.append(place, name, money);
     top.append(card);
   });
-  const chosen = new Set(picked.map((account) => account.id));
-  const others = accounts.filter((account) => !chosen.has(account.id)).sort((a, b) => {
-    const left = BigInt(b.bal || "0");
-    const right = BigInt(a.bal || "0");
-    if (left > right) return 1;
-    if (left < right) return -1;
-    return String(a.name).localeCompare(String(b.name));
-  });
   rest.replaceChildren();
-  others.forEach((account) => {
-    const item = document.createElement("li");
-    const name = document.createElement("span");
-    name.textContent = account.name;
-    const money = document.createElement("span");
-    money.textContent = `${formatAmount(account.bal)} ₲`;
-    item.append(name, money);
-    rest.append(item);
-  });
+  playing.slice(3).forEach((account) => rest.append(boardLine(account)));
+  out.replaceChildren();
+  aside.forEach((account) => out.append(boardLine(account)));
+  if (outTitle) outTitle.hidden = aside.length === 0;
 }
 
 function formatDate(ts) {

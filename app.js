@@ -26,7 +26,7 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.19.000";
+const VERSION = "2.20.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -37,6 +37,8 @@ const assets = loadList(LISTED);
 const assetBuys = loadList(ASSET_BUYS);
 const sessions = loadList(SESSIONS);
 let sessionLive = loadSession();
+let attendMarks = new Map();
+let viewingSession = "";
 let interest = loadInterest();
 const seen = new Set(loadList(SEEN));
 let source = null;
@@ -78,7 +80,7 @@ function defaultSettings() {
     taxAccountId: "",
     interestAccountId: "",
     skipInterest: [],
-    leaderboard: [],
+    boardSkip: [],
   };
 }
 
@@ -110,11 +112,11 @@ function normalizeSettings(value) {
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
       : [],
-    leaderboard: cleanLeaderboard(value?.leaderboard),
+    boardSkip: cleanIdList(value?.boardSkip, 40),
   };
 }
 
-function cleanLeaderboard(value) {
+function cleanIdList(value, limit) {
   const seen = new Set();
   const ids = [];
   (Array.isArray(value) ? value : []).forEach((id) => {
@@ -122,7 +124,7 @@ function cleanLeaderboard(value) {
     seen.add(id);
     ids.push(id);
   });
-  return ids.slice(0, 3);
+  return ids.slice(0, limit);
 }
 
 function loadList(key) {
@@ -244,6 +246,50 @@ function taxTotals(lines, rates, expenses) {
     tax: tax.toString(),
     invoice: floorBillion(vat + tax).toString(),
   };
+}
+
+function formatLoose(value) {
+  let amount = 0n;
+  try {
+    amount = BigInt(value || "0");
+  } catch {
+    amount = 0n;
+  }
+  if (amount < 0n) amount = -amount;
+  const scales = [[10n ** 12n, "Trillion"], [10n ** 9n, "Billion"]];
+  for (const [unit, label] of scales) {
+    if (amount < unit) continue;
+    const scaled = (amount * 1000n) / unit;
+    const whole = scaled / 1000n;
+    const frac = scaled % 1000n;
+    const wholeText = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    if (frac === 0n) return `${wholeText} ${label}`;
+    const decimals = frac.toString().padStart(3, "0").replace(/0+$/, "");
+    return `${wholeText}.${decimals} ${label}`;
+  }
+  return amount.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function groupDigits(value) {
+  const digits = String(value ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function placeGroupedCaret(input) {
+  const caret = input.selectionStart == null ? input.value.length : input.selectionStart;
+  const digitsBefore = input.value.slice(0, caret).replace(/\D/g, "").length;
+  const stripped = input.value.replace(/\D/g, "");
+  const lead = stripped.length - stripped.replace(/^0+(?=\d)/, "").length;
+  const keep = Math.max(0, digitsBefore - lead);
+  const shown = groupDigits(input.value);
+  input.value = shown;
+  let pos = 0;
+  let seen = 0;
+  while (pos < shown.length && seen < keep) {
+    if (/\d/.test(shown[pos])) seen += 1;
+    pos += 1;
+  }
+  input.setSelectionRange(pos, pos);
 }
 
 function formatAmount(value) {
@@ -617,6 +663,62 @@ function dayLabel(ts) {
   return `${day}${suffix} ${month}`;
 }
 
+function exchangeCard(item) {
+  const swipe = document.createElement("li");
+  swipe.className = item.op === "interest" ? "swipe log-swipe is-interest" : "swipe log-swipe";
+  const actions = document.createElement("div");
+  actions.className = "swipe-actions one";
+  const trash = document.createElement("button");
+  trash.type = "button";
+  trash.className = "swipe-trash";
+  trash.setAttribute("aria-label", "Delete log");
+  trash.innerHTML = trashMarkup();
+  trash.addEventListener("click", () => deleteLog(item.id));
+  actions.append(trash);
+  const signBtn = document.createElement("button");
+  signBtn.type = "button";
+  signBtn.className = "swipe-sign";
+  signBtn.setAttribute("aria-label", "Show signature");
+  signBtn.innerHTML = signMarkup();
+  signBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    showSignature(item);
+  });
+  const row = document.createElement("div");
+  row.className = "log-row";
+  const time = document.createElement("time");
+  time.dateTime = new Date(item.ts).toISOString();
+  time.textContent = formatWhen(item.ts);
+  const line = document.createElement("span");
+  const alleged = formatAmount(item.amount);
+  const actual = item.applied ? formatAmount(item.applied) : "";
+  if (item.op === "interest") {
+    line.textContent = `${item.name} paid ${alleged} ₲ interest to ${item.toName || "an account"}`;
+  } else if (item.note) {
+    line.textContent = `${item.name} bought ${item.note} for ${alleged} ₲`;
+  } else if (isTransfer(item)) {
+    line.textContent = `${item.name} transferred ${alleged} ₲ to ${item.toName || "another account"}`;
+  } else {
+    const verb = item.op === "withdraw" ? "Withdrawal" : "Deposit";
+    line.textContent = actual && actual !== alleged
+      ? `${item.name} · ${verb} · ${alleged} ₲ · received ${actual} ₲`
+      : `${item.name} · ${verb} · ${alleged} ₲`;
+  }
+  const memo = document.createElement("span");
+  memo.className = "log-memo";
+  memo.textContent = exchangeMemo(item);
+  row.append(time, line, memo);
+  if (item.status === "denied") {
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = "Denied";
+    row.append(tag);
+  }
+  swipe.append(actions, signBtn, row);
+  bindReveal(row, 56, 56);
+  return swipe;
+}
+
 function renderActivity() {
   const list = $("activity");
   list.replaceChildren();
@@ -634,61 +736,7 @@ function renderActivity() {
   groups.forEach((group) => {
     const body = document.createElement("ul");
     body.className = "day-body";
-    group.items.forEach((item) => {
-      const swipe = document.createElement("li");
-      swipe.className = item.op === "interest" ? "swipe log-swipe is-interest" : "swipe log-swipe";
-      const actions = document.createElement("div");
-      actions.className = "swipe-actions one";
-      const trash = document.createElement("button");
-      trash.type = "button";
-      trash.className = "swipe-trash";
-      trash.setAttribute("aria-label", "Delete log");
-      trash.innerHTML = trashMarkup();
-      trash.addEventListener("click", () => deleteLog(item.id));
-      actions.append(trash);
-      const signBtn = document.createElement("button");
-      signBtn.type = "button";
-      signBtn.className = "swipe-sign";
-      signBtn.setAttribute("aria-label", "Show signature");
-      signBtn.innerHTML = signMarkup();
-      signBtn.addEventListener("click", (event) => {
-        event.stopPropagation();
-        showSignature(item);
-      });
-      const row = document.createElement("div");
-      row.className = "log-row";
-      const time = document.createElement("time");
-      time.dateTime = new Date(item.ts).toISOString();
-      time.textContent = formatWhen(item.ts);
-      const line = document.createElement("span");
-      const alleged = formatAmount(item.amount);
-      const actual = item.applied ? formatAmount(item.applied) : "";
-      if (item.op === "interest") {
-        line.textContent = `${item.name} paid ${alleged} ₲ interest to ${item.toName || "an account"}`;
-      } else if (item.note) {
-        line.textContent = `${item.name} bought ${item.note} for ${alleged} ₲`;
-      } else if (isTransfer(item)) {
-        line.textContent = `${item.name} transferred ${alleged} ₲ to ${item.toName || "another account"}`;
-      } else {
-        const verb = item.op === "withdraw" ? "Withdrawal" : "Deposit";
-        line.textContent = actual && actual !== alleged
-          ? `${item.name} · ${verb} · ${alleged} ₲ · received ${actual} ₲`
-          : `${item.name} · ${verb} · ${alleged} ₲`;
-      }
-      const memo = document.createElement("span");
-      memo.className = "log-memo";
-      memo.textContent = exchangeMemo(item);
-      row.append(time, line, memo);
-      if (item.status === "denied") {
-        const tag = document.createElement("span");
-        tag.className = "tag";
-        tag.textContent = "Denied";
-        row.append(tag);
-      }
-      swipe.append(actions, signBtn, row);
-      bindReveal(row, 56, 56);
-      body.append(swipe);
-    });
+    group.items.forEach((item) => body.append(exchangeCard(item)));
     const fold = document.createElement("div");
     fold.className = "day-fold";
     fold.append(body);
@@ -779,13 +827,24 @@ function setBalanceHead() {
 function writeQuietBalance(account, input) {
   const amount = moneyText(input.value, false);
   if (amount == null) {
-    input.value = account.bal;
+    input.value = formatFull(account.bal);
     return;
   }
   account.bal = amount;
+  input.value = formatFull(amount);
   saveAccounts();
   const full = input.parentElement && input.parentElement.querySelector(".bal-full");
   if (full) full.textContent = `${formatFull(amount)} GZBT`;
+  paintBankTotal();
+}
+
+function paintBankTotal() {
+  const count = $("bank-count");
+  const sum = $("bank-sum");
+  if (!count || !sum) return;
+  const total = state.accounts.reduce((running, account) => running + BigInt(account.bal || "0"), 0n);
+  count.textContent = state.accounts.length === 1 ? "1 account" : `${state.accounts.length} accounts`;
+  sum.textContent = `${formatLoose(total)} GZBT`;
 }
 
 function renderRows() {
@@ -826,7 +885,8 @@ function renderRows() {
       short.inputMode = "numeric";
       short.autocomplete = "off";
       short.setAttribute("aria-label", `Balance for ${account.name}`);
-      short.value = account.bal;
+      short.value = formatFull(account.bal);
+      short.addEventListener("input", () => placeGroupedCaret(short));
       short.addEventListener("change", () => writeQuietBalance(account, short));
     } else short.textContent = `${formatAmount(account.bal)} ₲`;
     const full = document.createElement("span");
@@ -839,6 +899,7 @@ function renderRows() {
     body.append(swipe);
   });
   $("empty").hidden = state.accounts.length > 0;
+  paintBankTotal();
 }
 
 function showBalancePasswords() {
@@ -929,7 +990,13 @@ function loadSession() {
   try {
     const data = JSON.parse(localStorage.getItem(SESSION) || "null");
     if (!data || !Number.isFinite(data.started) || !Array.isArray(data.opening)) return null;
-    return { id: String(data.id || uid()), started: data.started, opening: data.opening };
+    return {
+      id: String(data.id || uid()),
+      started: data.started,
+      opening: data.opening,
+      present: cleanIdList(data.present, 40),
+      absent: cleanIdList(data.absent, 40),
+    };
   } catch {
     return null;
   }
@@ -1087,66 +1154,329 @@ function catchInterest() {
 
 function paintSessionClock() {
   const clock = $("session-clock");
-  if (!clock || !sessionLive) return;
-  clock.textContent = formatMinutes(Date.now() - sessionLive.started);
+  if (!clock) return;
+  const on = Boolean(sessionLive && viewingSession === sessionLive.id && $("session-view").classList.contains("is-open"));
+  clock.hidden = !on;
+  if (on) clock.textContent = formatMinutes(Date.now() - sessionLive.started);
+}
+
+function sessionById(id) {
+  if (sessionLive && sessionLive.id === id) return { ...sessionLive, live: true };
+  const item = sessions.find((row) => row.id === id);
+  return item ? { ...item, live: false } : null;
+}
+
+function sessionWhen(item) {
+  if (item.live || !item.ended) return `${formatWhen(item.started)} · Active`;
+  return `${formatWhen(item.started)} – ${formatWhen(item.ended)}`;
+}
+
+function personName(id, record) {
+  const account = state.accounts.find((item) => item.id === id);
+  if (account) return account.name;
+  const books = [...(record.opening || []), ...(record.closing || [])];
+  const book = books.find((row) => row && row.id === id);
+  return book ? book.name : "";
+}
+
+function looseBig(value) {
+  const text = String(value ?? "0").replace(/[,\s]/g, "");
+  if (!/^\d+$/.test(text)) return 0n;
+  return BigInt(text);
+}
+
+function bookRows(record) {
+  const opening = record.opening || [];
+  const closing = record.live ? snapshotBooks() : (record.closing || []);
+  const seen = new Set();
+  const rows = [];
+  [...opening, ...closing].forEach((row) => {
+    if (!row || seen.has(row.id)) return;
+    seen.add(row.id);
+    const open = opening.find((book) => book.id === row.id);
+    const close = closing.find((book) => book.id === row.id);
+    const before = looseBig(open ? open.bal : "0");
+    const after = looseBig(close ? close.bal : "0");
+    rows.push({ name: (close || open).name, before, after, diff: after - before });
+  });
+  return rows;
+}
+
+function sessionExchanges(record) {
+  const end = record.live ? Date.now() : Number(record.ended) || record.started;
+  return requests.filter((item) => item.status && item.status !== "pending" && item.ts >= record.started && item.ts <= end);
+}
+
+function setSide(id, on) {
+  const node = $(id);
+  if (!node) return;
+  node.classList.toggle("is-open", on);
+  node.setAttribute("aria-hidden", on ? "false" : "true");
+}
+
+function closeArchives() {
+  ["tax-archive", "earnings", "assets-archive"].forEach((id) => setSide(id, false));
+}
+
+function closeSessionSides() {
+  viewingSession = "";
+  ["session-attend", "session-view", "session-books"].forEach((id) => setSide(id, false));
+}
+
+function sessionListing(item) {
+  const swipe = document.createElement("li");
+  swipe.className = "swipe session-swipe";
+  const actions = document.createElement("div");
+  actions.className = "swipe-actions one";
+  const trash = document.createElement("button");
+  trash.type = "button";
+  trash.className = "swipe-trash";
+  trash.setAttribute("aria-label", "Delete session");
+  trash.innerHTML = trashMarkup();
+  trash.addEventListener("click", (event) => {
+    event.stopPropagation();
+    deleteSession(item.id);
+  });
+  actions.append(trash);
+  const row = document.createElement("div");
+  row.className = "session-row";
+  row.tabIndex = 0;
+  row.setAttribute("role", "button");
+  row.textContent = sessionWhen(item);
+  let startX = 0;
+  let moved = false;
+  row.addEventListener("pointerdown", (event) => {
+    startX = event.clientX;
+    moved = false;
+  });
+  row.addEventListener("pointermove", (event) => {
+    if (Math.abs(event.clientX - startX) > 8) moved = true;
+  });
+  row.addEventListener("click", (event) => {
+    if (moved || row.classList.contains("is-open") || event.target.closest("button")) return;
+    openSessionView(item.id);
+  });
+  row.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    openSessionView(item.id);
+  });
+  swipe.append(actions, row);
+  bindReveal(row, 56, 0);
+  return swipe;
 }
 
 function paintSessions() {
-  const live = $("session-live");
   const idle = $("session-idle");
-  if (!live || !idle) return;
-  const on = Boolean(sessionLive);
-  live.hidden = !on;
-  idle.hidden = on;
-  paintSessionClock();
+  if (idle) idle.hidden = Boolean(sessionLive);
   const list = $("session-list");
+  if (!list) return;
   list.replaceChildren();
-  sessions.forEach((item) => {
+  if (sessionLive) list.append(sessionListing({ ...sessionLive, live: true }));
+  sessions.forEach((item) => list.append(sessionListing(item)));
+  paintSessionClock();
+  paintOpenSession();
+  if ($("session-attend").classList.contains("is-open")) renderAttendance();
+}
+
+function renderAttendance() {
+  const box = $("attend-rows");
+  const empty = $("attend-empty");
+  const start = $("attend-start");
+  if (!box) return;
+  box.replaceChildren();
+  state.accounts.forEach((account) => {
+    const row = document.createElement("div");
+    row.className = "attend-row";
+    const name = document.createElement("span");
+    name.textContent = account.name;
+    const present = document.createElement("button");
+    present.type = "button";
+    present.className = "mark present";
+    present.textContent = "✓";
+    present.setAttribute("aria-label", `Present, ${account.name}`);
+    present.setAttribute("aria-pressed", attendMarks.get(account.id) === "present" ? "true" : "false");
+    present.addEventListener("click", () => setAttend(account.id, "present"));
+    const absent = document.createElement("button");
+    absent.type = "button";
+    absent.className = "mark absent";
+    absent.textContent = "✕";
+    absent.setAttribute("aria-label", `Absent, ${account.name}`);
+    absent.setAttribute("aria-pressed", attendMarks.get(account.id) === "absent" ? "true" : "false");
+    absent.addEventListener("click", () => setAttend(account.id, "absent"));
+    row.append(name, present, absent);
+    box.append(row);
+  });
+  if (empty) empty.hidden = state.accounts.length > 0;
+  if (start) start.disabled = state.accounts.length === 0;
+}
+
+function setAttend(id, kind) {
+  if (attendMarks.get(id) === kind) attendMarks.delete(id);
+  else attendMarks.set(id, kind);
+  renderAttendance();
+}
+
+function openAttendance() {
+  if (sessionLive) {
+    openSessionView(sessionLive.id);
+    return;
+  }
+  attendMarks = new Map();
+  closeArchives();
+  renderAttendance();
+  setSide("session-books", false);
+  setSide("session-view", false);
+  setSide("session-attend", true);
+}
+
+function fillSessionPeople(record) {
+  const list = $("session-people");
+  const note = $("session-attendance");
+  if (!list || !note) return;
+  list.replaceChildren();
+  const recorded = Array.isArray(record.present) && Array.isArray(record.absent);
+  note.hidden = recorded;
+  if (!recorded) return;
+  const add = (id, kind) => {
+    const name = personName(id, record);
+    if (!name) return;
     const li = document.createElement("li");
-    const title = document.createElement("strong");
-    title.textContent = `${formatWhen(item.started)} to ${formatWhen(item.ended)}`;
-    const length = document.createElement("p");
-    length.className = "quiet";
-    length.textContent = `Lasted ${formatMinutes(item.ended - item.started)}`;
-    li.append(title, length);
-    const opening = item.opening || [];
-    const closing = item.closing || [];
-    const seen = new Set();
-    [...opening, ...closing].forEach((row) => {
-      if (seen.has(row.id)) return;
-      seen.add(row.id);
-      const open = opening.find((book) => book.id === row.id);
-      const close = closing.find((book) => book.id === row.id);
-      const line = document.createElement("p");
-      line.className = "session-book";
-      line.textContent = `${(close || open).name}: ${formatAmount(open ? open.bal : "0")} ₲ → ${formatAmount(close ? close.bal : "0")} ₲`;
-      li.append(line);
-    });
+    const mark = document.createElement("span");
+    mark.className = kind === "present" ? "tick" : "cross";
+    mark.textContent = kind === "present" ? "✓" : "✕";
+    li.append(mark, document.createTextNode(name));
     list.append(li);
+  };
+  record.present.forEach((id) => add(id, "present"));
+  record.absent.forEach((id) => add(id, "absent"));
+  if (!list.childElementCount) {
+    note.hidden = false;
+    note.textContent = "Nobody was marked present.";
+  } else note.textContent = "Attendance was not recorded.";
+}
+
+function fillSessionBooks(id) {
+  const record = sessionById(id);
+  const box = $("session-book-rows");
+  if (!record || !box) return;
+  box.replaceChildren();
+  const rows = bookRows(record);
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "No balances were recorded.";
+    box.append(empty);
+    return;
+  }
+  rows.forEach((row) => {
+    const block = document.createElement("div");
+    block.className = "book-line";
+    const name = document.createElement("p");
+    name.textContent = row.name;
+    const change = document.createElement("p");
+    change.textContent = `${formatLoose(row.before)} ₲ → ${formatLoose(row.after)} ₲`;
+    const result = document.createElement("p");
+    if (row.diff > 0n) {
+      result.className = "gain";
+      result.textContent = `Profit ${formatLoose(row.diff)} ₲`;
+    } else if (row.diff < 0n) {
+      result.className = "loss";
+      result.textContent = `Loss ${formatLoose(-row.diff)} ₲`;
+    } else result.textContent = "No change";
+    block.append(name, change, result);
+    box.append(block);
   });
 }
 
+function fillSessionView(id) {
+  const record = sessionById(id);
+  if (!record) {
+    closeSessionSides();
+    return;
+  }
+  viewingSession = id;
+  $("session-view-title").textContent = record.live ? "Session active" : "Session";
+  $("session-when").textContent = sessionWhen(record);
+  $("end-session").hidden = !record.live;
+  fillSessionPeople(record);
+  const list = $("session-exchanges");
+  const empty = $("session-exchange-empty");
+  const matches = sessionExchanges(record);
+  list.replaceChildren();
+  matches.forEach((item) => list.append(exchangeCard(item)));
+  if (empty) empty.hidden = matches.length > 0;
+  paintSessionClock();
+}
+
+function paintOpenSession() {
+  const page = $("session-view");
+  if (!page || !page.classList.contains("is-open") || !viewingSession) return;
+  fillSessionView(viewingSession);
+  if ($("session-books").classList.contains("is-open")) fillSessionBooks(viewingSession);
+}
+
+function openSessionView(id) {
+  if (!sessionById(id)) return;
+  closeArchives();
+  setSide("session-attend", false);
+  setSide("session-books", false);
+  fillSessionView(id);
+  setSide("session-view", true);
+}
+
+function openSessionBooks() {
+  if (!viewingSession) return;
+  fillSessionBooks(viewingSession);
+  setSide("session-books", true);
+}
+
+function deleteSession(id) {
+  if (sessionLive && sessionLive.id === id) {
+    sessionLive = null;
+    interest.mark = 0;
+    saveSession();
+    saveInterest();
+    paintInterest();
+  }
+  const index = sessions.findIndex((item) => item.id === id);
+  if (index >= 0) sessions.splice(index, 1);
+  saveSessions();
+  if (viewingSession === id) closeSessionSides();
+  paintSessions();
+}
+
 function startSession() {
-  if (sessionLive) return;
-  sessionLive = { id: uid(), started: Date.now(), opening: snapshotBooks() };
+  if (sessionLive || !state.accounts.length) return;
+  const present = [];
+  const absent = [];
+  state.accounts.forEach((account) => {
+    if (attendMarks.get(account.id) === "present") present.push(account.id);
+    else if (attendMarks.get(account.id) === "absent") absent.push(account.id);
+  });
+  sessionLive = { id: uid(), started: Date.now(), opening: snapshotBooks(), present, absent };
   saveSession();
   if (interest.joined) {
     interest.mark = Date.now();
     saveInterest();
   }
+  setSide("session-attend", false);
   paintSessions();
   paintInterest();
 }
 
 function endSession() {
   if (!sessionLive) return;
+  const id = sessionLive.id;
   catchInterest();
   sessions.unshift({
-    id: sessionLive.id,
+    id,
     started: sessionLive.started,
     ended: Date.now(),
     opening: sessionLive.opening,
     closing: snapshotBooks(),
+    present: sessionLive.present || [],
+    absent: sessionLive.absent || [],
   });
   sessions.splice(40);
   sessionLive = null;
@@ -1156,6 +1486,7 @@ function endSession() {
   saveInterest();
   paintSessions();
   paintInterest();
+  if (viewingSession === id) openSessionView(id);
 }
 
 function paintInterest() {
@@ -1424,7 +1755,7 @@ function render() {
   renderGovernment();
   fillTaxAccount();
   fillInterestAccount();
-  fillLeaderboard();
+  fillBoardSkips(false);
   fillInterestSkips(false);
   paintSessions();
   renderInterestRows();
@@ -2505,7 +2836,7 @@ function fillSettings() {
   fillTaxAccount();
   fillInterestAccount();
   fillInterestSkips(true);
-  fillLeaderboard();
+  fillBoardSkips(true);
 }
 
 function fillInterestAccount() {
@@ -2526,24 +2857,23 @@ function fillInterestAccount() {
   if ([...select.options].some((option) => option.value === current)) select.value = current;
 }
 
-function fillLeaderboard() {
-  const chosen = state.settings.leaderboard || [];
-  ["board-1", "board-2", "board-3"].forEach((id, index) => {
-    const select = $(id);
-    if (!select) return;
-    const current = select.value || chosen[index] || "";
-    select.replaceChildren();
-    const blank = document.createElement("option");
-    blank.value = "";
-    blank.textContent = "Choose an account";
-    select.append(blank);
-    state.accounts.forEach((account) => {
-      const option = document.createElement("option");
-      option.value = account.id;
-      option.textContent = account.name;
-      select.append(option);
-    });
-    if ([...select.options].some((option) => option.value === current)) select.value = current;
+function fillBoardSkips(fromSaved) {
+  const box = $("board-skips");
+  if (!box) return;
+  const saved = new Set(state.settings.boardSkip || []);
+  const picked = fromSaved || box.childElementCount === 0
+    ? saved
+    : new Set([...box.querySelectorAll("input:checked")].map((input) => input.value));
+  box.replaceChildren();
+  state.accounts.forEach((account) => {
+    const label = document.createElement("label");
+    label.className = "check";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = account.id;
+    input.checked = picked.has(account.id);
+    label.append(input, document.createTextNode(account.name));
+    box.append(label);
   });
 }
 
@@ -2915,7 +3245,7 @@ $("settings-form").addEventListener("submit", (event) => {
     taxAccountId: $("tax-account").value || "",
     interestAccountId: $("interest-account").value || "",
     skipInterest: [...document.querySelectorAll("#interest-skips input:checked")].map((input) => input.value),
-    leaderboard: cleanLeaderboard(["board-1", "board-2", "board-3"].map((id) => $(id).value)),
+    boardSkip: [...document.querySelectorAll("#board-skips input:checked")].map((input) => input.value),
   };
   saveAccounts();
   fillSettings();
@@ -2929,10 +3259,12 @@ document.querySelectorAll(".tabs button").forEach((button) => {
       $(id).classList.remove("is-open");
       $(id).setAttribute("aria-hidden", "true");
     });
+    closeSessionSides();
     showTab(button.dataset.tab);
   });
 });
 function openArchive(id) {
+  closeSessionSides();
   ["tax-archive", "earnings", "assets-archive"].forEach((name) => {
     const node = $(name);
     const on = name === id;
@@ -2969,7 +3301,12 @@ $("asset-buy-confirm").addEventListener("click", confirmAssetBuy);
 $("asset-buy").addEventListener("click", (event) => {
   if (event.target === $("asset-buy")) closeAssetBuy();
 });
-$("start-session").addEventListener("click", startSession);
+$("start-session").addEventListener("click", openAttendance);
+$("attend-back").addEventListener("click", () => setSide("session-attend", false));
+$("attend-start").addEventListener("click", startSession);
+$("session-back").addEventListener("click", closeSessionSides);
+$("session-books-go").addEventListener("click", openSessionBooks);
+$("books-back").addEventListener("click", () => setSide("session-books", false));
 $("end-session").addEventListener("click", endSession);
 $("open-interest").addEventListener("click", openInterest);
 $("interest-back").addEventListener("click", closeInterest);
