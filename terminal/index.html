@@ -105,6 +105,14 @@
                   <span class="app-icon" aria-hidden="true">€₲</span>
                   <span>Calculator</span>
                 </button>
+                <button type="button" id="open-board" class="app-tile">
+                  <span class="app-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="28" height="28">
+                      <path fill="currentColor" d="M4 16h4v4H4zm6-6h4v10h-4zm6-6h4v16h-4z"/>
+                    </svg>
+                  </span>
+                  <span>Leaderboard</span>
+                </button>
                 <button type="button" id="open-gov" class="app-tile grey">
                   <span class="app-icon" aria-hidden="true">
                     <svg viewBox="0 0 64 48" width="36" height="28">
@@ -119,6 +127,17 @@
                   <span>My Gov Centre</span>
                 </button>
               </div>
+            </div>
+            <div class="pane-board" id="board-pane">
+              <button type="button" id="board-back" class="back">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Back
+              </button>
+              <h1>Leaderboard</h1>
+              <div id="board-top" class="board-top"></div>
+              <ul id="board-rest" class="board-rest"></ul>
             </div>
             <div class="pane-exchange" id="exchange-pane">
               <button type="button" id="exchange-back" class="back">

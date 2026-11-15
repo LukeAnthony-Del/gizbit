@@ -131,6 +131,20 @@
             <p class="field"><span>Skip interest</span></p>
             <div id="interest-skips"></div>
             <p class="quiet">Checked accounts do not earn the 0.05% interest.</p>
+            <p class="field"><span>Leaderboard</span></p>
+            <label class="field">
+              <span>1st</span>
+              <select id="board-1"></select>
+            </label>
+            <label class="field">
+              <span>2nd</span>
+              <select id="board-2"></select>
+            </label>
+            <label class="field">
+              <span>3rd</span>
+              <select id="board-3"></select>
+            </label>
+            <p class="quiet">These three show at the top of the terminal leaderboard.</p>
             <p id="settings-error" class="error" role="status"></p>
             <button type="submit" class="btn">Save settings</button>
           </form>
@@ -445,6 +459,12 @@
     </div>
 
     <audio id="success-sound" src="success.mp3" preload="auto"></audio>
+    <div id="syncing" class="sheet syncing" hidden>
+      <div class="sync-card">
+        <p class="sync-dots" aria-hidden="true"><span></span><span></span><span></span></p>
+        <p>Syncing with terminal</p>
+      </div>
+    </div>
     <button type="button" id="incoming" class="incoming" hidden></button>
     <p id="toast" class="toast" role="status" hidden></p>
     <noscript>Gizbit Network needs JavaScript.</noscript>

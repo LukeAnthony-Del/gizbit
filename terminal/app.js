@@ -17,7 +17,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.21.000";
+const VERSION = "2.22.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 const WAIT_EXCHANGE = "gizbit-terminal-wait-exchange";
@@ -115,6 +115,7 @@ function defaultSettings() {
     taxAccountId: "",
     interestAccountId: "",
     skipInterest: [],
+    leaderboard: [],
   };
 }
 
@@ -146,7 +147,19 @@ function normalizeSettings(value) {
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
       : [],
+    leaderboard: cleanLeaderboard(value?.leaderboard),
   };
+}
+
+function cleanLeaderboard(value) {
+  const seen = new Set();
+  const ids = [];
+  (Array.isArray(value) ? value : []).forEach((id) => {
+    if (typeof id !== "string" || !/^[\w-]{8,}$/.test(id) || seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  });
+  return ids.slice(0, 3);
 }
 
 function activeSettings() {
@@ -260,11 +273,13 @@ async function posted(id) {
   }
 }
 
-function publishPing() {
+function publishPing(sync) {
   const now = Date.now();
   if (now - lastPing < 5000) return Promise.resolve();
   lastPing = now;
-  return publish("Checking accounts", { v: 1, kind: "ping", id: uid(), ts: now });
+  const payload = { v: 1, kind: "ping", id: uid(), ts: now };
+  if (sync) payload.sync = true;
+  return publish(sync ? "Syncing with terminal" : "Checking accounts", payload);
 }
 
 function setLink(on) {
@@ -796,6 +811,58 @@ function renderBank() {
   renderHistory();
   renderPresets();
   revealSteps();
+  renderBoard();
+}
+
+function renderBoard() {
+  const top = $("board-top");
+  const rest = $("board-rest");
+  if (!top || !rest) return;
+  const accounts = ledger?.accounts || [];
+  const picked = activeSettings().leaderboard
+    .map((id) => accounts.find((account) => account.id === id))
+    .filter(Boolean);
+  const places = ["1st", "2nd", "3rd"];
+  top.replaceChildren();
+  if (!picked.length) {
+    const empty = document.createElement("p");
+    empty.className = "quiet";
+    empty.textContent = "The network has not chosen the top three yet.";
+    top.append(empty);
+  }
+  picked.forEach((account, index) => {
+    const card = document.createElement("article");
+    card.className = "board-place";
+    const place = document.createElement("p");
+    place.className = "board-rank";
+    place.textContent = places[index] || "";
+    const name = document.createElement("p");
+    name.className = "who";
+    name.textContent = account.name;
+    const money = document.createElement("p");
+    money.className = "bal";
+    money.textContent = `${formatAmount(account.bal)} ₲`;
+    card.append(place, name, money);
+    top.append(card);
+  });
+  const chosen = new Set(picked.map((account) => account.id));
+  const others = accounts.filter((account) => !chosen.has(account.id)).sort((a, b) => {
+    const left = BigInt(b.bal || "0");
+    const right = BigInt(a.bal || "0");
+    if (left > right) return 1;
+    if (left < right) return -1;
+    return String(a.name).localeCompare(String(b.name));
+  });
+  rest.replaceChildren();
+  others.forEach((account) => {
+    const item = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = account.name;
+    const money = document.createElement("span");
+    money.textContent = `${formatAmount(account.bal)} ₲`;
+    item.append(name, money);
+    rest.append(item);
+  });
 }
 
 function formatDate(ts) {
@@ -1037,7 +1104,7 @@ function showHome() {
   const stage = $("stage");
   stage.classList.remove("is-side");
   stage.scrollLeft = 0;
-  ["exchange", "activity", "calc", "prefs", "gov", "tax"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
+  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
   closeTaxForm();
   if (sessionPh) {
     $("logout").hidden = false;
@@ -1047,7 +1114,7 @@ function showHome() {
 
 function showSide(name) {
   const stage = $("stage");
-  ["exchange", "activity", "calc", "prefs", "gov", "tax"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
+  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
   stage.classList.add("is-side");
   stage.scrollLeft = 0;
   $("logout").hidden = true;
@@ -1781,7 +1848,7 @@ $("sync-phones").addEventListener("click", async () => {
   const before = ledger?.ts || 0;
   lastPing = 0;
   try {
-    await publishPing();
+    await publishPing(true);
     const synced = await waitNewerLedger(before, 8000);
     renderSettingsAccounts();
     toast(synced ? "Synced with the main phone" : "Open Gizbit Network on the main phone, then try again.");
@@ -2806,6 +2873,11 @@ $("fx-swap").addEventListener("click", () => {
   paintRate();
   fitFxAmounts();
 });
+$("open-board").addEventListener("click", () => {
+  renderBoard();
+  showSide("board");
+});
+$("board-back").addEventListener("click", () => showHome());
 $("open-gov").addEventListener("click", () => {
   showGovTab("dash");
   showSide("gov");

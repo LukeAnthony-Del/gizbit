@@ -26,7 +26,7 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.18.000";
+const VERSION = "2.19.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -78,6 +78,7 @@ function defaultSettings() {
     taxAccountId: "",
     interestAccountId: "",
     skipInterest: [],
+    leaderboard: [],
   };
 }
 
@@ -109,7 +110,19 @@ function normalizeSettings(value) {
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
       : [],
+    leaderboard: cleanLeaderboard(value?.leaderboard),
   };
+}
+
+function cleanLeaderboard(value) {
+  const seen = new Set();
+  const ids = [];
+  (Array.isArray(value) ? value : []).forEach((id) => {
+    if (typeof id !== "string" || !/^[\w-]{8,}$/.test(id) || seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  });
+  return ids.slice(0, 3);
 }
 
 function loadList(key) {
@@ -716,7 +729,7 @@ function bindReveal(row, openRight, openLeft) {
   };
   row.addEventListener("pointerdown", (event) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
-    if (event.target.closest("button")) return;
+    if (event.target.closest("button, input")) return;
     startX = event.clientX;
     startY = event.clientY;
     origin = place();
@@ -755,7 +768,28 @@ function bindReveal(row, openRight, openLeft) {
   });
 }
 
+let balanceEdit = false;
+
+function setBalanceHead() {
+  const head = $("bal-head");
+  if (!head) return;
+  head.textContent = balanceEdit ? "Editing balance" : "Current Balance (₲)";
+}
+
+function writeQuietBalance(account, input) {
+  const amount = moneyText(input.value, false);
+  if (amount == null) {
+    input.value = account.bal;
+    return;
+  }
+  account.bal = amount;
+  saveAccounts();
+  const full = input.parentElement && input.parentElement.querySelector(".bal-full");
+  if (full) full.textContent = `${formatFull(amount)} GZBT`;
+}
+
 function renderRows() {
+  if (balanceEdit && document.activeElement && document.activeElement.classList.contains("bal-edit")) return;
   const body = $("rows");
   body.replaceChildren();
   const ranked = state.accounts.slice().sort((a, b) => {
@@ -785,10 +819,16 @@ function renderRows() {
     const type = document.createElement("span");
     type.className = "acct-type";
     type.textContent = account.type;
-    const short = document.createElement("span");
-    short.className = "bal-short";
+    const short = document.createElement(balanceEdit ? "input" : "span");
+    short.className = balanceEdit ? "bal-short bal-edit" : "bal-short";
     short.dataset.pw = account.pw || "";
-    short.textContent = `${formatAmount(account.bal)} ₲`;
+    if (balanceEdit) {
+      short.inputMode = "numeric";
+      short.autocomplete = "off";
+      short.setAttribute("aria-label", `Balance for ${account.name}`);
+      short.value = account.bal;
+      short.addEventListener("change", () => writeQuietBalance(account, short));
+    } else short.textContent = `${formatAmount(account.bal)} ₲`;
     const full = document.createElement("span");
     full.className = "bal-full";
     full.textContent = `${formatFull(account.bal)} GZBT`;
@@ -802,6 +842,7 @@ function renderRows() {
 }
 
 function showBalancePasswords() {
+  if (balanceEdit) return;
   document.body.classList.add("show-passwords");
   const head = $("bal-head");
   if (head) head.textContent = "Password";
@@ -817,6 +858,10 @@ function showBalancePasswords() {
 
 function hideBalancePasswords() {
   document.body.classList.remove("show-passwords");
+  if (balanceEdit) {
+    setBalanceHead();
+    return;
+  }
   const head = $("bal-head");
   if (head) head.textContent = "Current Balance (₲)";
   document.querySelectorAll(".acct").forEach((row) => {
@@ -1379,6 +1424,7 @@ function render() {
   renderGovernment();
   fillTaxAccount();
   fillInterestAccount();
+  fillLeaderboard();
   fillInterestSkips(false);
   paintSessions();
   renderInterestRows();
@@ -1436,6 +1482,7 @@ function handleMessage(data, bucket) {
     if (!body.id || !body.ts || Date.now() - body.ts > 120000) return;
     if (!remember(`ping:${body.id}`)) return;
     bucket.ping = body.id;
+    if (body.sync) bucket.sync = true;
     return;
   }
   if (body.kind === "request") {
@@ -1884,7 +1931,12 @@ async function catchUp() {
   const asked = Boolean(bucket.ping || bucket.applied.length || bucket.requests);
   if (!asked && announced) return;
   if (!state.accounts.length && !bucket.applied.length && !bucket.requests) return;
-  await publishLedger(bucket.applied, bucket.ping || "");
+  if (bucket.sync) showSyncing();
+  try {
+    await publishLedger(bucket.applied, bucket.ping || "");
+  } finally {
+    if (bucket.sync) hideSyncing();
+  }
   announced = true;
   lastAnnounce = Date.now();
   if (streamOpen) setStatus("Listening for the other phone");
@@ -1914,12 +1966,16 @@ function listen() {
     handleMessage(data, bucket);
     if (!state.accounts.length) return;
     if (!bucket.ping && !bucket.applied.length && !bucket.requests) return;
+    if (bucket.sync) showSyncing();
     publishLedger(bucket.applied, bucket.ping || "")
       .then(() => {
         lastAnnounce = Date.now();
         if (streamOpen) setStatus("Listening for the other phone");
       })
-      .catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
+      .catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."))
+      .finally(() => {
+        if (bucket.sync) hideSyncing();
+      });
   };
 }
 
@@ -2449,6 +2505,7 @@ function fillSettings() {
   fillTaxAccount();
   fillInterestAccount();
   fillInterestSkips(true);
+  fillLeaderboard();
 }
 
 function fillInterestAccount() {
@@ -2467,6 +2524,27 @@ function fillInterestAccount() {
     select.append(option);
   });
   if ([...select.options].some((option) => option.value === current)) select.value = current;
+}
+
+function fillLeaderboard() {
+  const chosen = state.settings.leaderboard || [];
+  ["board-1", "board-2", "board-3"].forEach((id, index) => {
+    const select = $(id);
+    if (!select) return;
+    const current = select.value || chosen[index] || "";
+    select.replaceChildren();
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "Choose an account";
+    select.append(blank);
+    state.accounts.forEach((account) => {
+      const option = document.createElement("option");
+      option.value = account.id;
+      option.textContent = account.name;
+      select.append(option);
+    });
+    if ([...select.options].some((option) => option.value === current)) select.value = current;
+  });
 }
 
 function fillInterestSkips(fromSaved) {
@@ -2837,6 +2915,7 @@ $("settings-form").addEventListener("submit", (event) => {
     taxAccountId: $("tax-account").value || "",
     interestAccountId: $("interest-account").value || "",
     skipInterest: [...document.querySelectorAll("#interest-skips input:checked")].map((input) => input.value),
+    leaderboard: cleanLeaderboard(["board-1", "board-2", "board-3"].map((id) => $(id).value)),
   };
   saveAccounts();
   fillSettings();
@@ -2907,6 +2986,7 @@ stopOverscroll(document.querySelector(".sheet-card"));
 lockGestures();
 setupInstall();
 fillSettings();
+bindBalanceColumn();
 ["gizbit-network-name", "gizbit-network-pair", "gizbit-phones", "gizbit-network-device"].forEach((key) => localStorage.removeItem(key));
 $("app-version").textContent = VERSION;
 absorbStoredSigns();
@@ -2930,6 +3010,57 @@ catchUp()
     maybeOpenLinked();
     listen();
   });
+
+let syncDepth = 0;
+
+function showSyncing() {
+  syncDepth += 1;
+  const sheet = $("syncing");
+  if (sheet) sheet.hidden = false;
+}
+
+function hideSyncing() {
+  syncDepth = Math.max(0, syncDepth - 1);
+  if (syncDepth) return;
+  const sheet = $("syncing");
+  if (sheet) sheet.hidden = true;
+}
+
+function bindBalanceColumn() {
+  const head = $("bal-head");
+  if (!head) return;
+  let timer = 0;
+  let startX = 0;
+  let startY = 0;
+  head.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    startX = event.clientX;
+    startY = event.clientY;
+    clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = 0;
+      balanceEdit = !balanceEdit;
+      renderRows();
+      setBalanceHead();
+    }, 400);
+  });
+  head.addEventListener("pointermove", (event) => {
+    if (!timer) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    if (dx * dx + dy * dy > 100) {
+      clearTimeout(timer);
+      timer = 0;
+    }
+  });
+  const cancel = () => {
+    clearTimeout(timer);
+    timer = 0;
+  };
+  head.addEventListener("pointerup", cancel);
+  head.addEventListener("pointercancel", cancel);
+  head.addEventListener("contextmenu", (event) => event.preventDefault());
+}
 
 function wakeLink() {
   if (!streamOpen || Date.now() - lastStream > 25000) listen();
