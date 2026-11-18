@@ -19,7 +19,8 @@
   color-scheme: light;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+input, textarea { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
 html, body { height: 100%; }
 html {
   background: var(--navy);
@@ -556,6 +557,7 @@ body.standalone .hint { display: none; }
   border-bottom: 1px solid var(--line);
   font-weight: 700;
 }
+.people li.attend-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px 72px; }
 .people .tick { color: #1f7a3a; font-weight: 800; }
 .people .cross { color: #a33b3b; font-weight: 800; }
 .book-line { padding: 12px 0; border-bottom: 1px solid var(--line); }
@@ -572,15 +574,33 @@ body.standalone .hint { display: none; }
   font-weight: 700;
 }
 .session-row.is-open { transform: translateX(56px); }
-.bank-total {
+.bank-capacity { margin-top: 8px; padding: 12px 10px 4px; border-top: 1px solid var(--line); font-weight: 800; }
+.book-name { display: flex; align-items: center; gap: 8px; font-weight: 800; }
+.arrow.up { color: #1f7a3a; }
+.arrow.down { color: #a33b3b; }
+.arrow.flat { color: #8a9098; }
+.session-row { gap: 8px; }
+.session-clock-icon { width: 18px; height: 18px; color: var(--navy); flex: none; }
+.session-name { min-width: 0; }
+.session-date { margin-left: auto; color: var(--muted); font-weight: 650; white-space: nowrap; }
+.game-card {
   display: grid;
-  gap: 2px;
-  margin: 18px 0 0;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-  font-weight: 800;
+  gap: 8px;
+  padding: 12px;
+  margin-top: 10px;
+  border-radius: 14px;
+  background: #161616;
 }
-.bank-total span:last-child { color: var(--navy); font-variant-numeric: tabular-nums; }
+.game-card p { margin: 0; }
+#gaming-archive input {
+  width: 100%;
+  background: #111;
+  color: #fff;
+  border: 1px solid #555;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+}
 .acct > span:first-child {
   grid-column: 1;
   grid-row: 1 / span 2;

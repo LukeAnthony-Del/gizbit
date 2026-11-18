@@ -41,13 +41,16 @@
           </div>
           <div id="rows"></div>
           <p id="empty" class="empty">No accounts yet. Add one to start at 0 gizbits.</p>
-          <p id="bank-total" class="bank-total"><span id="bank-count"></span><span id="bank-sum"></span></p>
+          <div id="bank-capacity" class="acct bank-capacity">
+            <span>Total Bank Capacity</span>
+            <span id="bank-sum" class="bal-short"></span>
+          </div>
           <button type="button" id="add-account" class="btn add-account">+ Add account</button>
         </section>
 
         <section id="sessions" class="page" role="tabpanel" hidden>
           <div class="page-head">
-            <h1>Sessions</h1>
+            <h1>Registered Sessions</h1>
           </div>
           <hr />
           <div id="session-idle">
@@ -119,6 +122,11 @@
             </label>
             <p class="quiet">When a terminal files a return, the tax is moved into this account.</p>
             <label class="field">
+              <span>Gaming cash goes to</span>
+              <select id="gaming-account"></select>
+            </label>
+            <p class="quiet">Cash ins are paid into this account. Cash outs are paid from it.</p>
+            <label class="field">
               <span>Interest is paid from</span>
               <select id="interest-account"></select>
             </label>
@@ -188,6 +196,7 @@
             <button type="button" id="view-taxes" class="btn">View all Tax returns</button>
             <button type="button" id="view-earnings" class="btn">Government earnings</button>
             <button type="button" id="view-assets" class="btn">Assets</button>
+            <button type="button" id="view-gaming" class="btn">Gaming Profits</button>
           </div>
         </section>
       </main>
@@ -344,7 +353,7 @@
         <div class="archive-body">
           <p id="session-when" class="quiet"></p>
           <p id="session-clock" class="session-clock" hidden>0:00</p>
-          <h2>Who was there</h2>
+          <h2 id="session-attended">Attended</h2>
           <p id="session-attendance" class="quiet" hidden>Attendance was not recorded.</p>
           <ul id="session-people" class="people"></ul>
           <button type="button" id="session-books-go" class="btn">Profits and losses</button>
@@ -366,6 +375,21 @@
         </div>
         <div class="archive-body">
           <div id="session-book-rows"></div>
+        </div>
+      </section>
+      <section id="gaming-archive" class="archive" aria-hidden="true">
+        <div class="archive-head">
+          <button type="button" id="gaming-back" class="archive-back">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Back
+          </button>
+          <h1>Gaming Profits</h1>
+        </div>
+        <div class="archive-body">
+          <p id="gaming-empty" class="empty">Cash ins from a terminal show up here.</p>
+          <div id="gaming-list"></div>
         </div>
       </section>
       <section id="tax-archive" class="archive" aria-hidden="true">

@@ -13,6 +13,7 @@ const INTEREST = "gizbit-interest";
 const INTEREST_MS = 5 * 60 * 60 * 1000;
 const LISTED = "gizbit-assets";
 const ASSET_BUYS = "gizbit-asset-buys";
+const PLAYS = "gizbit-gaming";
 const SEEN = "gizbit-seen";
 const CURSOR = "gizbit-cursor";
 const MAX = 10n ** 18n;
@@ -26,7 +27,7 @@ const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.20.000";
+const VERSION = "2.21.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -35,10 +36,12 @@ const passNotes = loadList(PASSNOTES);
 const taxes = loadList(TAXES);
 const assets = loadList(LISTED);
 const assetBuys = loadList(ASSET_BUYS);
+const plays = loadList(PLAYS);
 const sessions = loadList(SESSIONS);
 let sessionLive = loadSession();
 let attendMarks = new Map();
 let viewingSession = "";
+let attendEdit = false;
 let interest = loadInterest();
 const seen = new Set(loadList(SEEN));
 let source = null;
@@ -78,6 +81,7 @@ function defaultSettings() {
     profitThreshold: DEFAULT_PROFIT_THRESHOLD,
     taxTerms: DEFAULT_TAX_TERMS,
     taxAccountId: "",
+    gamingAccountId: "",
     interestAccountId: "",
     skipInterest: [],
     boardSkip: [],
@@ -108,6 +112,7 @@ function normalizeSettings(value) {
     profitThreshold: moneyText(value?.profitThreshold, false) || DEFAULT_PROFIT_THRESHOLD,
     taxTerms: String(value?.taxTerms || DEFAULT_TAX_TERMS).slice(0, 400),
     taxAccountId: typeof value?.taxAccountId === "string" && /^[\w-]{8,}$/.test(value.taxAccountId) ? value.taxAccountId : "",
+    gamingAccountId: typeof value?.gamingAccountId === "string" && /^[\w-]{8,}$/.test(value.gamingAccountId) ? value.gamingAccountId : "",
     interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
@@ -241,7 +246,7 @@ function taxTotals(lines, rates, expenses) {
   return {
     revenue: revenue.toString(),
     vat: vat.toString(),
-    profit: profit.toString(),
+    profit: taxable.toString(),
     expenses: spent.toString(),
     tax: tax.toString(),
     invoice: floorBillion(vat + tax).toString(),
@@ -382,6 +387,15 @@ function publishLedger(applied, answered) {
       if (item.memo) row.memo = String(item.memo).slice(0, 40);
       return row;
     }),
+    plays: plays.slice(0, 20).map((item) => ({
+      id: item.id,
+      accountId: item.accountId,
+      name: item.name,
+      amount: item.amount,
+      cashOut: item.cashOut || "",
+      status: item.status,
+      ts: item.ts,
+    })),
     ts: Date.now(),
   };
   const sent = publish("Balances updated", payload);
@@ -839,12 +853,10 @@ function writeQuietBalance(account, input) {
 }
 
 function paintBankTotal() {
-  const count = $("bank-count");
   const sum = $("bank-sum");
-  if (!count || !sum) return;
+  if (!sum) return;
   const total = state.accounts.reduce((running, account) => running + BigInt(account.bal || "0"), 0n);
-  count.textContent = state.accounts.length === 1 ? "1 account" : `${state.accounts.length} accounts`;
-  sum.textContent = `${formatLoose(total)} GZBT`;
+  sum.textContent = `${formatLoose(total)} ₲`;
 }
 
 function renderRows() {
@@ -1156,8 +1168,8 @@ function paintSessionClock() {
   const clock = $("session-clock");
   if (!clock) return;
   const on = Boolean(sessionLive && viewingSession === sessionLive.id && $("session-view").classList.contains("is-open"));
-  clock.hidden = !on;
-  if (on) clock.textContent = formatMinutes(Date.now() - sessionLive.started);
+  clock.hidden = true;
+  if (on) $("session-when").textContent = sessionLength({ ...sessionLive, live: true });
 }
 
 function sessionById(id) {
@@ -1199,6 +1211,11 @@ function bookRows(record) {
     const after = looseBig(close ? close.bal : "0");
     rows.push({ name: (close || open).name, before, after, diff: after - before });
   });
+  rows.sort((a, b) => {
+    if (a.after > b.after) return -1;
+    if (a.after < b.after) return 1;
+    return String(a.name).localeCompare(String(b.name));
+  });
   return rows;
 }
 
@@ -1215,12 +1232,36 @@ function setSide(id, on) {
 }
 
 function closeArchives() {
-  ["tax-archive", "earnings", "assets-archive"].forEach((id) => setSide(id, false));
+  ["tax-archive", "earnings", "assets-archive", "gaming-archive"].forEach((id) => setSide(id, false));
 }
 
 function closeSessionSides() {
   viewingSession = "";
+  attendEdit = false;
   ["session-attend", "session-view", "session-books"].forEach((id) => setSide(id, false));
+}
+
+function sessionChrono() {
+  const past = sessions.slice().reverse();
+  return sessionLive ? [...past, sessionLive] : past;
+}
+
+function sessionNumber(id) {
+  const index = sessionChrono().findIndex((item) => item.id === id);
+  return index < 0 ? 1 : index + 1;
+}
+
+function sessionDate(ts) {
+  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(ts);
+}
+
+function sessionLength(record) {
+  const end = record.live ? Date.now() : Number(record.ended) || record.started;
+  return `Length ${formatMinutes(end - record.started)}`;
+}
+
+function clockMarkup() {
+  return `<svg class="session-clock-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
 }
 
 function sessionListing(item) {
@@ -1242,7 +1283,14 @@ function sessionListing(item) {
   row.className = "session-row";
   row.tabIndex = 0;
   row.setAttribute("role", "button");
-  row.textContent = sessionWhen(item);
+  row.insertAdjacentHTML("beforeend", clockMarkup());
+  const name = document.createElement("span");
+  name.className = "session-name";
+  name.textContent = `Session ${sessionNumber(item.id)}`;
+  const date = document.createElement("span");
+  date.className = "session-date";
+  date.textContent = sessionDate(item.started);
+  row.append(name, date);
   let startX = 0;
   let moved = false;
   row.addEventListener("pointerdown", (event) => {
@@ -1330,13 +1378,76 @@ function openAttendance() {
   setSide("session-attend", true);
 }
 
+function sessionSource(id) {
+  if (sessionLive && sessionLive.id === id) return sessionLive;
+  return sessions.find((row) => row.id === id) || null;
+}
+
+function attendanceIds(record) {
+  const ids = [];
+  const push = (id) => {
+    if (id && !ids.includes(id)) ids.push(id);
+  };
+  (record.present || []).forEach(push);
+  (record.absent || []).forEach(push);
+  (record.opening || []).forEach((row) => push(row.id));
+  (record.closing || []).forEach((row) => push(row.id));
+  state.accounts.forEach((account) => push(account.id));
+  return ids;
+}
+
+function setSessionMark(sessionId, accountId, kind) {
+  const record = sessionSource(sessionId);
+  if (!record) return;
+  if (!Array.isArray(record.present)) record.present = [];
+  if (!Array.isArray(record.absent)) record.absent = [];
+  record.present = record.present.filter((id) => id !== accountId);
+  record.absent = record.absent.filter((id) => id !== accountId);
+  if (kind === "present") record.present.push(accountId);
+  if (kind === "absent") record.absent.push(accountId);
+  if (sessionLive && sessionLive.id === sessionId) saveSession();
+  else saveSessions();
+  fillSessionPeople(sessionById(sessionId));
+}
+
 function fillSessionPeople(record) {
   const list = $("session-people");
   const note = $("session-attendance");
+  const head = $("session-attended");
   if (!list || !note) return;
+  if (head) head.textContent = attendEdit ? "Editing attendance" : "Attended";
   list.replaceChildren();
   const recorded = Array.isArray(record.present) && Array.isArray(record.absent);
+  if (attendEdit) {
+    note.hidden = true;
+    attendanceIds(record).forEach((id) => {
+      const name = personName(id, record);
+      if (!name) return;
+      const row = document.createElement("li");
+      row.className = "attend-row";
+      const label = document.createElement("span");
+      label.textContent = name;
+      const present = document.createElement("button");
+      present.type = "button";
+      present.className = "mark present";
+      present.textContent = "✓";
+      present.setAttribute("aria-label", `Present, ${name}`);
+      present.setAttribute("aria-pressed", (record.present || []).includes(id) ? "true" : "false");
+      present.addEventListener("click", () => setSessionMark(record.id, id, (record.present || []).includes(id) ? "" : "present"));
+      const absent = document.createElement("button");
+      absent.type = "button";
+      absent.className = "mark absent";
+      absent.textContent = "✕";
+      absent.setAttribute("aria-label", `Absent, ${name}`);
+      absent.setAttribute("aria-pressed", (record.absent || []).includes(id) ? "true" : "false");
+      absent.addEventListener("click", () => setSessionMark(record.id, id, (record.absent || []).includes(id) ? "" : "absent"));
+      row.append(label, present, absent);
+      list.append(row);
+    });
+    return;
+  }
   note.hidden = recorded;
+  note.textContent = recorded ? "Nobody was marked present." : "Attendance was not recorded.";
   if (!recorded) return;
   const add = (id, kind) => {
     const name = personName(id, record);
@@ -1350,10 +1461,7 @@ function fillSessionPeople(record) {
   };
   record.present.forEach((id) => add(id, "present"));
   record.absent.forEach((id) => add(id, "absent"));
-  if (!list.childElementCount) {
-    note.hidden = false;
-    note.textContent = "Nobody was marked present.";
-  } else note.textContent = "Attendance was not recorded.";
+  note.hidden = list.childElementCount > 0;
 }
 
 function fillSessionBooks(id) {
@@ -1373,7 +1481,19 @@ function fillSessionBooks(id) {
     const block = document.createElement("div");
     block.className = "book-line";
     const name = document.createElement("p");
-    name.textContent = row.name;
+    name.className = "book-name";
+    const arrow = document.createElement("span");
+    if (row.diff > 0n) {
+      arrow.className = "arrow up";
+      arrow.textContent = "↑";
+    } else if (row.diff < 0n) {
+      arrow.className = "arrow down";
+      arrow.textContent = "↓";
+    } else {
+      arrow.className = "arrow flat";
+      arrow.textContent = "–";
+    }
+    name.append(arrow, document.createTextNode(row.name));
     const change = document.createElement("p");
     change.textContent = `${formatLoose(row.before)} ₲ → ${formatLoose(row.after)} ₲`;
     const result = document.createElement("p");
@@ -1395,9 +1515,10 @@ function fillSessionView(id) {
     closeSessionSides();
     return;
   }
+  if (viewingSession !== id) attendEdit = false;
   viewingSession = id;
-  $("session-view-title").textContent = record.live ? "Session active" : "Session";
-  $("session-when").textContent = sessionWhen(record);
+  $("session-view-title").textContent = `Session ${sessionNumber(id)}`;
+  $("session-when").textContent = sessionLength(record);
   $("end-session").hidden = !record.live;
   fillSessionPeople(record);
   const list = $("session-exchanges");
@@ -1754,12 +1875,14 @@ function render() {
   renderRequests();
   renderGovernment();
   fillTaxAccount();
+  fillGamingAccount();
   fillInterestAccount();
   fillBoardSkips(false);
   fillInterestSkips(false);
   paintSessions();
   renderInterestRows();
   renderAssetList();
+  renderGaming();
 }
 
 function showTab(name) {
@@ -1818,6 +1941,10 @@ function handleMessage(data, bucket) {
   }
   if (body.kind === "request") {
     if (takeRequest(body)) bucket.requests = true;
+    return;
+  }
+  if (body.kind === "gaming") {
+    if (takeGaming(body)) bucket.requests = true;
     return;
   }
   if (body.kind === "transfer") {
@@ -2528,10 +2655,229 @@ function takeRequest(req) {
   return true;
 }
 
-function showIncoming(text) {
+function savePlays() {
+  localStorage.setItem(PLAYS, JSON.stringify(plays.slice(0, 40)));
+}
+
+function takeGaming(body) {
+  if (!body || typeof body.id !== "string" || !remember(body.id)) return false;
+  const account = state.accounts.find((item) => item.id === body.accountId);
+  const amount = parseAmount(body.amount);
+  if (!account || amount == null || body.ph !== account.ph) {
+    publishReject(body.id, account ? "The password did not match." : "That account was removed.");
+    return false;
+  }
+  if (BigInt(account.bal) < BigInt(amount)) {
+    publishReject(body.id, "Not enough gizbits.");
+    return false;
+  }
+  plays.unshift({
+    id: body.id,
+    accountId: account.id,
+    name: account.name,
+    amount,
+    cashOut: "",
+    status: "review",
+    sign: cleanSign(body.sign),
+    ts: Date.now(),
+  });
+  plays.splice(40);
+  savePlays();
+  renderGaming();
+  showIncoming(`${account.name} cashed in ${formatAmount(amount)} ₲. Tap to open it.`, "gaming");
+  if ("Notification" in window && Notification.permission === "granted" && navigator.serviceWorker) {
+    navigator.serviceWorker.ready.then((reg) => {
+      reg.showNotification(`Cash in from ${account.name}`, {
+        body: `${formatAmount(amount)} ₲`,
+        tag: body.id,
+        renotify: true,
+        data: { id: body.id },
+      });
+    }).catch(() => {});
+  }
+  return true;
+}
+
+function disburseChips(id) {
+  const play = plays.find((item) => item.id === id && item.status === "review");
+  if (!play) return;
+  const player = state.accounts.find((item) => item.id === play.accountId);
+  const sink = state.accounts.find((item) => item.id === state.settings.gamingAccountId);
+  const card = document.querySelector(`[data-play="${id}"] .game-error`);
+  const fail = (text) => {
+    if (card) card.textContent = text;
+    else toast(text);
+  };
+  if (!player) {
+    fail("That account is no longer on this phone.");
+    return;
+  }
+  if (!sink) {
+    fail("Choose the gaming account in Settings.");
+    return;
+  }
+  if (sink.id === player.id) {
+    fail("Choose a different account for gaming cash.");
+    return;
+  }
+  if (BigInt(player.bal) < BigInt(play.amount)) {
+    fail("Not enough gizbits in that account.");
+    return;
+  }
+  const nextSink = BigInt(sink.bal) + BigInt(play.amount);
+  if (nextSink > MAX) {
+    fail("That gaming account cannot hold that much.");
+    return;
+  }
+  player.bal = (BigInt(player.bal) - BigInt(play.amount)).toString();
+  sink.bal = nextSink.toString();
+  play.status = "chips";
+  requests.unshift({
+    id: play.id,
+    accountId: player.id,
+    name: player.name,
+    op: "transfer",
+    amount: play.amount,
+    status: "done",
+    applied: play.amount,
+    toId: sink.id,
+    toName: sink.name,
+    memo: "Chips",
+    ts: Date.now(),
+    sign: play.sign || [],
+  });
+  requests.splice(80);
+  saveAccounts();
+  saveRequests();
+  savePlays();
+  render();
+  clearNotification(play.id);
+  publishLedger([play.id]).catch(() => setStatus("Saved on this phone. The terminal will catch up when the connection is back."));
+  toast("Chips disbursed");
+}
+
+function cashOutPlay(id) {
+  const play = plays.find((item) => item.id === id && item.status === "chips");
+  const input = document.querySelector(`[data-play="${id}"] input`);
+  const card = document.querySelector(`[data-play="${id}"] .game-error`);
+  const fail = (text) => {
+    if (card) card.textContent = text;
+  };
+  if (!play || !input) return;
+  if (card) card.textContent = "";
+  const amount = moneyText(input.value, false);
+  if (amount == null) {
+    fail("Enter how much they are cashing out.");
+    return;
+  }
+  const player = state.accounts.find((item) => item.id === play.accountId);
+  const sink = state.accounts.find((item) => item.id === state.settings.gamingAccountId);
+  if (!player || !sink) {
+    fail("That account is no longer on this phone.");
+    return;
+  }
+  if (BigInt(sink.bal) < BigInt(amount)) {
+    fail("The gaming account does not have enough gizbits.");
+    return;
+  }
+  const nextPlayer = BigInt(player.bal) + BigInt(amount);
+  if (nextPlayer > MAX) {
+    fail("That account cannot hold that much.");
+    return;
+  }
+  sink.bal = (BigInt(sink.bal) - BigInt(amount)).toString();
+  player.bal = nextPlayer.toString();
+  play.status = "out";
+  play.cashOut = amount;
+  if (amount !== "0") {
+    requests.unshift({
+      id: `${play.id}-out`,
+      accountId: sink.id,
+      name: sink.name,
+      op: "transfer",
+      amount,
+      status: "done",
+      applied: amount,
+      toId: player.id,
+      toName: player.name,
+      memo: "Cash out",
+      ts: Date.now(),
+    });
+    requests.splice(80);
+    saveRequests();
+  }
+  saveAccounts();
+  savePlays();
+  render();
+  publishLedger([]).catch(() => setStatus("Saved on this phone. The terminal will catch up when the connection is back."));
+  toast("Cash out saved");
+}
+
+function renderGaming() {
+  const list = $("gaming-list");
+  const empty = $("gaming-empty");
+  if (!list || !empty) return;
+  if (document.activeElement && document.activeElement.closest("#gaming-list")) return;
+  list.replaceChildren();
+  empty.hidden = plays.length > 0;
+  plays.forEach((play) => {
+    const card = document.createElement("article");
+    card.className = "game-card";
+    card.dataset.play = play.id;
+    const title = document.createElement("p");
+    title.textContent = `${play.name} cashed in ${formatAmount(play.amount)} ₲`;
+    card.append(title);
+    if (play.status === "review") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn";
+      button.textContent = "Chips disbursed";
+      button.addEventListener("click", () => disburseChips(play.id));
+      card.append(button);
+    } else if (play.status === "chips") {
+      const label = document.createElement("label");
+      label.className = "field";
+      const span = document.createElement("span");
+      span.textContent = "Cashing out";
+      const input = document.createElement("input");
+      input.inputMode = "numeric";
+      input.autocomplete = "off";
+      input.placeholder = "Amount";
+      label.append(span, input);
+      const save = document.createElement("button");
+      save.type = "button";
+      save.className = "btn";
+      save.textContent = "Save cash out";
+      save.addEventListener("click", () => cashOutPlay(play.id));
+      card.append(label, save);
+    } else {
+      const done = document.createElement("p");
+      const out = BigInt(play.cashOut || "0");
+      const inn = BigInt(play.amount || "0");
+      const word = out > inn ? `Won ${formatLoose(out - inn)} ₲` : out < inn ? `Lost ${formatLoose(inn - out)} ₲` : "Even";
+      done.textContent = `Cashed out ${formatLoose(out)} ₲ · ${word}`;
+      card.append(done);
+    }
+    const error = document.createElement("p");
+    error.className = "game-error error";
+    card.append(error);
+    if (play.sign && play.sign.length) {
+      const sign = document.createElement("button");
+      sign.type = "button";
+      sign.className = "btn ghost";
+      sign.textContent = "Signature";
+      sign.addEventListener("click", () => showSignature(play));
+      card.append(sign);
+    }
+    list.append(card);
+  });
+}
+
+function showIncoming(text, dest) {
   const node = $("incoming");
   if (!node) return;
   node.textContent = text;
+  node.dataset.goto = dest || "";
   node.hidden = false;
   playSuccess();
 }
@@ -2834,6 +3180,7 @@ function fillSettings() {
   $("profit-threshold").value = state.settings.profitThreshold;
   $("tax-terms").value = state.settings.taxTerms;
   fillTaxAccount();
+  fillGamingAccount();
   fillInterestAccount();
   fillInterestSkips(true);
   fillBoardSkips(true);
@@ -2915,6 +3262,24 @@ function fillTaxAccount() {
   if ([...select.options].some((option) => option.value === current)) select.value = current;
 }
 
+function fillGamingAccount() {
+  const select = $("gaming-account");
+  if (!select) return;
+  const current = select.value || state.settings.gamingAccountId || "";
+  select.replaceChildren();
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "Choose an account";
+  select.append(blank);
+  state.accounts.forEach((account) => {
+    const option = document.createElement("option");
+    option.value = account.id;
+    option.textContent = account.name;
+    select.append(option);
+  });
+  if ([...select.options].some((option) => option.value === current)) select.value = current;
+}
+
 function bindViewport() {
   const apply = () => {
     const viewport = window.visualViewport;
@@ -2959,6 +3324,10 @@ function lockGestures() {
   document.addEventListener("wheel", (event) => {
     if (event.ctrlKey) event.preventDefault();
   }, { passive: false });
+  document.addEventListener("contextmenu", (event) => {
+    if (event.target.closest("input, textarea")) return;
+    event.preventDefault();
+  });
 }
 
 function setupInstall() {
@@ -3111,7 +3480,15 @@ $("notify-go").addEventListener("click", async () => {
   renderRequests();
 });
 $("incoming").addEventListener("click", () => {
+  const dest = $("incoming").dataset.goto || "";
   $("incoming").hidden = true;
+  $("incoming").dataset.goto = "";
+  if (dest === "gaming") {
+    showTab("government");
+    renderGaming();
+    openArchive("gaming-archive");
+    return;
+  }
   showTab("home");
 });
 $("review-no").addEventListener("click", closeReview);
@@ -3138,8 +3515,10 @@ function deleteEverything() {
   localStorage.removeItem(INTEREST);
   assets.splice(0, assets.length);
   assetBuys.splice(0, assetBuys.length);
+  plays.splice(0, plays.length);
   localStorage.removeItem(LISTED);
   localStorage.removeItem(ASSET_BUYS);
+  localStorage.removeItem(PLAYS);
   ["gizbit-network-name", "gizbit-network-pair", "gizbit-phones", "gizbit-network-device"].forEach((key) => localStorage.removeItem(key));
   saveAccounts();
   saveRequests();
@@ -3243,6 +3622,7 @@ $("settings-form").addEventListener("submit", (event) => {
     profitThreshold,
     taxTerms: $("tax-terms").value.trim().slice(0, 400) || DEFAULT_TAX_TERMS,
     taxAccountId: $("tax-account").value || "",
+    gamingAccountId: $("gaming-account").value || "",
     interestAccountId: $("interest-account").value || "",
     skipInterest: [...document.querySelectorAll("#interest-skips input:checked")].map((input) => input.value),
     boardSkip: [...document.querySelectorAll("#board-skips input:checked")].map((input) => input.value),
@@ -3255,7 +3635,7 @@ $("settings-form").addEventListener("submit", (event) => {
 document.querySelectorAll(".tabs button").forEach((button) => {
   button.addEventListener("click", () => {
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().then(() => renderRequests());
-    ["tax-archive", "earnings", "assets-archive"].forEach((id) => {
+    ["tax-archive", "earnings", "assets-archive", "gaming-archive"].forEach((id) => {
       $(id).classList.remove("is-open");
       $(id).setAttribute("aria-hidden", "true");
     });
@@ -3265,7 +3645,7 @@ document.querySelectorAll(".tabs button").forEach((button) => {
 });
 function openArchive(id) {
   closeSessionSides();
-  ["tax-archive", "earnings", "assets-archive"].forEach((name) => {
+  ["tax-archive", "earnings", "assets-archive", "gaming-archive"].forEach((name) => {
     const node = $(name);
     const on = name === id;
     node.classList.toggle("is-open", on);
@@ -3284,6 +3664,11 @@ $("view-assets").addEventListener("click", () => {
 $("tax-archive-back").addEventListener("click", () => openArchive(""));
 $("earnings-back").addEventListener("click", () => openArchive(""));
 $("assets-back").addEventListener("click", () => openArchive(""));
+$("view-gaming").addEventListener("click", () => {
+  renderGaming();
+  openArchive("gaming-archive");
+});
+$("gaming-back").addEventListener("click", () => openArchive(""));
 $("list-asset").addEventListener("click", () => {
   $("asset-error").textContent = "";
   $("asset-sheet").hidden = false;
@@ -3324,6 +3709,8 @@ lockGestures();
 setupInstall();
 fillSettings();
 bindBalanceColumn();
+bindAttendHold($("session-attended"));
+bindAttendHold($("session-people"));
 ["gizbit-network-name", "gizbit-network-pair", "gizbit-phones", "gizbit-network-device"].forEach((key) => localStorage.removeItem(key));
 $("app-version").textContent = VERSION;
 absorbStoredSigns();
@@ -3361,6 +3748,43 @@ function hideSyncing() {
   if (syncDepth) return;
   const sheet = $("syncing");
   if (sheet) sheet.hidden = true;
+}
+
+function bindAttendHold(node) {
+  if (!node) return;
+  let timer = 0;
+  let startX = 0;
+  let startY = 0;
+  node.addEventListener("pointerdown", (event) => {
+    if (event.target.closest("button")) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    startX = event.clientX;
+    startY = event.clientY;
+    clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = 0;
+      if (!viewingSession) return;
+      attendEdit = !attendEdit;
+      const record = sessionById(viewingSession);
+      if (record) fillSessionPeople(record);
+    }, 400);
+  });
+  node.addEventListener("pointermove", (event) => {
+    if (!timer) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    if (dx * dx + dy * dy > 100) {
+      clearTimeout(timer);
+      timer = 0;
+    }
+  });
+  const cancel = () => {
+    clearTimeout(timer);
+    timer = 0;
+  };
+  node.addEventListener("pointerup", cancel);
+  node.addEventListener("pointercancel", cancel);
+  node.addEventListener("contextmenu", (event) => event.preventDefault());
 }
 
 function bindBalanceColumn() {

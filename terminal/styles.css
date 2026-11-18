@@ -164,7 +164,7 @@ main {
   height: 100%;
   overflow: clip;
 }
-.pane-home, .pane-exchange, .pane-activity, .pane-calc, .pane-prefs, .pane-gov, .pane-tax, .pane-board {
+.pane-home, .pane-exchange, .pane-activity, .pane-calc, .pane-prefs, .pane-gov, .pane-tax, .pane-board, .pane-game {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -179,9 +179,40 @@ main {
   transition: transform 0.35s ease;
 }
 .pane-home { transform: translateX(0); z-index: 1; }
-.pane-exchange, .pane-activity, .pane-calc, .pane-prefs, .pane-gov, .pane-board { transform: translateX(100%); z-index: 2; }
+.pane-exchange, .pane-activity, .pane-calc, .pane-prefs, .pane-gov, .pane-board, .pane-game { transform: translateX(100%); z-index: 2; }
 #stage.is-side > .pane-home { transform: translateX(-100%); }
 #stage.is-side > .is-front { transform: translateX(0%); }
+.pane-game {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 18px 0 0;
+  overflow: hidden;
+}
+.pane-game .back, .pane-game h1 { margin: 0 16px; }
+.pane-game h1 { margin-top: 8px; margin-bottom: 8px; }
+.game-body { flex: 1; min-height: 0; overflow: auto; padding: 0 16px 16px; }
+.game-figure { margin: 0 0 14px; font-size: 28px; font-weight: 800; }
+#game-list { margin-top: 16px; }
+#game-list li span:last-child { white-space: normal; text-align: right; }
+.game-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--line);
+  background: #fff;
+}
+.game-tabs button {
+  border: 0;
+  background: #fff;
+  min-height: 56px;
+  font: inherit;
+  font-weight: 700;
+  color: var(--muted);
+}
+.game-tabs button.is-on { color: var(--navy); }
+.password-line { display: flex; align-items: center; gap: 12px; }
+.password-dots { font-size: 22px; letter-spacing: 2px; font-weight: 800; }
+.password-line .btn { flex: 1; }
 .back {
   justify-self: start;
   display: inline-flex;
@@ -288,6 +319,31 @@ main {
 }
 .board-rank { margin: 0; color: var(--navy); font-size: 13px; font-weight: 800; }
 .board-place .who, .board-place .bal { margin: 0; }
+.board-place .bal, .board-rest li span:last-child, .board-out li span:last-child { white-space: nowrap; flex: none; }
+.board-place.gold {
+  background:
+    linear-gradient(115deg, rgba(255,255,255,.72) 0%, rgba(255,255,255,0) 32%, rgba(255,255,255,.55) 48%, rgba(255,255,255,0) 62%),
+    linear-gradient(160deg, #fff6d0 0%, #e0b03a 40%, #fff1b8 54%, #a67c12 100%);
+  border-color: #8a6a12;
+  color: #3a2a08;
+}
+.board-place.silver {
+  background:
+    linear-gradient(115deg, rgba(255,255,255,.8) 0%, rgba(255,255,255,0) 34%, rgba(255,255,255,.6) 50%, rgba(255,255,255,0) 64%),
+    linear-gradient(160deg, #ffffff 0%, #c5ced6 42%, #f4f7f8 56%, #8e99a4 100%);
+  border-color: #8d98a3;
+  color: #1b2c3a;
+}
+.board-place.bronze {
+  background:
+    linear-gradient(115deg, rgba(255,255,255,.55) 0%, rgba(255,255,255,0) 32%, rgba(255,255,255,.35) 48%, rgba(255,255,255,0) 62%),
+    linear-gradient(160deg, #f6d7b8 0%, #b87333 42%, #e7b48a 56%, #7a451c 100%);
+  border-color: #8c4a1f;
+  color: #3a2412;
+}
+.board-place.gold .board-rank { color: #6a4e10; }
+.board-place.silver .board-rank { color: #4d5966; }
+.board-place.bronze .board-rank { color: #6a3a16; }
 .board-rest { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .board-rest li {
   display: flex;

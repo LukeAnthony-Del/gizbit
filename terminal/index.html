@@ -126,6 +126,16 @@
                   </span>
                   <span>My Gov Centre</span>
                 </button>
+                <button type="button" id="open-game" class="app-tile">
+                  <span class="app-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="28" height="28">
+                      <circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                      <circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+                      <path d="M12 2.4v2.2M12 19.4v2.2M2.4 12h2.2M19.4 12h2.2M5.1 5.1l1.6 1.6M17.3 17.3l1.6 1.6M18.9 5.1l-1.6 1.6M6.7 17.3l-1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                    </svg>
+                  </span>
+                  <span>Gaming Center</span>
+                </button>
               </div>
             </div>
             <div class="pane-board" id="board-pane">
@@ -140,6 +150,47 @@
               <ul id="board-rest" class="board-rest"></ul>
               <h2 id="board-out-title" class="board-out-title" hidden>Not Participating</h2>
               <ul id="board-out" class="board-out"></ul>
+            </div>
+            <div class="pane-game" id="game-pane">
+              <button type="button" id="game-back" class="back">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Back
+              </button>
+              <h1>Gaming Center</h1>
+              <div class="game-body">
+                <section id="game-dash">
+                  <p class="quiet">Money gambled</p>
+                  <p id="game-gambled" class="game-figure">0 ₲</p>
+                  <p class="quiet">Money won</p>
+                  <p id="game-won" class="game-figure">0 ₲</p>
+                  <p class="quiet">Money lost</p>
+                  <p id="game-lost" class="game-figure">0 ₲</p>
+                </section>
+                <section id="game-play" hidden>
+                  <label class="field">
+                    <span>Cash in</span>
+                    <input id="game-amount" inputmode="numeric" autocomplete="off" placeholder="Amount" />
+                  </label>
+                  <p id="game-terms" class="quiet"></p>
+                  <label class="agree"><input id="game-agree" type="checkbox" /> <span>I agree to the terms and conditions</span></label>
+                  <div id="game-sign-block" class="sign-block is-locked">
+                    <div class="sign-head">
+                      <p class="field"><span>Signature</span></p>
+                      <button type="button" id="game-clear-sign" class="pad-clear" aria-label="Clear signature">×</button>
+                    </div>
+                    <canvas id="game-sign" class="pad"></canvas>
+                  </div>
+                  <p id="game-msg" class="error" role="status"></p>
+                  <button type="button" id="game-send" class="btn" disabled>Cash in</button>
+                  <ul id="game-list" class="board-rest"></ul>
+                </section>
+              </div>
+              <nav class="game-tabs" aria-label="Gaming">
+                <button type="button" id="game-tab-dash" class="is-on">Dashboard</button>
+                <button type="button" id="game-tab-play">Play</button>
+              </nav>
             </div>
             <div class="pane-exchange" id="exchange-pane">
               <button type="button" id="exchange-back" class="back">
@@ -288,7 +339,10 @@
                 Back
               </button>
               <h1>Settings</h1>
-              <button type="button" id="change-password" class="btn">Change password</button>
+              <div class="password-line">
+                <span class="password-dots" aria-hidden="true">••••</span>
+                <button type="button" id="change-password" class="btn">Change password</button>
+              </div>
             </div>
             <div class="pane-gov gov-app" id="gov-pane">
               <div class="gov-body">

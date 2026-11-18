@@ -17,7 +17,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.23.000";
+const VERSION = "2.24.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 const WAIT_EXCHANGE = "gizbit-terminal-wait-exchange";
@@ -113,6 +113,7 @@ function defaultSettings() {
     profitThreshold: DEFAULT_PROFIT_THRESHOLD,
     taxTerms: DEFAULT_TAX_TERMS,
     taxAccountId: "",
+    gamingAccountId: "",
     interestAccountId: "",
     skipInterest: [],
     boardSkip: [],
@@ -143,6 +144,7 @@ function normalizeSettings(value) {
     profitThreshold: moneyText(value?.profitThreshold, false) || DEFAULT_PROFIT_THRESHOLD,
     taxTerms: String(value?.taxTerms || DEFAULT_TAX_TERMS).slice(0, 400),
     taxAccountId: typeof value?.taxAccountId === "string" && /^[\w-]{8,}$/.test(value.taxAccountId) ? value.taxAccountId : "",
+    gamingAccountId: typeof value?.gamingAccountId === "string" && /^[\w-]{8,}$/.test(value.gamingAccountId) ? value.gamingAccountId : "",
     interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
@@ -330,6 +332,28 @@ function acceptReset(body) {
   $("login-msg").textContent = "The main phone deleted every account.";
 }
 
+function sanitizePlays(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 40).map((item) => {
+    if (!item || typeof item.id !== "string" || !/^[\w-]{8,}$/.test(item.id)) return null;
+    const amount = moneyText(item.amount, false);
+    if (amount == null) return null;
+    const status = item.status === "review" || item.status === "chips" || item.status === "out" ? item.status : "";
+    if (!status) return null;
+    const cashOut = item.cashOut === "" || item.cashOut == null ? "" : moneyText(item.cashOut, false);
+    if (cashOut == null) return null;
+    return {
+      id: item.id,
+      accountId: typeof item.accountId === "string" ? item.accountId : "",
+      name: String(item.name || "").slice(0, 40),
+      amount,
+      cashOut,
+      status,
+      ts: Number(item.ts) || 0,
+    };
+  }).filter(Boolean);
+}
+
 function acceptLedger(body) {
   if (!body || !Array.isArray(body.accounts) || !body.accounts.length) return;
   const ts = Number(body.ts) || 0;
@@ -346,6 +370,7 @@ function acceptLedger(body) {
     accounts: body.accounts.map(sanitize).filter(Boolean),
     settings: normalizeSettings(body.settings),
     requests: Array.isArray(body.requests) ? body.requests : (ledger?.requests || []),
+    plays: Array.isArray(body.plays) ? sanitizePlays(body.plays) : (ledger?.plays || []),
   };
   localStorage.setItem(LEDGER, JSON.stringify(ledger));
   liveThisSession = true;
@@ -812,6 +837,7 @@ function renderBank() {
   renderPresets();
   revealSteps();
   renderBoard();
+  renderGame();
 }
 
 function boardLine(account) {
@@ -852,7 +878,7 @@ function renderBoard() {
   }
   playing.slice(0, 3).forEach((account, index) => {
     const card = document.createElement("article");
-    card.className = "board-place";
+    card.className = `board-place ${["gold", "silver", "bronze"][index] || ""}`;
     const place = document.createElement("p");
     place.className = "board-rank";
     place.textContent = places[index] || "";
@@ -1111,7 +1137,7 @@ function showHome() {
   const stage = $("stage");
   stage.classList.remove("is-side");
   stage.scrollLeft = 0;
-  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
+  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board", "game"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
   closeTaxForm();
   if (sessionPh) {
     $("logout").hidden = false;
@@ -1121,7 +1147,7 @@ function showHome() {
 
 function showSide(name) {
   const stage = $("stage");
-  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
+  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board", "game"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
   stage.classList.add("is-side");
   stage.scrollLeft = 0;
   $("logout").hidden = true;
@@ -1735,6 +1761,12 @@ const taxPad = bindPad("tax-sign", "tax-sign-block", "tax-clear-sign", (on) => {
   taxSigned = on;
   paintTaxCommit();
 });
+let gameSigned = false;
+let pendingPlay = null;
+const gamePad = bindPad("game-sign", "game-sign-block", "game-clear-sign", (on) => {
+  gameSigned = on;
+  paintGameSend();
+});
 
 function revealTaxField() {
   const field = document.activeElement;
@@ -2241,7 +2273,7 @@ function taxTotals(lines, rates, expenses) {
   return {
     revenue: revenue.toString(),
     vat: vat.toString(),
-    profit: profit.toString(),
+    profit: taxable.toString(),
     expenses: spent.toString(),
     tax: tax.toString(),
     invoice: floorBillion(vat + tax).toString(),
@@ -2880,6 +2912,124 @@ $("fx-swap").addEventListener("click", () => {
   paintRate();
   fitFxAmounts();
 });
+function showGameTab(name) {
+  $("game-dash").hidden = name !== "dash";
+  $("game-play").hidden = name !== "play";
+  $("game-tab-dash").classList.toggle("is-on", name === "dash");
+  $("game-tab-play").classList.toggle("is-on", name === "play");
+  $("game-tab-dash").setAttribute("aria-selected", name === "dash" ? "true" : "false");
+  $("game-tab-play").setAttribute("aria-selected", name === "play" ? "true" : "false");
+  if (name === "play") {
+    gamePad.size();
+    $("game-terms").textContent = activeSettings().terms;
+  }
+}
+
+function gamingRows() {
+  const account = currentAccount();
+  const rows = (ledger?.plays || []).filter((item) => !account || item.accountId === account.id);
+  if (pendingPlay && account && !rows.some((item) => item.id === pendingPlay.id)) {
+    rows.unshift({ ...pendingPlay, accountId: account.id, name: account.name, status: "review", cashOut: "" });
+  }
+  return rows;
+}
+
+function renderGame() {
+  const rows = gamingRows();
+  let gambled = 0n;
+  let won = 0n;
+  let lost = 0n;
+  rows.forEach((item) => {
+    if (item.status === "review") return;
+    const inn = BigInt(item.amount || "0");
+    gambled += inn;
+    if (item.status !== "out" || item.cashOut === "") return;
+    const out = BigInt(item.cashOut || "0");
+    if (out > inn) won += out - inn;
+    else if (out < inn) lost += inn - out;
+  });
+  $("game-gambled").textContent = `${formatAmount(gambled.toString())} ₲`;
+  $("game-won").textContent = `${formatAmount(won.toString())} ₲`;
+  $("game-lost").textContent = `${formatAmount(lost.toString())} ₲`;
+  const list = $("game-list");
+  if (!list) return;
+  list.replaceChildren();
+  rows.forEach((item) => {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = `${formatAmount(item.amount)} ₲`;
+    const state = document.createElement("span");
+    if (item.status === "review") state.textContent = "Waiting for chips";
+    else if (item.status === "chips") state.textContent = "Chips disbursed";
+    else {
+      const out = BigInt(item.cashOut || "0");
+      const inn = BigInt(item.amount || "0");
+      const word = out > inn ? "Won" : out < inn ? "Lost" : "Even";
+      state.textContent = `Cashed out ${formatAmount(item.cashOut || "0")} ₲ · ${word}`;
+    }
+    li.append(name, state);
+    list.append(li);
+  });
+  paintGameSend();
+}
+
+function paintGameSend() {
+  const button = $("game-send");
+  if (!button) return;
+  const amount = moneyText($("game-amount").value, false);
+  button.disabled = !amount || amount === "0" || !$("game-agree").checked || !gameSigned;
+}
+
+async function sendCashIn() {
+  const message = $("game-msg");
+  message.textContent = "";
+  const account = currentAccount();
+  const amount = moneyText($("game-amount").value, false);
+  if (!account || !amount || amount === "0" || !$("game-agree").checked || !gameSigned) return;
+  if (BigInt(account.bal) < BigInt(amount)) {
+    message.textContent = "Not enough gizbits in that account.";
+    return;
+  }
+  const id = uid();
+  const button = $("game-send");
+  button.disabled = true;
+  try {
+    await publish(`${account.name} cashed in for gaming`, {
+      v: 1,
+      kind: "gaming",
+      id,
+      accountId: account.id,
+      ph: sessionPh,
+      amount,
+      sign: gamePad.strokes(),
+      ts: Date.now(),
+    });
+    pendingPlay = { id, amount, ts: Date.now() };
+    $("game-amount").value = "";
+    $("game-agree").checked = false;
+    gamePad.setEnabled(false);
+    message.textContent = "Waiting for chips.";
+    renderGame();
+  } catch {
+    message.textContent = "Couldn't reach the bank. Try again.";
+    paintGameSend();
+  }
+}
+
+$("open-game").addEventListener("click", () => {
+  showGameTab("dash");
+  renderGame();
+  showSide("game");
+});
+$("game-back").addEventListener("click", () => showHome());
+$("game-tab-dash").addEventListener("click", () => showGameTab("dash"));
+$("game-tab-play").addEventListener("click", () => showGameTab("play"));
+$("game-amount").addEventListener("input", paintGameSend);
+$("game-agree").addEventListener("change", () => {
+  gamePad.setEnabled($("game-agree").checked);
+  paintGameSend();
+});
+$("game-send").addEventListener("click", sendCashIn);
 $("open-board").addEventListener("click", () => {
   renderBoard();
   showSide("board");
