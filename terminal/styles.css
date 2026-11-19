@@ -319,6 +319,10 @@ main {
 }
 .board-rank { margin: 0; color: var(--navy); font-size: 13px; font-weight: 800; }
 .board-place .who, .board-place .bal { margin: 0; }
+.board-move { display: inline-block; width: 1em; margin-right: 4px; font-weight: 800; }
+.board-move.up { color: #1f7a3a; }
+.board-move.down { color: #c0392b; }
+.board-move.flat { color: #8a9098; }
 .board-place .bal, .board-rest li span:last-child, .board-out li span:last-child { white-space: nowrap; flex: none; }
 .board-place.gold {
   background:

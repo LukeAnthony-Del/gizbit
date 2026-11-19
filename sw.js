@@ -1,4 +1,4 @@
-const CACHE = "gizbit-v32";
+const CACHE = "gizbit-v33";
 const ASSETS = [
   "./",
   "index.html",
@@ -9,6 +9,8 @@ const ASSETS = [
   "icon-512.png",
   "apple-touch-icon.png",
   "sign-pen.png",
+  "mark-in.png",
+  "mark-out.png",
   "fonts/outfit-latin.woff2",
   "success.mp3",
 ];

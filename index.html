@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#1f4d76" />
+    <meta name="theme-color" content="#ffffff" />
     <meta name="description" content="Gizbit Network keeps gizbit balances, deposits, and withdrawals on this phone." />
     <meta name="referrer" content="no-referrer" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Gizbit Network" />
     <title>Gizbit Network</title>
     <link rel="manifest" href="manifest.json" />
@@ -54,7 +54,7 @@
           </div>
           <hr />
           <div id="session-idle">
-            <button type="button" id="start-session" class="btn">+ Start session</button>
+            <button type="button" id="start-session" class="btn" aria-label="Start session">+</button>
           </div>
           <ul id="session-list" class="feed"></ul>
         </section>
@@ -127,6 +127,11 @@
             </label>
             <p class="quiet">Cash ins are paid into this account. Cash outs are paid from it.</p>
             <label class="field">
+              <span>Tax on gaming profits (%)</span>
+              <input id="gaming-tax" inputmode="numeric" autocomplete="off" />
+            </label>
+            <p class="quiet">A winning cash out is taxed at this rate. The tax is paid into the tax account.</p>
+            <label class="field">
               <span>Interest is paid from</span>
               <select id="interest-account"></select>
             </label>
@@ -168,7 +173,7 @@
 
         <section id="gfg" class="page" role="tabpanel" hidden>
           <div class="page-head">
-            <h1>Gizbit Financial Group</h1>
+            <h1>Financial</h1>
           </div>
           <hr />
           <button type="button" id="open-interest" class="btn">Interest</button>
@@ -237,15 +242,8 @@
           <span>Exchanges</span>
         </button>
         <button type="button" role="tab" data-tab="gfg" aria-selected="false">
-          <span class="tab-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22">
-              <path fill="currentColor" d="M12 2.2 21.2 8H2.8L12 2.2z"/>
-              <path fill="currentColor" d="M3.2 8.8h17.6V11H3.2z"/>
-              <path fill="currentColor" d="M5 12h2.4v6.2H5zm5.8 0h2.4v6.2h-2.4zM16.6 12H19v6.2h-2.4z"/>
-              <path fill="currentColor" d="M2.4 19h19.2v2.2H2.4z"/>
-            </svg>
-          </span>
-          <span>GFG</span>
+          <span class="tab-mark" aria-hidden="true">₲</span>
+          <span>Financial</span>
         </button>
         <button type="button" role="tab" data-tab="government" aria-selected="false">
           <span class="tab-mark" aria-hidden="true">
@@ -341,7 +339,7 @@
         </div>
       </section>
       <section id="session-view" class="side-page" aria-hidden="true">
-        <div class="archive-head">
+        <div class="archive-head session-head">
           <button type="button" id="session-back" class="side-back">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
               <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
@@ -349,18 +347,62 @@
             Back
           </button>
           <h1 id="session-view-title">Session</h1>
+          <button type="button" id="session-edit" class="session-pen" aria-label="Edit who is in">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 20l4.5-1.2L19 8.3 15.7 5 5.2 15.5 4 20z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.8 6.8l3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+          </button>
         </div>
         <div class="archive-body">
-          <p id="session-when" class="quiet"></p>
+          <table class="session-facts">
+            <tr><th>Date</th><td id="session-date"></td></tr>
+            <tr><th>Time started</th><td id="session-started"></td></tr>
+            <tr><th>Time ended</th><td id="session-ended"></td></tr>
+            <tr><th>Total duration</th><td id="session-duration"></td></tr>
+          </table>
+          <div class="attend-panels">
+            <div class="attend-panel">
+              <span>People attended</span>
+              <span class="swatch" aria-hidden="true"></span>
+              <strong id="attended-count">0</strong>
+            </div>
+            <div class="attend-panel">
+              <span>People Absent</span>
+              <strong id="absent-count">0</strong>
+            </div>
+          </div>
+          <button type="button" id="see-all" class="btn slim">See all</button>
+          <div id="session-edit-box" hidden>
+            <div class="cols attend-cols" aria-hidden="true">
+              <span>Account</span>
+              <span>Present</span>
+              <span>Absent</span>
+            </div>
+            <div id="session-edit-rows"></div>
+          </div>
           <p id="session-clock" class="session-clock" hidden>0:00</p>
-          <h2 id="session-attended">Attended</h2>
-          <p id="session-attendance" class="quiet" hidden>Attendance was not recorded.</p>
-          <ul id="session-people" class="people"></ul>
           <button type="button" id="session-books-go" class="btn">Profits and losses</button>
           <button type="button" id="end-session" class="btn" hidden>End session</button>
           <h2>Exchanges</h2>
           <p id="session-exchange-empty" class="empty">No exchanges in this session.</p>
           <ul id="session-exchanges" class="feed"></ul>
+        </div>
+      </section>
+      <section id="session-roster" class="side-page above" aria-hidden="true">
+        <div class="archive-head">
+          <button type="button" id="roster-back" class="side-back">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Back
+          </button>
+          <h1>See all</h1>
+        </div>
+        <div class="archive-body">
+          <h2>People attended</h2>
+          <ul id="see-attended" class="people"></ul>
+          <p id="see-attended-empty" class="empty">Nobody was marked present.</p>
+          <h2>People Absent</h2>
+          <ul id="see-absent" class="people"></ul>
+          <p id="see-absent-empty" class="empty">Nobody was marked absent.</p>
         </div>
       </section>
       <section id="session-books" class="side-page above" aria-hidden="true">
@@ -521,6 +563,20 @@
         <p id="review-text"></p>
         <button type="button" id="review-yes" class="btn">Money given</button>
         <button type="button" id="review-no" class="btn ghost">Cancel</button>
+      </div>
+    </div>
+
+    <div id="session-menu" class="sheet" hidden>
+      <div class="sheet-card" id="session-menu-card" role="dialog" aria-modal="true" aria-label="Session options">
+        <div class="sheet-grab" id="session-menu-grab"></div>
+        <button type="button" id="session-menu-edit" class="menu-line">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 20l4.5-1.2L19 8.3 15.7 5 5.2 15.5 4 20z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.8 6.8l3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+          Edit
+        </button>
+        <button type="button" id="session-menu-delete" class="menu-line danger">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 7h14M9 7V5h6v2M8 7l1 13h6l1-13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Delete
+        </button>
       </div>
     </div>
 

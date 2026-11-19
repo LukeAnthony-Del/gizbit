@@ -21,13 +21,14 @@ const DEFAULT_PRESETS = ["100000000000", "250000000000", "500000000000", "750000
 const DEFAULT_MIN = "50000000000";
 const DEFAULT_EURO = "5000000000";
 const DEFAULT_VAT = "20";
+const DEFAULT_GAMING_TAX = "20";
 const DEFAULT_PROFIT_LOW = "25";
 const DEFAULT_PROFIT_HIGH = "40";
 const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.21.000";
+const VERSION = "2.22.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -82,6 +83,7 @@ function defaultSettings() {
     taxTerms: DEFAULT_TAX_TERMS,
     taxAccountId: "",
     gamingAccountId: "",
+    gamingTax: DEFAULT_GAMING_TAX,
     interestAccountId: "",
     skipInterest: [],
     boardSkip: [],
@@ -113,6 +115,7 @@ function normalizeSettings(value) {
     taxTerms: String(value?.taxTerms || DEFAULT_TAX_TERMS).slice(0, 400),
     taxAccountId: typeof value?.taxAccountId === "string" && /^[\w-]{8,}$/.test(value.taxAccountId) ? value.taxAccountId : "",
     gamingAccountId: typeof value?.gamingAccountId === "string" && /^[\w-]{8,}$/.test(value.gamingAccountId) ? value.gamingAccountId : "",
+    gamingTax: percentText(value?.gamingTax, DEFAULT_GAMING_TAX),
     interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
@@ -393,9 +396,11 @@ function publishLedger(applied, answered) {
       name: item.name,
       amount: item.amount,
       cashOut: item.cashOut || "",
+      tax: item.tax || "0",
       status: item.status,
       ts: item.ts,
     })),
+    lastBooks: lastSessionBooks(),
     ts: Date.now(),
   };
   const sent = publish("Balances updated", payload);
@@ -660,6 +665,7 @@ function exchangeMemo(item) {
 }
 
 const closedDays = new Set();
+const interestSplit = new Set();
 
 function dayKey(ts) {
   const date = new Date(ts);
@@ -692,12 +698,18 @@ function exchangeCard(item) {
   const signBtn = document.createElement("button");
   signBtn.type = "button";
   signBtn.className = "swipe-sign";
-  signBtn.setAttribute("aria-label", "Show signature");
   signBtn.innerHTML = signMarkup();
-  signBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    showSignature(item);
-  });
+  if (cleanSign(item.sign).length) {
+    signBtn.setAttribute("aria-label", "Show signature");
+    signBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showSignature(item);
+    });
+  } else {
+    signBtn.classList.add("is-empty");
+    signBtn.disabled = true;
+    signBtn.setAttribute("aria-label", "No signature");
+  }
   const row = document.createElement("div");
   row.className = "log-row";
   const time = document.createElement("time");
@@ -733,6 +745,71 @@ function exchangeCard(item) {
   return swipe;
 }
 
+function bindStackHold(stack, key) {
+  let timer = 0;
+  let x = 0;
+  let y = 0;
+  stack.addEventListener("pointerdown", (event) => {
+    if (event.target.closest("button")) return;
+    x = event.clientX;
+    y = event.clientY;
+    clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = 0;
+      if (interestSplit.has(key)) interestSplit.delete(key);
+      else interestSplit.add(key);
+      renderActivity();
+    }, 450);
+  });
+  stack.addEventListener("pointermove", (event) => {
+    if (!timer) return;
+    const dx = event.clientX - x;
+    const dy = event.clientY - y;
+    if (dx * dx + dy * dy > 144) {
+      clearTimeout(timer);
+      timer = 0;
+    }
+  });
+  const stop = () => {
+    clearTimeout(timer);
+    timer = 0;
+  };
+  stack.addEventListener("pointerup", stop);
+  stack.addEventListener("pointercancel", stop);
+}
+
+function interestStack(items) {
+  const stack = document.createElement("li");
+  stack.className = "interest-stack";
+  const key = items.map((item) => item.id).join(":");
+  if (interestSplit.has(key)) stack.classList.add("is-split");
+  const shown = interestSplit.has(key) ? items : items.slice(0, 3);
+  shown.forEach((item) => stack.append(exchangeCard(item)));
+  bindStackHold(stack, key);
+  return stack;
+}
+
+function appendDayItems(body, items) {
+  let burst = [];
+  const flush = () => {
+    if (!burst.length) return;
+    if (burst.length === 1) body.append(exchangeCard(burst[0]));
+    else body.append(interestStack(burst));
+    burst = [];
+  };
+  items.forEach((item) => {
+    if (item.op === "interest") {
+      const prev = burst[burst.length - 1];
+      if (prev && Math.abs(Number(prev.ts) - Number(item.ts)) > 15000) flush();
+      burst.push(item);
+    } else {
+      flush();
+      body.append(exchangeCard(item));
+    }
+  });
+  flush();
+}
+
 function renderActivity() {
   const list = $("activity");
   list.replaceChildren();
@@ -750,7 +827,7 @@ function renderActivity() {
   groups.forEach((group) => {
     const body = document.createElement("ul");
     body.className = "day-body";
-    group.items.forEach((item) => body.append(exchangeCard(item)));
+    appendDayItems(body, group.items);
     const fold = document.createElement("div");
     fold.className = "day-fold";
     fold.append(body);
@@ -1166,10 +1243,16 @@ function catchInterest() {
 
 function paintSessionClock() {
   const clock = $("session-clock");
-  if (!clock) return;
-  const on = Boolean(sessionLive && viewingSession === sessionLive.id && $("session-view").classList.contains("is-open"));
-  clock.hidden = true;
-  if (on) $("session-when").textContent = sessionLength({ ...sessionLive, live: true });
+  if (clock) clock.hidden = true;
+  if (!sessionLive) return;
+  const text = sessionDurationText({ ...sessionLive, live: true });
+  document.querySelectorAll("[data-live-dur]").forEach((node) => {
+    node.textContent = text;
+  });
+  if (viewingSession === sessionLive.id && $("session-view").classList.contains("is-open")) {
+    const node = $("session-duration");
+    if (node) node.textContent = text;
+  }
 }
 
 function sessionById(id) {
@@ -1238,7 +1321,7 @@ function closeArchives() {
 function closeSessionSides() {
   viewingSession = "";
   attendEdit = false;
-  ["session-attend", "session-view", "session-books"].forEach((id) => setSide(id, false));
+  ["session-attend", "session-view", "session-books", "session-roster"].forEach((id) => setSide(id, false));
 }
 
 function sessionChrono() {
@@ -1255,6 +1338,47 @@ function sessionDate(ts) {
   return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(ts);
 }
 
+function sessionDateLong(ts) {
+  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(ts);
+}
+
+function sessionClockTime(ts) {
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(ts);
+}
+
+function sessionStartedLine(ts) {
+  return `${sessionDate(ts)}, ${sessionClockTime(ts)}`;
+}
+
+function sessionDurationText(record) {
+  const end = record.live ? Date.now() : Number(record.ended) || record.started;
+  return formatMinutes(end - record.started);
+}
+
+function lastSessionBooks() {
+  const record = sessions[0];
+  if (!record || !Array.isArray(record.closing)) return [];
+  return record.closing.slice(0, 40).map((row) => ({
+    id: row.id,
+    bal: String(row.bal || "0"),
+  }));
+}
+
+function pieMarkup() {
+  return `<span class="pie-box" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="24" fill="#e7eef5"/><path d="M32 32 L32 8 A24 24 0 0 1 52.8 44 Z" fill="#1f4d76"/><circle cx="32" cy="32" r="24" fill="none" stroke="#1f4d76" stroke-width="3"/></svg></span>`;
+}
+
+function tickButton(kind, pressed, label, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `tick ${kind}`;
+  button.innerHTML = `<img src="${kind === "present" ? "mark-in.png" : "mark-out.png"}" alt="" />`;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", pressed ? "true" : "false");
+  button.addEventListener("click", onClick);
+  return button;
+}
+
 function sessionLength(record) {
   const end = record.live ? Date.now() : Number(record.ended) || record.started;
   return `Length ${formatMinutes(end - record.started)}`;
@@ -1264,54 +1388,57 @@ function clockMarkup() {
   return `<svg class="session-clock-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
 }
 
+let menuSessionId = "";
+
 function sessionListing(item) {
-  const swipe = document.createElement("li");
-  swipe.className = "swipe session-swipe";
-  const actions = document.createElement("div");
-  actions.className = "swipe-actions one";
-  const trash = document.createElement("button");
-  trash.type = "button";
-  trash.className = "swipe-trash";
-  trash.setAttribute("aria-label", "Delete session");
-  trash.innerHTML = trashMarkup();
-  trash.addEventListener("click", (event) => {
-    event.stopPropagation();
-    deleteSession(item.id);
-  });
-  actions.append(trash);
-  const row = document.createElement("div");
-  row.className = "session-row";
-  row.tabIndex = 0;
-  row.setAttribute("role", "button");
-  row.insertAdjacentHTML("beforeend", clockMarkup());
-  const name = document.createElement("span");
-  name.className = "session-name";
+  const card = document.createElement("li");
+  card.className = "session-card";
+  const main = document.createElement("button");
+  main.type = "button";
+  main.className = "session-main";
+  main.insertAdjacentHTML("beforeend", pieMarkup());
+  const copy = document.createElement("span");
+  copy.className = "session-copy";
+  const name = document.createElement("strong");
   name.textContent = `Session ${sessionNumber(item.id)}`;
-  const date = document.createElement("span");
-  date.className = "session-date";
-  date.textContent = sessionDate(item.started);
-  row.append(name, date);
-  let startX = 0;
-  let moved = false;
-  row.addEventListener("pointerdown", (event) => {
-    startX = event.clientX;
-    moved = false;
+  const when = document.createElement("span");
+  when.className = "session-when-line";
+  when.textContent = sessionStartedLine(item.started);
+  const dur = document.createElement("span");
+  dur.className = "session-dur";
+  dur.insertAdjacentHTML("beforeend", clockMarkup());
+  const length = document.createElement("span");
+  length.textContent = sessionDurationText(item);
+  if (item.live) length.dataset.liveDur = "1";
+  dur.append(length);
+  copy.append(name, when, dur);
+  main.append(copy);
+  main.addEventListener("click", () => openSessionView(item.id));
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "session-more";
+  more.setAttribute("aria-label", `Options for Session ${sessionNumber(item.id)}`);
+  more.textContent = "•••";
+  more.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openSessionMenu(item.id);
   });
-  row.addEventListener("pointermove", (event) => {
-    if (Math.abs(event.clientX - startX) > 8) moved = true;
-  });
-  row.addEventListener("click", (event) => {
-    if (moved || row.classList.contains("is-open") || event.target.closest("button")) return;
-    openSessionView(item.id);
-  });
-  row.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    openSessionView(item.id);
-  });
-  swipe.append(actions, row);
-  bindReveal(row, 56, 0);
-  return swipe;
+  card.append(main, more);
+  return card;
+}
+
+function openSessionMenu(id) {
+  menuSessionId = id;
+  const card = $("session-menu-card");
+  if (card) card.style.transform = "";
+  $("session-menu").hidden = false;
+}
+
+function closeSessionMenu() {
+  const sheet = $("session-menu");
+  if (sheet) sheet.hidden = true;
+  const card = $("session-menu-card");
+  if (card) card.style.transform = "";
 }
 
 function paintSessions() {
@@ -1338,20 +1465,8 @@ function renderAttendance() {
     row.className = "attend-row";
     const name = document.createElement("span");
     name.textContent = account.name;
-    const present = document.createElement("button");
-    present.type = "button";
-    present.className = "mark present";
-    present.textContent = "✓";
-    present.setAttribute("aria-label", `Present, ${account.name}`);
-    present.setAttribute("aria-pressed", attendMarks.get(account.id) === "present" ? "true" : "false");
-    present.addEventListener("click", () => setAttend(account.id, "present"));
-    const absent = document.createElement("button");
-    absent.type = "button";
-    absent.className = "mark absent";
-    absent.textContent = "✕";
-    absent.setAttribute("aria-label", `Absent, ${account.name}`);
-    absent.setAttribute("aria-pressed", attendMarks.get(account.id) === "absent" ? "true" : "false");
-    absent.addEventListener("click", () => setAttend(account.id, "absent"));
+    const present = tickButton("present", attendMarks.get(account.id) !== "absent", `Present, ${account.name}`, () => setAttend(account.id, "present"));
+    const absent = tickButton("absent", attendMarks.get(account.id) === "absent", `Absent, ${account.name}`, () => setAttend(account.id, "absent"));
     row.append(name, present, absent);
     box.append(row);
   });
@@ -1360,8 +1475,7 @@ function renderAttendance() {
 }
 
 function setAttend(id, kind) {
-  if (attendMarks.get(id) === kind) attendMarks.delete(id);
-  else attendMarks.set(id, kind);
+  attendMarks.set(id, kind);
   renderAttendance();
 }
 
@@ -1371,6 +1485,7 @@ function openAttendance() {
     return;
   }
   attendMarks = new Map();
+  state.accounts.forEach((account) => attendMarks.set(account.id, "present"));
   closeArchives();
   renderAttendance();
   setSide("session-books", false);
@@ -1407,61 +1522,75 @@ function setSessionMark(sessionId, accountId, kind) {
   if (kind === "absent") record.absent.push(accountId);
   if (sessionLive && sessionLive.id === sessionId) saveSession();
   else saveSessions();
-  fillSessionPeople(sessionById(sessionId));
+  const fresh = sessionById(sessionId);
+  if (fresh) {
+    fillSessionFacts(fresh);
+    if ($("session-roster") && $("session-roster").classList.contains("is-open")) fillRoster(fresh);
+  }
 }
 
-function fillSessionPeople(record) {
-  const list = $("session-people");
-  const note = $("session-attendance");
-  const head = $("session-attended");
-  if (!list || !note) return;
-  if (head) head.textContent = attendEdit ? "Editing attendance" : "Attended";
+function fillSessionFacts(record) {
+  const date = $("session-date");
+  if (!date) return;
+  date.textContent = sessionDateLong(record.started);
+  $("session-started").textContent = sessionClockTime(record.started);
+  $("session-ended").textContent = record.live || !record.ended ? "Still going" : sessionClockTime(record.ended);
+  $("session-duration").textContent = sessionDurationText(record);
+  $("attended-count").textContent = String((record.present || []).length);
+  $("absent-count").textContent = String((record.absent || []).length);
+  const pen = $("session-edit");
+  if (pen) pen.classList.toggle("is-on", attendEdit);
+  const box = $("session-edit-box");
+  if (box) box.hidden = !attendEdit;
+  if (attendEdit) fillSessionEdit(record);
+}
+
+function fillSessionEdit(record) {
+  const list = $("session-edit-rows");
+  if (!list) return;
   list.replaceChildren();
-  const recorded = Array.isArray(record.present) && Array.isArray(record.absent);
-  if (attendEdit) {
-    note.hidden = true;
-    attendanceIds(record).forEach((id) => {
-      const name = personName(id, record);
-      if (!name) return;
-      const row = document.createElement("li");
-      row.className = "attend-row";
-      const label = document.createElement("span");
-      label.textContent = name;
-      const present = document.createElement("button");
-      present.type = "button";
-      present.className = "mark present";
-      present.textContent = "✓";
-      present.setAttribute("aria-label", `Present, ${name}`);
-      present.setAttribute("aria-pressed", (record.present || []).includes(id) ? "true" : "false");
-      present.addEventListener("click", () => setSessionMark(record.id, id, (record.present || []).includes(id) ? "" : "present"));
-      const absent = document.createElement("button");
-      absent.type = "button";
-      absent.className = "mark absent";
-      absent.textContent = "✕";
-      absent.setAttribute("aria-label", `Absent, ${name}`);
-      absent.setAttribute("aria-pressed", (record.absent || []).includes(id) ? "true" : "false");
-      absent.addEventListener("click", () => setSessionMark(record.id, id, (record.absent || []).includes(id) ? "" : "absent"));
-      row.append(label, present, absent);
-      list.append(row);
-    });
-    return;
-  }
-  note.hidden = recorded;
-  note.textContent = recorded ? "Nobody was marked present." : "Attendance was not recorded.";
-  if (!recorded) return;
-  const add = (id, kind) => {
+  attendanceIds(record).forEach((id) => {
     const name = personName(id, record);
     if (!name) return;
-    const li = document.createElement("li");
-    const mark = document.createElement("span");
-    mark.className = kind === "present" ? "tick" : "cross";
-    mark.textContent = kind === "present" ? "✓" : "✕";
-    li.append(mark, document.createTextNode(name));
-    list.append(li);
-  };
-  record.present.forEach((id) => add(id, "present"));
-  record.absent.forEach((id) => add(id, "absent"));
-  note.hidden = list.childElementCount > 0;
+    const row = document.createElement("div");
+    row.className = "attend-row";
+    const label = document.createElement("span");
+    label.textContent = name;
+    const present = tickButton("present", (record.present || []).includes(id), `Present, ${name}`, () => setSessionMark(record.id, id, "present"));
+    const absent = tickButton("absent", (record.absent || []).includes(id), `Absent, ${name}`, () => setSessionMark(record.id, id, "absent"));
+    row.append(label, present, absent);
+    list.append(row);
+  });
+}
+
+function rosterLine(id, record, kind) {
+  const name = personName(id, record);
+  if (!name) return null;
+  const li = document.createElement("li");
+  const mark = document.createElement("img");
+  mark.className = "roster-mark";
+  mark.alt = "";
+  mark.src = kind === "present" ? "mark-in.png" : "mark-out.png";
+  li.append(mark, document.createTextNode(name));
+  return li;
+}
+
+function fillRoster(record) {
+  const attended = $("see-attended");
+  const absent = $("see-absent");
+  if (!attended || !absent) return;
+  attended.replaceChildren();
+  absent.replaceChildren();
+  (record.present || []).forEach((id) => {
+    const line = rosterLine(id, record, "present");
+    if (line) attended.append(line);
+  });
+  (record.absent || []).forEach((id) => {
+    const line = rosterLine(id, record, "absent");
+    if (line) absent.append(line);
+  });
+  $("see-attended-empty").hidden = attended.childElementCount > 0;
+  $("see-absent-empty").hidden = absent.childElementCount > 0;
 }
 
 function fillSessionBooks(id) {
@@ -1518,9 +1647,8 @@ function fillSessionView(id) {
   if (viewingSession !== id) attendEdit = false;
   viewingSession = id;
   $("session-view-title").textContent = `Session ${sessionNumber(id)}`;
-  $("session-when").textContent = sessionLength(record);
   $("end-session").hidden = !record.live;
-  fillSessionPeople(record);
+  fillSessionFacts(record);
   const list = $("session-exchanges");
   const empty = $("session-exchange-empty");
   const matches = sessionExchanges(record);
@@ -1572,8 +1700,8 @@ function startSession() {
   const present = [];
   const absent = [];
   state.accounts.forEach((account) => {
-    if (attendMarks.get(account.id) === "present") present.push(account.id);
-    else if (attendMarks.get(account.id) === "absent") absent.push(account.id);
+    if (attendMarks.get(account.id) === "absent") absent.push(account.id);
+    else present.push(account.id);
   });
   sessionLive = { id: uid(), started: Date.now(), opening: snapshotBooks(), present, absent };
   saveSession();
@@ -1607,6 +1735,7 @@ function endSession() {
   saveInterest();
   paintSessions();
   paintInterest();
+  publishLedger([]).catch(() => {});
   if (viewingSession === id) openSessionView(id);
 }
 
@@ -2776,33 +2905,67 @@ function cashOutPlay(id) {
     fail("That account is no longer on this phone.");
     return;
   }
-  if (BigInt(sink.bal) < BigInt(amount)) {
+  const gross = BigInt(amount);
+  const stake = BigInt(play.amount || "0");
+  const profit = gross > stake ? gross - stake : 0n;
+  const tax = floorBillion(profit * BigInt(state.settings.gamingTax || DEFAULT_GAMING_TAX) / 100n);
+  const net = gross - tax;
+  if (BigInt(sink.bal) < gross) {
     fail("The gaming account does not have enough gizbits.");
     return;
   }
-  const nextPlayer = BigInt(player.bal) + BigInt(amount);
-  if (nextPlayer > MAX) {
+  const taxAccount = tax > 0n ? state.accounts.find((item) => item.id === state.settings.taxAccountId) : null;
+  if (tax > 0n && !taxAccount) {
+    fail("Choose the account that receives tax payments.");
+    return;
+  }
+  if (taxAccount && (taxAccount.id === sink.id || taxAccount.id === player.id)) {
+    fail("Choose a different account for tax payments.");
+    return;
+  }
+  const nextPlayer = BigInt(player.bal) + net;
+  const nextTax = taxAccount ? BigInt(taxAccount.bal) + tax : 0n;
+  if (nextPlayer > MAX || nextTax > MAX) {
     fail("That account cannot hold that much.");
     return;
   }
-  sink.bal = (BigInt(sink.bal) - BigInt(amount)).toString();
+  sink.bal = (BigInt(sink.bal) - gross).toString();
   player.bal = nextPlayer.toString();
+  if (taxAccount) taxAccount.bal = nextTax.toString();
   play.status = "out";
   play.cashOut = amount;
-  if (amount !== "0") {
+  play.tax = tax.toString();
+  if (net > 0n) {
     requests.unshift({
       id: `${play.id}-out`,
       accountId: sink.id,
       name: sink.name,
       op: "transfer",
-      amount,
+      amount: net.toString(),
       status: "done",
-      applied: amount,
+      applied: net.toString(),
       toId: player.id,
       toName: player.name,
       memo: "Cash out",
       ts: Date.now(),
     });
+  }
+  if (tax > 0n && taxAccount) {
+    requests.unshift({
+      id: `${play.id}-tax`,
+      accountId: sink.id,
+      name: sink.name,
+      op: "transfer",
+      amount: tax.toString(),
+      status: "done",
+      applied: tax.toString(),
+      toId: taxAccount.id,
+      toName: taxAccount.name,
+      memo: "Gaming profit tax",
+      ts: Date.now(),
+    });
+  }
+  if (net > 0n || tax > 0n) {
     requests.splice(80);
     saveRequests();
   }
@@ -2854,8 +3017,11 @@ function renderGaming() {
       const done = document.createElement("p");
       const out = BigInt(play.cashOut || "0");
       const inn = BigInt(play.amount || "0");
-      const word = out > inn ? `Won ${formatLoose(out - inn)} ₲` : out < inn ? `Lost ${formatLoose(inn - out)} ₲` : "Even";
-      done.textContent = `Cashed out ${formatLoose(out)} ₲ · ${word}`;
+      const tax = BigInt(play.tax || "0");
+      const kept = out > tax ? out - tax : 0n;
+      const word = kept > inn ? `Won ${formatLoose(kept - inn)} ₲` : kept < inn ? `Lost ${formatLoose(inn - kept)} ₲` : "Even";
+      const taxNote = tax > 0n ? ` · Tax ${formatLoose(tax)} ₲` : "";
+      done.textContent = `Cashed out ${formatLoose(out)} ₲${taxNote} · ${word}`;
       card.append(done);
     }
     const error = document.createElement("p");
@@ -3175,6 +3341,7 @@ function fillSettings() {
   $("max-amount").value = state.settings.maxAmount;
   $("euro-rate").value = state.settings.euroRate;
   $("vat-rate").value = state.settings.vatRate;
+  $("gaming-tax").value = state.settings.gamingTax;
   $("profit-low").value = state.settings.profitLow;
   $("profit-high").value = state.settings.profitHigh;
   $("profit-threshold").value = state.settings.profitThreshold;
@@ -3601,7 +3768,8 @@ $("settings-form").addEventListener("submit", (event) => {
   const vatRate = readPercent("vat-rate");
   const profitLow = readPercent("profit-low");
   const profitHigh = readPercent("profit-high");
-  if (!vatRate || !profitLow || !profitHigh) {
+  const gamingTax = readPercent("gaming-tax");
+  if (!vatRate || !profitLow || !profitHigh || !gamingTax) {
     error.textContent = "Enter each tax rate as a whole number from 0 to 100.";
     return;
   }
@@ -3623,6 +3791,7 @@ $("settings-form").addEventListener("submit", (event) => {
     taxTerms: $("tax-terms").value.trim().slice(0, 400) || DEFAULT_TAX_TERMS,
     taxAccountId: $("tax-account").value || "",
     gamingAccountId: $("gaming-account").value || "",
+    gamingTax,
     interestAccountId: $("interest-account").value || "",
     skipInterest: [...document.querySelectorAll("#interest-skips input:checked")].map((input) => input.value),
     boardSkip: [...document.querySelectorAll("#board-skips input:checked")].map((input) => input.value),
@@ -3693,6 +3862,35 @@ $("session-back").addEventListener("click", closeSessionSides);
 $("session-books-go").addEventListener("click", openSessionBooks);
 $("books-back").addEventListener("click", () => setSide("session-books", false));
 $("end-session").addEventListener("click", endSession);
+$("session-edit").addEventListener("click", () => {
+  attendEdit = !attendEdit;
+  const record = viewingSession ? sessionById(viewingSession) : null;
+  if (record) fillSessionFacts(record);
+});
+$("see-all").addEventListener("click", () => {
+  const record = viewingSession ? sessionById(viewingSession) : null;
+  if (!record) return;
+  fillRoster(record);
+  setSide("session-roster", true);
+});
+$("roster-back").addEventListener("click", () => setSide("session-roster", false));
+$("session-menu").addEventListener("click", (event) => {
+  if (event.target === $("session-menu")) closeSessionMenu();
+});
+$("session-menu-edit").addEventListener("click", () => {
+  const id = menuSessionId;
+  closeSessionMenu();
+  openSessionView(id);
+  attendEdit = true;
+  const record = sessionById(id);
+  if (record) fillSessionFacts(record);
+});
+$("session-menu-delete").addEventListener("click", () => {
+  const id = menuSessionId;
+  closeSessionMenu();
+  deleteSession(id);
+});
+bindSessionMenu();
 $("open-interest").addEventListener("click", openInterest);
 $("interest-back").addEventListener("click", closeInterest);
 $("pay-interest").addEventListener("click", payInterestNow);
@@ -3709,8 +3907,6 @@ lockGestures();
 setupInstall();
 fillSettings();
 bindBalanceColumn();
-bindAttendHold($("session-attended"));
-bindAttendHold($("session-people"));
 ["gizbit-network-name", "gizbit-network-pair", "gizbit-phones", "gizbit-network-device"].forEach((key) => localStorage.removeItem(key));
 $("app-version").textContent = VERSION;
 absorbStoredSigns();
@@ -3750,41 +3946,31 @@ function hideSyncing() {
   if (sheet) sheet.hidden = true;
 }
 
-function bindAttendHold(node) {
-  if (!node) return;
-  let timer = 0;
-  let startX = 0;
+function bindSessionMenu() {
+  const card = $("session-menu-card");
+  if (!card) return;
   let startY = 0;
-  node.addEventListener("pointerdown", (event) => {
+  let dragging = false;
+  card.addEventListener("pointerdown", (event) => {
     if (event.target.closest("button")) return;
-    if (event.pointerType === "mouse" && event.button !== 0) return;
-    startX = event.clientX;
+    dragging = true;
     startY = event.clientY;
-    clearTimeout(timer);
-    timer = window.setTimeout(() => {
-      timer = 0;
-      if (!viewingSession) return;
-      attendEdit = !attendEdit;
-      const record = sessionById(viewingSession);
-      if (record) fillSessionPeople(record);
-    }, 400);
+    card.setPointerCapture(event.pointerId);
   });
-  node.addEventListener("pointermove", (event) => {
-    if (!timer) return;
-    const dx = event.clientX - startX;
+  card.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    const dy = Math.max(0, event.clientY - startY);
+    card.style.transform = `translateY(${dy}px)`;
+  });
+  const finish = (event) => {
+    if (!dragging) return;
+    dragging = false;
     const dy = event.clientY - startY;
-    if (dx * dx + dy * dy > 100) {
-      clearTimeout(timer);
-      timer = 0;
-    }
-  });
-  const cancel = () => {
-    clearTimeout(timer);
-    timer = 0;
+    if (dy > 70) closeSessionMenu();
+    else card.style.transform = "";
   };
-  node.addEventListener("pointerup", cancel);
-  node.addEventListener("pointercancel", cancel);
-  node.addEventListener("contextmenu", (event) => event.preventDefault());
+  card.addEventListener("pointerup", finish);
+  card.addEventListener("pointercancel", finish);
 }
 
 function bindBalanceColumn() {

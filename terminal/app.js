@@ -17,7 +17,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.24.000";
+const VERSION = "2.25.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 const WAIT_EXCHANGE = "gizbit-terminal-wait-exchange";
@@ -68,6 +68,47 @@ function holdSend(id) {
   else localStorage.removeItem(WAIT_SEND);
 }
 
+const OUTBOX = "gizbit-terminal-outbox";
+
+function loadOutbox() {
+  try {
+    const data = JSON.parse(localStorage.getItem(OUTBOX) || "[]");
+    return Array.isArray(data) ? data.filter((item) => item && item.payload && typeof item.payload.id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberOutbox(sentence, payload) {
+  const items = loadOutbox().filter((item) => item.payload.id !== payload.id);
+  items.push({ sentence, payload });
+  localStorage.setItem(OUTBOX, JSON.stringify(items.slice(-20)));
+}
+
+function dropOutbox(id) {
+  localStorage.setItem(OUTBOX, JSON.stringify(loadOutbox().filter((item) => item.payload.id !== id)));
+}
+
+let flushingOutbox = false;
+async function flushOutbox() {
+  if (flushingOutbox) return;
+  const items = loadOutbox();
+  if (!items.length) return;
+  flushingOutbox = true;
+  try {
+    for (const item of items) {
+      try {
+        await publish(item.sentence, item.payload);
+        dropOutbox(item.payload.id);
+      } catch {
+        break;
+      }
+    }
+  } finally {
+    flushingOutbox = false;
+  }
+}
+
 function loadLedger() {
   try {
     const data = JSON.parse(localStorage.getItem(LEDGER) || "");
@@ -80,6 +121,8 @@ function loadLedger() {
       accounts: data.accounts.map(sanitize).filter(Boolean),
       settings: normalizeSettings(data.settings),
       requests: Array.isArray(data.requests) ? data.requests : [],
+      plays: sanitizePlays(data.plays),
+      lastBooks: sanitizeBooks(data.lastBooks),
     };
   } catch {
     return null;
@@ -114,6 +157,7 @@ function defaultSettings() {
     taxTerms: DEFAULT_TAX_TERMS,
     taxAccountId: "",
     gamingAccountId: "",
+    gamingTax: "20",
     interestAccountId: "",
     skipInterest: [],
     boardSkip: [],
@@ -145,6 +189,7 @@ function normalizeSettings(value) {
     taxTerms: String(value?.taxTerms || DEFAULT_TAX_TERMS).slice(0, 400),
     taxAccountId: typeof value?.taxAccountId === "string" && /^[\w-]{8,}$/.test(value.taxAccountId) ? value.taxAccountId : "",
     gamingAccountId: typeof value?.gamingAccountId === "string" && /^[\w-]{8,}$/.test(value.gamingAccountId) ? value.gamingAccountId : "",
+    gamingTax: percentText(value?.gamingTax, "20"),
     interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
@@ -332,6 +377,16 @@ function acceptReset(body) {
   $("login-msg").textContent = "The main phone deleted every account.";
 }
 
+function sanitizeBooks(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 40).map((row) => {
+    if (!row || typeof row.id !== "string") return null;
+    const bal = moneyText(row.bal, false);
+    if (bal == null) return null;
+    return { id: row.id, bal };
+  }).filter(Boolean);
+}
+
 function sanitizePlays(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 40).map((item) => {
@@ -348,6 +403,7 @@ function sanitizePlays(value) {
       name: String(item.name || "").slice(0, 40),
       amount,
       cashOut,
+      tax: moneyText(item.tax, false) || "0",
       status,
       ts: Number(item.ts) || 0,
     };
@@ -371,6 +427,7 @@ function acceptLedger(body) {
     settings: normalizeSettings(body.settings),
     requests: Array.isArray(body.requests) ? body.requests : (ledger?.requests || []),
     plays: Array.isArray(body.plays) ? sanitizePlays(body.plays) : (ledger?.plays || []),
+    lastBooks: Array.isArray(body.lastBooks) ? sanitizeBooks(body.lastBooks) : (ledger?.lastBooks || []),
   };
   localStorage.setItem(LEDGER, JSON.stringify(ledger));
   liveThisSession = true;
@@ -538,6 +595,7 @@ let chosenOp = "";
 let chosenAmount = "";
 let signed = false;
 let sendSigned = false;
+let sendSent = false;
 let exchangeSent = false;
 
 function showLogin(keepKeyboard) {
@@ -840,10 +898,30 @@ function renderBank() {
   renderGame();
 }
 
-function boardLine(account) {
+function boardArrow(account) {
+  const span = document.createElement("span");
+  span.className = "board-move";
+  const previous = (ledger?.lastBooks || []).find((row) => row.id === account.id);
+  const now = BigInt(account.bal || "0");
+  const then = previous ? BigInt(previous.bal || "0") : now;
+  if (previous && now > then) {
+    span.classList.add("up");
+    span.textContent = "↑";
+  } else if (previous && now < then) {
+    span.classList.add("down");
+    span.textContent = "↓";
+  } else {
+    span.classList.add("flat");
+    span.textContent = "–";
+  }
+  return span;
+}
+
+function boardLine(account, moving) {
   const item = document.createElement("li");
   const name = document.createElement("span");
-  name.textContent = account.name;
+  if (moving) name.append(boardArrow(account));
+  name.append(document.createTextNode(account.name));
   const money = document.createElement("span");
   money.textContent = `${formatAmount(account.bal)} ₲`;
   item.append(name, money);
@@ -884,7 +962,7 @@ function renderBoard() {
     place.textContent = places[index] || "";
     const name = document.createElement("p");
     name.className = "who";
-    name.textContent = account.name;
+    name.append(boardArrow(account), document.createTextNode(account.name));
     const money = document.createElement("p");
     money.className = "bal";
     money.textContent = `${formatAmount(account.bal)} ₲`;
@@ -892,9 +970,9 @@ function renderBoard() {
     top.append(card);
   });
   rest.replaceChildren();
-  playing.slice(3).forEach((account) => rest.append(boardLine(account)));
+  playing.slice(3).forEach((account) => rest.append(boardLine(account, true)));
   out.replaceChildren();
-  aside.forEach((account) => out.append(boardLine(account)));
+  aside.forEach((account) => out.append(boardLine(account, false)));
   if (outTitle) outTitle.hidden = aside.length === 0;
 }
 
@@ -1224,7 +1302,7 @@ function paintExchangeButton() {
   }
   button.hidden = false;
   button.disabled = false;
-  button.textContent = "Return to home";
+  button.textContent = "Back to home";
 }
 
 let audioCtx = null;
@@ -1390,13 +1468,21 @@ function revealSend() {
     sendPad.setEnabled(false);
     delete $("send-sign").dataset.ready;
   }
-  $("send-go").disabled = !(showSign && sendSigned);
+  if (sendSent) {
+    $("send-go").hidden = false;
+    $("send-go").disabled = false;
+    $("send-go").textContent = "Back to home";
+  } else {
+    $("send-go").textContent = "Transfer";
+    $("send-go").disabled = !(showSign && sendSigned);
+  }
 }
 
 function resetSend() {
   sendAccountId = "";
   sendAmount = "";
   sendSigned = false;
+  sendSent = false;
   $("send-amount").value = "";
   $("send-agree").checked = false;
   $("send-msg").textContent = "";
@@ -1427,6 +1513,11 @@ function checkSendResult() {
 }
 
 async function sendGizbits() {
+  if (sendSent) {
+    resetSend();
+    showHome();
+    return;
+  }
   const message = $("send-msg");
   message.textContent = "";
   const from = currentAccount();
@@ -1445,27 +1536,30 @@ async function sendGizbits() {
   const id = uid();
   unlockSound();
   const strokes = sendPad.strokes();
-  $("send-go").disabled = true;
-  message.textContent = "Transferring…";
-  try {
-    await publish(`${from.name} transferred gizbits to ${to.name}`, {
-      v: 1,
-      kind: "transfer",
-      id,
-      fromId: from.id,
-      toId: to.id,
-      amount,
-      ph: sessionPh,
-      sign: strokes,
-      ts: Date.now(),
-    });
-  } catch {
-    message.textContent = "Couldn't reach the bank. Try again.";
-    revealSend();
-    return;
-  }
+  const sentence = `${from.name} transferred gizbits to ${to.name}`;
+  const payload = {
+    v: 1,
+    kind: "transfer",
+    id,
+    fromId: from.id,
+    toId: to.id,
+    amount,
+    ph: sessionPh,
+    sign: strokes,
+    ts: Date.now(),
+  };
+  sendSent = true;
   saveSign(id, strokes);
   holdSend(id);
+  revealSend();
+  message.textContent = "Transferring…";
+  try {
+    await publish(sentence, payload);
+  } catch {
+    rememberOutbox(sentence, payload);
+    message.textContent = "Saved on this phone. It sends when the connection is back.";
+    return;
+  }
   message.textContent = "Transferred. The main phone moves the gizbits as soon as it receives this.";
   checkSendResult();
 }
@@ -1564,6 +1658,7 @@ function resetExchange() {
 
 async function exchange() {
   if (exchangeSent) {
+    resetExchange();
     showHome();
     return;
   }
@@ -1594,28 +1689,30 @@ async function exchange() {
   }
   const id = uid();
   unlockSound();
+  const strokes = pad.strokes();
+  const sentence = `Exchange pending from ${latest.name}`;
+  const payload = {
+    v: 1,
+    kind: "request",
+    id,
+    accountId: latest.id,
+    op,
+    amount,
+    ph: sessionPh,
+    sign: strokes,
+    ts: Date.now(),
+  };
   holdExchange(id);
   exchangeSent = true;
+  saveSign(id, strokes);
   paintExchangeButton();
   message.textContent = "Asking the main phone…";
   try {
-    await publish(`Exchange pending from ${latest.name}`, {
-      v: 1,
-      kind: "request",
-      id,
-      accountId: latest.id,
-      op,
-      amount,
-      ph: sessionPh,
-      sign: pad.strokes(),
-      ts: Date.now(),
-    });
-    saveSign(id, pad.strokes());
+    await publish(sentence, payload);
   } catch {
-    holdExchange("");
-    exchangeSent = false;
-    message.textContent = "Couldn't reach the bank. Try again.";
-    revealSteps();
+    rememberOutbox(sentence, payload);
+    message.textContent = "Saved on this phone. It sends when the connection is back.";
+    paintExchangeButton();
     return;
   }
   message.textContent = "Waiting for the network to confirm.";
@@ -2122,7 +2219,7 @@ function renderDash() {
   const filed = loadTaxes().filter((item) => item.accountId === account?.id);
   const paid = filed.reduce((sum, item) => sum + BigInt(item.totals?.invoice || "0"), 0n);
   const parts = [
-    ["Tax on gaming profits", 0n],
+    ["Tax on gaming profits", (ledger?.plays || []).filter((item) => item.accountId === account?.id).reduce((sum, item) => sum + BigInt(item.tax || "0"), 0n)],
     ["Income tax", filed.reduce((sum, item) => sum + BigInt(item.totals?.tax || "0"), 0n)],
     ["VAT", filed.reduce((sum, item) => sum + BigInt(item.totals?.vat || "0"), 0n)],
     ["Capital gains tax", 0n],
@@ -2945,8 +3042,10 @@ function renderGame() {
     gambled += inn;
     if (item.status !== "out" || item.cashOut === "") return;
     const out = BigInt(item.cashOut || "0");
-    if (out > inn) won += out - inn;
-    else if (out < inn) lost += inn - out;
+    const tax = BigInt(item.tax || "0");
+    const kept = out > tax ? out - tax : 0n;
+    if (kept > inn) won += kept - inn;
+    else if (kept < inn) lost += inn - kept;
   });
   $("game-gambled").textContent = `${formatAmount(gambled.toString())} ₲`;
   $("game-won").textContent = `${formatAmount(won.toString())} ₲`;
@@ -2964,8 +3063,11 @@ function renderGame() {
     else {
       const out = BigInt(item.cashOut || "0");
       const inn = BigInt(item.amount || "0");
-      const word = out > inn ? "Won" : out < inn ? "Lost" : "Even";
-      state.textContent = `Cashed out ${formatAmount(item.cashOut || "0")} ₲ · ${word}`;
+      const tax = BigInt(item.tax || "0");
+      const kept = out > tax ? out - tax : 0n;
+      const word = kept > inn ? "Won" : kept < inn ? "Lost" : "Even";
+      const taxNote = tax > 0n ? ` · Tax ${formatAmount(tax.toString())} ₲` : "";
+      state.textContent = `Cashed out ${formatAmount(item.cashOut || "0")} ₲${taxNote} · ${word}`;
     }
     li.append(name, state);
     list.append(li);
@@ -3355,6 +3457,7 @@ catchUp().catch(() => refreshStatus()).finally(() => {
 
 function wakeLink() {
   if (!streamOpen || Date.now() - lastStream > 25000) listen();
+  flushOutbox().catch(() => {});
   return catchUp().catch(() => refreshStatus()).finally(() => {
     checkExchangeResult();
     checkSendResult();
