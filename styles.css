@@ -537,11 +537,11 @@ body.standalone .hint { display: none; }
 .cols span:nth-child(2), .acct .acct-type { display: none; }
 .cols.interest-cols span:nth-child(2),
 .cols.attend-cols span:nth-child(2) { display: inline; }
-.cols.attend-cols { grid-template-columns: minmax(0, 1fr) 36px 36px; text-align: center; }
+.cols.attend-cols { grid-template-columns: minmax(0, 1fr) 48px 48px; text-align: center; }
 .cols.attend-cols span:first-child { text-align: left; }
 .attend-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px 36px;
+  grid-template-columns: minmax(0, 1fr) 48px 48px;
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
@@ -551,16 +551,17 @@ body.standalone .hint { display: none; }
 .attend-row span { overflow-wrap: anywhere; }
 .attend-row { padding: 3px 8px; min-height: 32px; }
 .tick {
-  width: 22px;
-  height: 22px;
+  width: 36px;
+  height: 36px;
   justify-self: center;
   padding: 0;
   border: 0;
-  border-radius: 50%;
+  border-radius: 0;
   background: transparent;
   opacity: 0.28;
+  overflow: visible;
 }
-.tick img { width: 22px; height: 22px; display: block; }
+.tick img { width: 36px; height: 36px; display: block; object-fit: contain; }
 .tick[aria-pressed="true"] { opacity: 1; }
 .people { list-style: none; margin: 0; padding: 0; }
 .people li {
@@ -571,7 +572,7 @@ body.standalone .hint { display: none; }
   border-bottom: 1px solid var(--line);
   font-weight: 700;
 }
-.people li.attend-row { display: grid; grid-template-columns: minmax(0, 1fr) 36px 36px; padding: 3px 0; }
+.people li.attend-row { display: grid; grid-template-columns: minmax(0, 1fr) 48px 48px; padding: 4px 0; }
 .people .tick { color: #1f7a3a; font-weight: 800; }
 .people .cross { color: #a33b3b; font-weight: 800; }
 .book-line { padding: 12px 0; border-bottom: 1px solid var(--line); }
@@ -1008,8 +1009,9 @@ textarea {
   letter-spacing: 1px;
   font-weight: 800;
 }
-.session-head { display: flex; align-items: center; gap: 8px; }
-.session-head h1 { flex: 1; font-size: 22px; }
+.session-head { display: block; }
+.session-head-bar { display: flex; align-items: center; justify-content: space-between; }
+.session-head h1 { margin: 10px 0 0; font-size: 28px; }
 .session-pen {
   width: 40px;
   height: 40px;
@@ -1047,20 +1049,30 @@ textarea {
 .session-facts td { font-weight: 800; color: var(--navy); }
 .attend-panels { display: grid; gap: 8px; margin-bottom: 10px; }
 .attend-panel {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 34px;
+  min-height: 36px;
   padding: 6px 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: #fff;
   font-weight: 700;
   font-size: 14px;
+  text-align: left;
+  color: var(--ink);
 }
 .attend-panel strong { margin-left: auto; }
-.swatch { width: 12px; height: 12px; border-radius: 3px; background: #1f7a3a; }
-#see-all { margin-bottom: 8px; }
+.swatch { width: 12px; height: 12px; border-radius: 3px; background: #1f7a3a; flex: none; }
+.swatch.absent { background: #c0392b; }
+.pl-mark { margin-right: 6px; font-weight: 800; }
+.session-extremes { margin: 8px 0 0; color: var(--muted); font-size: 14px; font-weight: 700; white-space: pre-line; }
+.session-total { margin: 14px 0 72px; color: var(--navy); font-weight: 800; }
+.loan-card { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.loan-card p { margin: 0 0 6px; }
+.earn-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); font-weight: 700; }
+.earn-row strong { font-weight: 800; }
 .sheet-grab {
   width: 42px;
   height: 5px;

@@ -17,7 +17,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.25.000";
+const VERSION = "2.26.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 const WAIT_EXCHANGE = "gizbit-terminal-wait-exchange";
@@ -159,6 +159,7 @@ function defaultSettings() {
     gamingAccountId: "",
     gamingTax: "20",
     interestAccountId: "",
+    loanAccountId: "",
     skipInterest: [],
     boardSkip: [],
   };
@@ -191,6 +192,7 @@ function normalizeSettings(value) {
     gamingAccountId: typeof value?.gamingAccountId === "string" && /^[\w-]{8,}$/.test(value.gamingAccountId) ? value.gamingAccountId : "",
     gamingTax: percentText(value?.gamingTax, "20"),
     interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
+    loanAccountId: typeof value?.loanAccountId === "string" && /^[\w-]{8,}$/.test(value.loanAccountId) ? value.loanAccountId : "",
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
       : [],
@@ -347,8 +349,9 @@ function toast(text) {
 }
 
 function refreshStatus() {
-  const heard = ledger && Date.now() - (ledger.ts || 0) < 45000;
-  setLink(Boolean(heard));
+  const heard = ledger && Date.now() - (ledger.ts || 0) < 180000;
+  const live = streamOpen || Date.now() - lastStream < 35000;
+  setLink(Boolean(heard || live));
 }
 
 function matching(ph) {
@@ -408,6 +411,34 @@ function sanitizePlays(value) {
       ts: Number(item.ts) || 0,
     };
   }).filter(Boolean);
+}
+
+function acceptPlay(body) {
+  if (!ledger || !body || typeof body.id !== "string") return;
+  const status = body.status === "review" || body.status === "chips" || body.status === "out" ? body.status : "";
+  const amount = moneyText(body.amount, false);
+  if (!status || amount == null) return;
+  const plays = Array.isArray(ledger.plays) ? ledger.plays.slice() : [];
+  const next = {
+    id: body.id,
+    accountId: typeof body.accountId === "string" ? body.accountId : "",
+    name: String(body.name || "").slice(0, 40),
+    amount,
+    cashOut: body.cashOut == null || body.cashOut === "" ? "" : (moneyText(body.cashOut, false) || ""),
+    tax: moneyText(body.tax, false) || "0",
+    status,
+    ts: Number(body.ts) || Date.now(),
+  };
+  const index = plays.findIndex((item) => item.id === next.id);
+  if (index >= 0) plays[index] = { ...plays[index], ...next };
+  else plays.unshift(next);
+  ledger.plays = plays.slice(0, 40);
+  ledger.ts = Date.now();
+  localStorage.setItem(LEDGER, JSON.stringify(ledger));
+  liveThisSession = true;
+  if (pendingPlay && pendingPlay.id === next.id && next.status !== "review") pendingPlay = null;
+  refreshStatus();
+  if (sessionPh) renderBank();
 }
 
 function acceptLedger(body) {
@@ -497,6 +528,7 @@ function handleMessage(data) {
     return;
   }
   if (body.kind === "ledger") acceptLedger(body);
+  if (body.kind === "play") acceptPlay(body);
   if (body.kind === "tax-delete" && body.id) {
     const stored = loadTaxes().filter((item) => item.id !== body.id);
     localStorage.setItem(LOCAL_TAXES, JSON.stringify(stored));
@@ -560,7 +592,7 @@ function listen() {
   };
   source.onerror = () => {
     streamOpen = false;
-    refreshStatus();
+    setTimeout(refreshStatus, 4000);
   };
   source.onmessage = (event) => {
     lastStream = Date.now();
@@ -2128,8 +2160,9 @@ function acceptAssets(body) {
     const name = String(item?.name || "").trim().slice(0, 40);
     const note = String(item?.note || "").trim().slice(0, 200);
     const price = moneyText(item?.price, false);
+    const paid = moneyText(item?.paid, false) || "";
     if (!/^[\w-]{8,}$/.test(id) || !name || !price) return null;
-    return { id, name, note, price };
+    return { id, name, note, price, claimed: Boolean(item?.claimed), owner: String(item?.owner || "").slice(0, 40), paid };
   }).filter(Boolean);
   localStorage.setItem(LOCAL_ASSETS, JSON.stringify(items));
   if (ts) localStorage.setItem(`${LOCAL_ASSETS}-ts`, String(ts));
@@ -2155,9 +2188,9 @@ function renderListed() {
     const name = document.createElement("strong");
     name.textContent = item.name;
     const price = document.createElement("span");
-    price.textContent = `${formatAmount(item.price)} ₲`;
+    price.textContent = item.claimed ? `Claimed · ${formatAmount(item.paid || item.price)} ₲` : `${formatAmount(item.price)} ₲`;
     button.append(name, price);
-    button.addEventListener("click", () => openListed(item.id));
+    if (!item.claimed) button.addEventListener("click", () => openListed(item.id));
     panel.append(button);
   });
 }
@@ -2166,7 +2199,7 @@ let listedId = "";
 
 function openListed(id) {
   const item = loadListed().find((entry) => entry.id === id);
-  if (!item) return;
+  if (!item || item.claimed) return;
   listedId = id;
   $("listed-name").textContent = item.name;
   $("listed-note").textContent = item.note || "";
@@ -2179,7 +2212,7 @@ function requestListed() {
   const item = loadListed().find((entry) => entry.id === listedId);
   const account = currentAccount();
   const msg = $("listed-msg");
-  if (!item || !account || !sessionPh) {
+  if (!item || item.claimed || !account || !sessionPh) {
     msg.textContent = "Log in before requesting an asset.";
     return;
   }

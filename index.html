@@ -57,12 +57,14 @@
             <button type="button" id="start-session" class="btn" aria-label="Start session">+</button>
           </div>
           <ul id="session-list" class="feed"></ul>
+          <p id="session-total" class="session-total"></p>
         </section>
 
         <section id="moves" class="page" role="tabpanel" hidden>
           <div class="page-head">
             <h1>Registered Exchanges</h1>
           </div>
+          <button type="button" id="exchange-filter" class="btn slim">Filter</button>
           <hr />
           <p id="activity-empty" class="empty">Reviewed exchanges and transfers show up here.</p>
           <ul id="activity" class="feed"></ul>
@@ -136,6 +138,11 @@
               <select id="interest-account"></select>
             </label>
             <p class="quiet">Interest is taken from this account and paid to the others.</p>
+            <label class="field">
+              <span>Loans are paid from</span>
+              <select id="loan-account"></select>
+            </label>
+            <p class="quiet">A new loan moves gizbits out of this account. A repayment comes back into it.</p>
             <p class="field"><span>Skip interest</span></p>
             <div id="interest-skips"></div>
             <p class="quiet">Checked accounts do not earn the 0.05% interest.</p>
@@ -173,10 +180,11 @@
 
         <section id="gfg" class="page" role="tabpanel" hidden>
           <div class="page-head">
-            <h1>Financial</h1>
+            <h1>Gizbit Financial Group</h1>
           </div>
           <hr />
           <button type="button" id="open-interest" class="btn">Interest</button>
+          <button type="button" id="open-loans" class="btn">Loans</button>
         </section>
 
         <section id="government" class="page" role="tabpanel" hidden>
@@ -289,6 +297,31 @@
           <div id="interest-rows"></div>
         </div>
       </section>
+      <section id="loans-page" class="side-page" aria-hidden="true">
+        <div class="archive-head">
+          <button type="button" id="loans-back" class="side-back">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Back
+          </button>
+          <h1>Loans</h1>
+        </div>
+        <div class="archive-body">
+          <p id="loan-out" class="quiet">Nothing is out on loan.</p>
+          <label class="field">
+            <span>Borrower</span>
+            <select id="loan-who"></select>
+          </label>
+          <label class="field">
+            <span>Amount (₲)</span>
+            <input id="loan-amount" inputmode="numeric" autocomplete="off" placeholder="At least 1 billion" />
+          </label>
+          <p id="loan-error" class="error" role="status"></p>
+          <button type="button" id="loan-give" class="btn">Give loan</button>
+          <div id="loan-list"></div>
+        </div>
+      </section>
       <section id="earnings" class="archive" aria-hidden="true">
         <div class="archive-head">
           <button type="button" id="earnings-back" class="archive-back">
@@ -299,7 +332,7 @@
           </button>
           <h1>Government earnings</h1>
         </div>
-        <div class="archive-body"></div>
+        <div class="archive-body" id="earnings-body"></div>
       </section>
       <section id="assets-archive" class="archive" aria-hidden="true">
         <div class="archive-head">
@@ -340,16 +373,18 @@
       </section>
       <section id="session-view" class="side-page" aria-hidden="true">
         <div class="archive-head session-head">
-          <button type="button" id="session-back" class="side-back">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-              <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            Back
-          </button>
+          <div class="session-head-bar">
+            <button type="button" id="session-back" class="side-back">
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Back
+            </button>
+            <button type="button" id="session-edit" class="session-pen" aria-label="Edit who is in">
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 20l4.5-1.2L19 8.3 15.7 5 5.2 15.5 4 20z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.8 6.8l3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+            </button>
+          </div>
           <h1 id="session-view-title">Session</h1>
-          <button type="button" id="session-edit" class="session-pen" aria-label="Edit who is in">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 20l4.5-1.2L19 8.3 15.7 5 5.2 15.5 4 20z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.8 6.8l3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
-          </button>
         </div>
         <div class="archive-body">
           <table class="session-facts">
@@ -359,17 +394,17 @@
             <tr><th>Total duration</th><td id="session-duration"></td></tr>
           </table>
           <div class="attend-panels">
-            <div class="attend-panel">
-              <span>People attended</span>
-              <span class="swatch" aria-hidden="true"></span>
+            <button type="button" class="attend-panel" id="show-present">
+              <span class="swatch present" aria-hidden="true"></span>
+              <span>People Present</span>
               <strong id="attended-count">0</strong>
-            </div>
-            <div class="attend-panel">
+            </button>
+            <button type="button" class="attend-panel" id="show-absent">
+              <span class="swatch absent" aria-hidden="true"></span>
               <span>People Absent</span>
               <strong id="absent-count">0</strong>
-            </div>
+            </button>
           </div>
-          <button type="button" id="see-all" class="btn slim">See all</button>
           <div id="session-edit-box" hidden>
             <div class="cols attend-cols" aria-hidden="true">
               <span>Account</span>
@@ -379,7 +414,8 @@
             <div id="session-edit-rows"></div>
           </div>
           <p id="session-clock" class="session-clock" hidden>0:00</p>
-          <button type="button" id="session-books-go" class="btn">Profits and losses</button>
+          <button type="button" id="session-books-go" class="btn"><span class="pl-mark" aria-hidden="true">↑↓</span> Profits and losses</button>
+          <p id="session-extremes" class="session-extremes"></p>
           <button type="button" id="end-session" class="btn" hidden>End session</button>
           <h2>Exchanges</h2>
           <p id="session-exchange-empty" class="empty">No exchanges in this session.</p>
@@ -394,15 +430,11 @@
             </svg>
             Back
           </button>
-          <h1>See all</h1>
+          <h1 id="roster-title">People Present</h1>
         </div>
         <div class="archive-body">
-          <h2>People attended</h2>
-          <ul id="see-attended" class="people"></ul>
-          <p id="see-attended-empty" class="empty">Nobody was marked present.</p>
-          <h2>People Absent</h2>
-          <ul id="see-absent" class="people"></ul>
-          <p id="see-absent-empty" class="empty">Nobody was marked absent.</p>
+          <ul id="see-roster" class="people"></ul>
+          <p id="see-roster-empty" class="empty">Nobody is in this list.</p>
         </div>
       </section>
       <section id="session-books" class="side-page above" aria-hidden="true">
@@ -563,6 +595,45 @@
         <p id="review-text"></p>
         <button type="button" id="review-yes" class="btn">Money given</button>
         <button type="button" id="review-no" class="btn ghost">Cancel</button>
+      </div>
+    </div>
+
+    <div id="filter-sheet" class="sheet" hidden>
+      <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="filter-title">
+        <h2 id="filter-title">Filter</h2>
+        <label class="field">
+          <span>Time</span>
+          <select id="filter-time">
+            <option value="all">Any time</option>
+            <option value="today">Today</option>
+            <option value="week">Last 7 days</option>
+            <option value="month">Last 30 days</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Type of exchange</span>
+          <select id="filter-type">
+            <option value="all">All types</option>
+            <option value="deposit">Deposit</option>
+            <option value="withdraw">Withdrawal</option>
+            <option value="transfer">Transfer</option>
+            <option value="interest">Interest</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Account</span>
+          <select id="filter-account"></select>
+        </label>
+        <label class="field">
+          <span>Minimum amount (₲)</span>
+          <input id="filter-min" inputmode="numeric" autocomplete="off" placeholder="Any" />
+        </label>
+        <label class="field">
+          <span>Maximum amount (₲)</span>
+          <input id="filter-max" inputmode="numeric" autocomplete="off" placeholder="Any" />
+        </label>
+        <button type="button" id="filter-apply" class="btn">Show these</button>
+        <button type="button" id="filter-clear" class="btn ghost">Clear filter</button>
       </div>
     </div>
 
