@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#1f4d76" />
     <meta name="description" content="Gizbit Network keeps gizbit balances, deposits, and withdrawals on this phone." />
     <meta name="referrer" content="no-referrer" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Gizbit Network" />
     <title>Gizbit Network</title>
     <link rel="manifest" href="manifest.json" />
@@ -17,11 +17,25 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <div id="boot" class="boot">
+      <img src="icon-512.png" alt="" />
+    </div>
     <div class="app">
       <main id="main">
         <section id="home" class="page is-active" role="tabpanel">
           <div class="page-head">
             <h1>Welcome back, Luke.</h1>
+            <span id="link-mark" class="sat" role="status" aria-label="Not connected">
+              <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">
+                <circle cx="12" cy="12" r="2.15" fill="currentColor"/>
+                <path fill="none" stroke="currentColor" stroke-width="2.55" stroke-linecap="round" d="M8.15 8.15a5.4 5.4 0 0 0 0 7.7"/>
+                <path fill="none" stroke="currentColor" stroke-width="2.55" stroke-linecap="round" d="M15.85 8.15a5.4 5.4 0 0 1 0 7.7"/>
+                <path fill="none" stroke="currentColor" stroke-width="2.55" stroke-linecap="round" d="M5.1 5.1a9.7 9.7 0 0 0 0 13.8"/>
+                <path fill="none" stroke="currentColor" stroke-width="2.55" stroke-linecap="round" d="M18.9 5.1a9.7 9.7 0 0 1 0 13.8"/>
+                <path class="sat-slash" fill="none" stroke="#1f4d76" stroke-width="4.2" stroke-linecap="round" d="M4.2 4.2l15.6 15.6"/>
+                <path class="sat-slash" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" d="M4.2 4.2l15.6 15.6"/>
+              </svg>
+            </span>
           </div>
           <hr />
           <p id="requests-empty" class="empty">Messages from a terminal show up here.</p>
@@ -57,14 +71,21 @@
             <button type="button" id="start-session" class="btn" aria-label="Start session">+</button>
           </div>
           <ul id="session-list" class="feed"></ul>
-          <p id="session-total" class="session-total"></p>
+          <div class="session-sums">
+            <p class="session-sum"><span>Total session time</span><strong id="session-total"></strong></p>
+            <p class="session-sum"><span>Total sessions</span><strong id="session-count"></strong></p>
+          </div>
         </section>
 
         <section id="moves" class="page" role="tabpanel" hidden>
           <div class="page-head">
             <h1>Registered Exchanges</h1>
+            <button type="button" id="exchange-filter" class="icon-btn head-filter" aria-label="Filter">
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <path d="M4 5h16l-6 7.2V19l-4 2v-8.8L4 5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+              </svg>
+            </button>
           </div>
-          <button type="button" id="exchange-filter" class="btn slim">Filter</button>
           <hr />
           <p id="activity-empty" class="empty">Reviewed exchanges and transfers show up here.</p>
           <ul id="activity" class="feed"></ul>
@@ -76,85 +97,24 @@
             <p class="ver" id="app-version"></p>
           </div>
           <hr />
-          <p id="link-status" class="empty" role="status">Connecting…</p>
-          <form id="settings-form" class="panel">
-            <p class="field"><span>Preset amounts (₲)</span></p>
-            <div id="preset-fields" class="preset-fields"></div>
-            <label class="field">
-              <span>Minimum amount (₲)</span>
-              <input id="min-amount" inputmode="numeric" autocomplete="off" />
-            </label>
-            <label class="field">
-              <span>Maximum amount (₲)</span>
-              <input id="max-amount" inputmode="numeric" autocomplete="off" placeholder="Account balance" />
-            </label>
-            <p class="quiet">Leave the maximum empty to use the account balance.</p>
-            <label class="field">
-              <span>1 euro equals (₲)</span>
-              <input id="euro-rate" inputmode="numeric" autocomplete="off" />
-            </label>
-            <label class="field">
-              <span>VAT on revenue (%)</span>
-              <input id="vat-rate" inputmode="numeric" autocomplete="off" />
-            </label>
-            <label class="field">
-              <span>Profit tax under the threshold (%)</span>
-              <input id="profit-low" inputmode="numeric" autocomplete="off" />
-            </label>
-            <label class="field">
-              <span>Profit tax over the threshold (%)</span>
-              <input id="profit-high" inputmode="numeric" autocomplete="off" />
-            </label>
-            <label class="field">
-              <span>Profit tax threshold (₲)</span>
-              <input id="profit-threshold" inputmode="numeric" autocomplete="off" />
-            </label>
-            <p class="quiet">Profit up to the threshold is taxed at the lower rate. The amount above that is taxed at the higher rate.</p>
-            <label class="field">
-              <span>Terms and conditions</span>
-              <textarea id="terms-text" rows="6" maxlength="800"></textarea>
-            </label>
-            <label class="field">
-              <span>Tax return terms</span>
-              <textarea id="tax-terms" rows="4" maxlength="400"></textarea>
-            </label>
-            <label class="field">
-              <span>Tax payments go to</span>
-              <select id="tax-account"></select>
-            </label>
-            <p class="quiet">When a terminal files a return, the tax is moved into this account.</p>
-            <label class="field">
-              <span>Gaming cash goes to</span>
-              <select id="gaming-account"></select>
-            </label>
-            <p class="quiet">Cash ins are paid into this account. Cash outs are paid from it.</p>
-            <label class="field">
-              <span>Tax on gaming profits (%)</span>
-              <input id="gaming-tax" inputmode="numeric" autocomplete="off" />
-            </label>
-            <p class="quiet">A winning cash out is taxed at this rate. The tax is paid into the tax account.</p>
-            <label class="field">
-              <span>Interest is paid from</span>
-              <select id="interest-account"></select>
-            </label>
-            <p class="quiet">Interest is taken from this account and paid to the others.</p>
-            <label class="field">
-              <span>Loans are paid from</span>
-              <select id="loan-account"></select>
-            </label>
-            <p class="quiet">A new loan moves gizbits out of this account. A repayment comes back into it.</p>
-            <p class="field"><span>Skip interest</span></p>
-            <div id="interest-skips"></div>
-            <p class="quiet">Checked accounts do not earn the 0.05% interest.</p>
-            <p class="field"><span>Not on the leaderboard</span></p>
-            <div id="board-skips"></div>
-            <p class="quiet">Checked accounts are left off the ranking. They show under Not Participating.</p>
+          <div class="panel settings-menu">
+            <button type="button" id="open-presets" class="btn">Preset amounts</button>
+            <button type="button" id="open-taxes" class="btn">Tax settings</button>
+            <button type="button" id="open-terms" class="btn">Terms and conditions</button>
+            <button type="button" id="open-roles" class="btn">Accounts</button>
+            <button type="button" id="open-marks" class="btn">Interest and leaderboard</button>
+            <button type="button" id="open-bank" class="btn">Bank capacity</button>
             <p id="settings-error" class="error" role="status"></p>
-            <button type="submit" class="btn">Save settings</button>
-          </form>
-          <div class="panel">
-            <button type="button" id="sync-go" class="btn">Sync</button>
-            <p class="quiet">Shares every account and balance on this phone so the terminal matches.</p>
+            <button type="button" id="sync-go" class="btn sync-btn">
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <circle cx="12" cy="12" r="2.15" fill="currentColor"/>
+                <path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M8.15 8.15a5.4 5.4 0 0 0 0 7.7"/>
+                <path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M15.85 8.15a5.4 5.4 0 0 1 0 7.7"/>
+                <path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M5.1 5.1a9.7 9.7 0 0 0 0 13.8"/>
+                <path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M18.9 5.1a9.7 9.7 0 0 1 0 13.8"/>
+              </svg>
+              Sync
+            </button>
           </div>
           <div class="panel">
             <button type="button" id="delete-returns" class="btn danger">Delete all returns</button>
@@ -215,47 +175,42 @@
       </main>
 
       <nav class="tabs" role="tablist" aria-label="Sections">
-        <button type="button" role="tab" data-tab="home" aria-selected="true">
+        <button type="button" role="tab" data-tab="home" aria-selected="true" aria-label="Dashboard">
           <span class="tab-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22">
+            <svg viewBox="0 0 24 24" width="30" height="30">
               <path d="M4 11.5 12 4l8 7.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-8.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
             </svg>
           </span>
-          <span>Dashboard</span>
         </button>
-        <button type="button" role="tab" data-tab="sessions" aria-selected="false">
+        <button type="button" role="tab" data-tab="sessions" aria-selected="false" aria-label="Sessions">
           <span class="tab-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22">
+            <svg viewBox="0 0 24 24" width="30" height="30">
               <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/>
               <path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
             </svg>
           </span>
-          <span>Sessions</span>
         </button>
-        <button type="button" role="tab" data-tab="balances" aria-selected="false">
+        <button type="button" role="tab" data-tab="balances" aria-selected="false" aria-label="Balances">
           <span class="tab-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22">
+            <svg viewBox="0 0 24 24" width="30" height="30">
               <circle cx="12" cy="8" r="3.1" fill="none" stroke="currentColor" stroke-width="1.8"/>
               <path d="M5.2 19.4c1.3-3.3 3.6-4.8 6.8-4.8s5.5 1.5 6.8 4.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
             </svg>
           </span>
-          <span>Balances</span>
         </button>
-        <button type="button" role="tab" data-tab="moves" aria-selected="false">
+        <button type="button" role="tab" data-tab="moves" aria-selected="false" aria-label="Exchanges">
           <span class="tab-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22">
+            <svg viewBox="0 0 24 24" width="30" height="30">
               <path d="M8 4v12M8 4L5 7M8 4l3 3M16 20V8M16 20l-3-3M16 20l3-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </span>
-          <span>Exchanges</span>
         </button>
-        <button type="button" role="tab" data-tab="gfg" aria-selected="false">
+        <button type="button" role="tab" data-tab="gfg" aria-selected="false" aria-label="Financial">
           <span class="tab-mark" aria-hidden="true">₲</span>
-          <span>Financial</span>
         </button>
-        <button type="button" role="tab" data-tab="government" aria-selected="false">
+        <button type="button" role="tab" data-tab="government" aria-selected="false" aria-label="Gov">
           <span class="tab-mark" aria-hidden="true">
-            <svg viewBox="0 0 64 48" width="22" height="22">
+            <svg viewBox="0 0 64 48" width="30" height="22">
               <path fill="currentColor" d="M32 1.5 60 16H4L32 1.5z"/>
               <path fill="currentColor" d="M2 16h60v5H2z"/>
               <path fill="currentColor" d="M7 22h9v3H7zm13 0h9v3h-9zm13 0h9v3h-9zm13 0h9v3h-9z"/>
@@ -264,15 +219,13 @@
               <path fill="currentColor" d="M6 40.2h52v2.6H6zM2 43.2h60v2.4H2zM0 46h64v2H0z"/>
             </svg>
           </span>
-          <span>Gov</span>
         </button>
-        <button type="button" role="tab" data-tab="settings" aria-selected="false">
+        <button type="button" role="tab" data-tab="settings" aria-selected="false" aria-label="Settings">
           <span class="tab-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22">
+            <svg viewBox="0 0 24 24" width="30" height="30">
               <path fill="currentColor" fill-rule="evenodd" d="M19.4 13.5a7.7 7.7 0 0 0 .1-1.5 7.7 7.7 0 0 0-.1-1.5l2-1.6a.5.5 0 0 0 .1-.6l-1.9-3.3a.5.5 0 0 0-.6-.2l-2.4 1a7.4 7.4 0 0 0-2.6-1.5l-.4-2.5a.5.5 0 0 0-.5-.4h-3.8a.5.5 0 0 0-.5.4l-.4 2.5a7.4 7.4 0 0 0-2.6 1.5l-2.4-1a.5.5 0 0 0-.6.2L2.4 8.3a.5.5 0 0 0 .1.6l2 1.6a7.7 7.7 0 0 0-.1 1.5 7.7 7.7 0 0 0 .1 1.5l-2 1.6a.5.5 0 0 0-.1.6l1.9 3.3a.5.5 0 0 0 .6.2l2.4-1a7.4 7.4 0 0 0 2.6 1.5l.4 2.5a.5.5 0 0 0 .5.4h3.8a.5.5 0 0 0 .5-.4l.4-2.5a7.4 7.4 0 0 0 2.6-1.5l2.4 1a.5.5 0 0 0 .6-.2l1.9-3.3a.5.5 0 0 0-.1-.6l-2-1.6zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/>
             </svg>
           </span>
-          <span>Settings</span>
         </button>
       </nav>
       <section id="interest" class="interest-page" aria-hidden="true">
@@ -389,19 +342,20 @@
         <div class="archive-body">
           <table class="session-facts">
             <tr><th>Date</th><td id="session-date"></td></tr>
-            <tr><th>Time started</th><td id="session-started"></td></tr>
-            <tr><th>Time ended</th><td id="session-ended"></td></tr>
-            <tr><th>Total duration</th><td id="session-duration"></td></tr>
+            <tr><th>Session No.</th><td id="session-no"></td></tr>
+            <tr><th>Beginning time</th><td id="session-started"></td></tr>
+            <tr><th>Ending time</th><td id="session-ended"></td></tr>
+            <tr><th>Total Duration</th><td id="session-duration"></td></tr>
           </table>
           <div class="attend-panels">
             <button type="button" class="attend-panel" id="show-present">
               <span class="swatch present" aria-hidden="true"></span>
-              <span>People Present</span>
+              <span>Accounts present</span>
               <strong id="attended-count">0</strong>
             </button>
             <button type="button" class="attend-panel" id="show-absent">
               <span class="swatch absent" aria-hidden="true"></span>
-              <span>People Absent</span>
+              <span>Accounts absent</span>
               <strong id="absent-count">0</strong>
             </button>
           </div>
@@ -430,7 +384,7 @@
             </svg>
             Back
           </button>
-          <h1 id="roster-title">People Present</h1>
+          <h1 id="roster-title">Accounts present</h1>
         </div>
         <div class="archive-body">
           <ul id="see-roster" class="people"></ul>
@@ -598,32 +552,93 @@
       </div>
     </div>
 
+    <section id="set-presets" class="side-page" aria-hidden="true">
+      <div class="archive-head">
+        <button type="button" id="presets-back" class="side-back">Back</button>
+        <h1>Preset amounts</h1>
+      </div>
+      <div class="archive-body">
+        <div id="preset-fields"></div>
+        <button type="button" id="preset-add" class="btn slim">Add amount</button>
+        <label class="field"><span>Minimum amount (₲)</span><input id="min-amount" inputmode="numeric" autocomplete="off" /></label>
+        <p id="preset-error" class="error" role="status"></p>
+      </div>
+    </section>
+    <section id="set-taxes" class="side-page" aria-hidden="true">
+      <div class="archive-head">
+        <button type="button" id="taxes-back" class="side-back">Back</button>
+        <h1>Tax settings</h1>
+      </div>
+      <div class="archive-body">
+        <table class="tax-table">
+          <tr><th>VAT on revenue (%)</th><td><input id="vat-rate" inputmode="numeric" autocomplete="off" /></td></tr>
+          <tr><th>Profit tax under the threshold (%)</th><td><input id="profit-low" inputmode="numeric" autocomplete="off" /></td></tr>
+          <tr><th>Profit tax over the threshold (%)</th><td><input id="profit-high" inputmode="numeric" autocomplete="off" /></td></tr>
+          <tr><th>Profit tax threshold (₲)</th><td><input id="profit-threshold" inputmode="numeric" autocomplete="off" /></td></tr>
+          <tr><th>Tax on gaming profits (%)</th><td><input id="gaming-tax" inputmode="numeric" autocomplete="off" /></td></tr>
+          <tr><th>1 euro equals (₲)</th><td><input id="euro-rate" inputmode="numeric" autocomplete="off" /></td></tr>
+        </table>
+        <p id="tax-error" class="error" role="status"></p>
+      </div>
+    </section>
+    <section id="set-terms" class="side-page" aria-hidden="true">
+      <div class="archive-head">
+        <button type="button" id="terms-back" class="side-back">Back</button>
+        <h1>Terms and conditions</h1>
+      </div>
+      <div class="archive-body">
+        <label class="field"><span>Exchange terms</span><textarea id="terms-text" rows="6" maxlength="800"></textarea></label>
+        <label class="field"><span>Tax return terms</span><textarea id="tax-terms" rows="4" maxlength="400"></textarea></label>
+      </div>
+    </section>
+    <section id="set-roles" class="side-page" aria-hidden="true">
+      <div class="archive-head">
+        <button type="button" id="roles-back" class="side-back">Back</button>
+        <h1>Accounts</h1>
+      </div>
+      <div class="archive-body">
+        <div class="field"><span>Tax payments go to</span><div id="tax-account" class="picker" data-value=""></div></div>
+        <div class="field"><span>Gaming cash goes to</span><div id="gaming-account" class="picker" data-value=""></div></div>
+        <div class="field"><span>Interest is paid from</span><div id="interest-account" class="picker" data-value=""></div></div>
+        <div class="field"><span>Loans are paid from</span><div id="loan-account" class="picker" data-value=""></div></div>
+      </div>
+    </section>
+    <section id="set-marks" class="side-page" aria-hidden="true">
+      <div class="archive-head">
+        <button type="button" id="marks-back" class="side-back">Back</button>
+        <h1>Interest and leaderboard</h1>
+      </div>
+      <div class="archive-body">
+        <div class="mark-head"><span>Account</span><span>Skip interest</span><span>Not on leaderboard</span></div>
+        <div id="mark-rows"></div>
+      </div>
+    </section>
+    <section id="set-bank" class="side-page" aria-hidden="true">
+      <div class="archive-head">
+        <button type="button" id="bank-back" class="side-back">Back</button>
+        <h1>Bank capacity</h1>
+      </div>
+      <div class="archive-body">
+        <label class="field"><span>Bank capacity limit (₲)</span><input id="bank-limit" inputmode="numeric" autocomplete="off" /></label>
+        <p id="bank-error" class="error" role="status"></p>
+      </div>
+    </section>
+
     <div id="filter-sheet" class="sheet" hidden>
       <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="filter-title">
         <h2 id="filter-title">Filter</h2>
-        <label class="field">
+        <div class="field">
           <span>Time</span>
-          <select id="filter-time">
-            <option value="all">Any time</option>
-            <option value="today">Today</option>
-            <option value="week">Last 7 days</option>
-            <option value="month">Last 30 days</option>
-          </select>
-        </label>
-        <label class="field">
+          <div id="filter-time" class="picker" data-value="all"></div>
+        </div>
+        <div class="field">
           <span>Type of exchange</span>
-          <select id="filter-type">
-            <option value="all">All types</option>
-            <option value="deposit">Deposit</option>
-            <option value="withdraw">Withdrawal</option>
-            <option value="transfer">Transfer</option>
-            <option value="interest">Interest</option>
-          </select>
-        </label>
-        <label class="field">
+          <div id="filter-type" class="picker" data-value="all"></div>
+        </div>
+        <div class="field">
           <span>Account</span>
-          <select id="filter-account"></select>
-        </label>
+          <div id="filter-account" class="picker" data-value=""></div>
+        </div>
         <label class="field">
           <span>Minimum amount (₲)</span>
           <input id="filter-min" inputmode="numeric" autocomplete="off" placeholder="Any" />

@@ -13,11 +13,12 @@ const DEFAULT_PROFIT_HIGH = "40";
 const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
+const DEFAULT_BANK_LIMIT = "30000000000000000";
 const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.26.000";
+const VERSION = "2.27.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 const WAIT_EXCHANGE = "gizbit-terminal-wait-exchange";
@@ -33,6 +34,7 @@ let wipedAt = Number(localStorage.getItem(WIPED)) || 0;
 let source = null;
 let streamOpen = false;
 let lastStream = 0;
+let lastPong = 0;
 let lastPing = 0;
 let toastTimer = 0;
 let pendingExchangeId = loadHold(WAIT_EXCHANGE);
@@ -160,6 +162,7 @@ function defaultSettings() {
     gamingTax: "20",
     interestAccountId: "",
     loanAccountId: "",
+    bankLimit: DEFAULT_BANK_LIMIT,
     skipInterest: [],
     boardSkip: [],
   };
@@ -175,10 +178,10 @@ function percentText(value, fallback) {
 
 function normalizeSettings(value) {
   const presets = Array.isArray(value?.presets) ? value.presets.map((item) => moneyText(item, false)).filter(Boolean) : [];
-  while (presets.length < 6) presets.push(DEFAULT_PRESETS[presets.length]);
+  if (!presets.length) presets.push(DEFAULT_PRESETS[0]);
   const maxAmount = moneyText(value?.maxAmount, false);
   return {
-    presets: presets.slice(0, 6),
+    presets: presets.slice(0, 40),
     terms: String(value?.terms || DEFAULT_TERMS).slice(0, 800),
     minAmount: moneyText(value?.minAmount, false) || DEFAULT_MIN,
     maxAmount: maxAmount && maxAmount !== "0" ? maxAmount : "",
@@ -193,6 +196,7 @@ function normalizeSettings(value) {
     gamingTax: percentText(value?.gamingTax, "20"),
     interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
     loanAccountId: typeof value?.loanAccountId === "string" && /^[\w-]{8,}$/.test(value.loanAccountId) ? value.loanAccountId : "",
+    bankLimit: moneyText(value?.bankLimit, false) || DEFAULT_BANK_LIMIT,
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
       : [],
@@ -349,9 +353,7 @@ function toast(text) {
 }
 
 function refreshStatus() {
-  const heard = ledger && Date.now() - (ledger.ts || 0) < 180000;
-  const live = streamOpen || Date.now() - lastStream < 35000;
-  setLink(Boolean(heard || live));
+  setLink(Date.now() - lastPong < 25000);
 }
 
 function matching(ph) {
@@ -528,6 +530,10 @@ function handleMessage(data) {
     return;
   }
   if (body.kind === "ledger") acceptLedger(body);
+  if (body.kind === "pong" || body.kind === "ledger") {
+    lastPong = Date.now();
+    refreshStatus();
+  }
   if (body.kind === "play") acceptPlay(body);
   if (body.kind === "tax-delete" && body.id) {
     const stored = loadTaxes().filter((item) => item.id !== body.id);
@@ -3499,8 +3505,11 @@ function wakeLink() {
 
 setInterval(() => {
   if (document.visibilityState !== "visible") return;
-  wakeLink();
   publishPing().catch(() => {});
+}, 10000);
+setInterval(() => {
+  if (document.visibilityState !== "visible") return;
+  wakeLink();
 }, 12000);
 
 document.addEventListener("visibilitychange", () => {

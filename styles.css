@@ -23,7 +23,7 @@
 input, textarea { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
 html, body { height: 100%; }
 html {
-  background: #fff;
+  background: #1f4d76;
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
@@ -36,7 +36,7 @@ body {
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
-  background: #fff;
+  background: #1f4d76;
   color: var(--ink);
   font-family: "Outfit", "Avenir Next", "Segoe UI", sans-serif;
   font-weight: 500;
@@ -111,15 +111,28 @@ main {
   overscroll-behavior: none;
   -webkit-overflow-scrolling: touch;
 }
-.page { display: none; padding: 18px 16px 8px; }
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: #1f4d76;
+}
+.boot img { width: min(240px, 62vw); height: auto; }
+.page { display: none; padding: 0 16px 8px; }
 .page.is-active { display: block; }
+#sessions.page.is-active { display: flex; flex-direction: column; min-height: 100%; }
 .page-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-bottom: 8px;
+  margin: 0 -16px 12px;
+  padding: calc(env(safe-area-inset-top) + 16px) 16px 14px;
+  background: var(--navy);
 }
+.page-head h1 { color: #fff; }
 h1 {
   margin: 0;
   font-size: 28px;
@@ -127,6 +140,18 @@ h1 {
   letter-spacing: -0.04em;
   color: var(--navy);
 }
+.sat {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  color: #fff;
+  display: grid;
+  place-items: center;
+}
+.sat.is-on .sat-slash { display: none; }
+.head-filter { color: #fff; background: transparent; border: 0; padding: 4px; }
+.sync-btn { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.sync-btn svg { flex: none; }
 .ver {
   margin: 0;
   font-size: 14px;
@@ -484,7 +509,11 @@ body.gov-theme #view-taxes,
 body.gov-theme .tax-file .btn { background: #111; color: #fff; }
 body.gov-theme .tabs { background: #3a3a3a; border-top-color: #111; }
 body.gov-theme .tabs button { background: #3a3a3a; color: #f4f4f4; }
-body.gov-theme .tabs button.is-active { background: #111; color: #fff; box-shadow: none; }
+body.gov-theme .tabs button.is-active { background: #3a3a3a; color: #fff; box-shadow: inset 0 -3px 0 #fff; }
+body.gov-theme .page-head { background: #3a3a3a; }
+#balances.page.is-active { min-height: 100%; }
+#balances.is-over { background: #c0392b; }
+#balances.is-over .page-head { background: #c0392b; }
 .tax-swipe { background: #161616; border-color: #444; }
 .tax-file { background: #161616; color: #f4f4f4; }
 .archive { background: #2a2a2a; color: #f4f4f4; }
@@ -867,15 +896,15 @@ textarea {
   background: #fff;
   color: var(--muted);
   font-weight: 700;
-  font-size: 8px;
-  line-height: 1.1;
+  font-size: 0;
+  line-height: 1;
   min-height: 62px;
-  padding: 8px 2px 10px;
+  padding: 8px 2px;
   display: grid;
   justify-items: center;
-  gap: 2px;
+  align-items: center;
 }
-.tab-mark { font-size: 20px; line-height: 1; display: grid; place-items: center; height: 22px; }
+.tab-mark { font-size: 28px; line-height: 1; display: grid; place-items: center; height: 32px; }
 .tabs button.is-active {
   color: var(--navy);
   box-shadow: inset 0 -3px 0 var(--navy);
@@ -1068,7 +1097,41 @@ textarea {
 .swatch.absent { background: #c0392b; }
 .pl-mark { margin-right: 6px; font-weight: 800; }
 .session-extremes { margin: 8px 0 0; color: var(--muted); font-size: 14px; font-weight: 700; white-space: pre-line; }
-.session-total { margin: 14px 0 72px; color: var(--navy); font-weight: 800; }
+.session-sums { margin-top: auto; padding: 8px 0 10px; }
+.session-sum { display: flex; justify-content: space-between; gap: 12px; margin: 2px 0; color: var(--navy); font-weight: 800; }
+.session-icon { width: 42px; height: 42px; display: grid; place-items: center; color: var(--navy); background: #e7eef5; border-radius: 12px; flex: none; }
+.session-icon svg { width: 26px; height: 26px; }
+.attend-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.attend-panel strong { margin-left: 6px; }
+.reason-line { grid-column: 1 / -1; display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 4px; }
+.reason-line span { font-size: 13px; font-weight: 700; }
+.reason-line input { width: min(220px, 70%); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.reason-line input::placeholder { font-style: italic; }
+.acct-line { display: flex; align-items: center; gap: 8px; }
+.acct-line .swipe, .acct-line .acct { flex: 1; }
+.acct-trash { width: 36px; height: 36px; border: 0; border-radius: 10px; background: #a33b3b; color: #fff; flex: none; }
+.picker { position: relative; }
+.picker-btn, .picker-menu button {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-weight: 700;
+}
+.picker-menu { position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); display: grid; gap: 4px; background: #fff; padding: 4px; border-radius: 12px; box-shadow: 0 8px 24px rgba(23, 58, 90, 0.16); }
+.tax-table { width: 100%; border-collapse: collapse; }
+.tax-table th, .tax-table td { border-bottom: 1px solid var(--line); padding: 8px 0; text-align: left; vertical-align: middle; }
+.tax-table th { font-size: 14px; padding-right: 10px; }
+.tax-table input { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.mark-head, .mark-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px 92px; gap: 8px; align-items: center; }
+.mark-head { font-size: 12px; font-weight: 800; color: var(--muted); }
+.mark-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.sq { width: 36px; height: 36px; border: 0; background: transparent; padding: 0; justify-self: center; opacity: 0.35; }
+.sq .swatch { width: 22px; height: 22px; border-radius: 4px; }
+.sq[aria-pressed="true"] { opacity: 1; }
+.settings-menu { display: grid; gap: 8px; }
 .loan-card { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .loan-card p { margin: 0 0 6px; }
 .earn-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); font-weight: 700; }

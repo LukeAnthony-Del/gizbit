@@ -28,8 +28,9 @@ const DEFAULT_PROFIT_HIGH = "40";
 const DEFAULT_PROFIT_THRESHOLD = "8000000000000";
 const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm the amount is correct and that the gizbits will be handed over as agreed.";
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
+const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.23.000";
+const VERSION = "2.24.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -43,6 +44,7 @@ const loans = loadList(LOANS);
 const sessions = loadList(SESSIONS);
 let sessionLive = loadSession();
 let attendMarks = new Map();
+let attendReasons = new Map();
 let viewingSession = "";
 let attendEdit = false;
 let interest = loadInterest();
@@ -88,6 +90,7 @@ function defaultSettings() {
     gamingTax: DEFAULT_GAMING_TAX,
     interestAccountId: "",
     loanAccountId: "",
+    bankLimit: DEFAULT_BANK_LIMIT,
     skipInterest: [],
     boardSkip: [],
   };
@@ -103,10 +106,10 @@ function percentText(value, fallback) {
 
 function normalizeSettings(value) {
   const presets = Array.isArray(value?.presets) ? value.presets.map((item) => moneyText(item)).filter(Boolean) : [];
-  while (presets.length < 6) presets.push(DEFAULT_PRESETS[presets.length]);
+  if (!presets.length) presets.push(DEFAULT_PRESETS[0]);
   const maxAmount = moneyText(value?.maxAmount, false);
   return {
-    presets: presets.slice(0, 6),
+    presets: presets.slice(0, 40),
     terms: String(value?.terms || DEFAULT_TERMS).slice(0, 800),
     minAmount: moneyText(value?.minAmount, false) || DEFAULT_MIN,
     maxAmount: maxAmount && maxAmount !== "0" ? maxAmount : "",
@@ -121,6 +124,7 @@ function normalizeSettings(value) {
     gamingTax: percentText(value?.gamingTax, DEFAULT_GAMING_TAX),
     interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
     loanAccountId: typeof value?.loanAccountId === "string" && /^[\w-]{8,}$/.test(value.loanAccountId) ? value.loanAccountId : "",
+    bankLimit: moneyText(value?.bankLimit, false) || DEFAULT_BANK_LIMIT,
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
       : [],
@@ -137,6 +141,17 @@ function cleanIdList(value, limit) {
     ids.push(id);
   });
   return ids.slice(0, limit);
+}
+
+function cleanReasons(value) {
+  const reasons = {};
+  if (!value || typeof value !== "object") return reasons;
+  Object.keys(value).forEach((id) => {
+    if (!/^[\w-]{8,}$/.test(id)) return;
+    const text = String(value[id] || "").trim().slice(0, 80);
+    if (text) reasons[id] = text;
+  });
+  return reasons;
 }
 
 function loadList(key) {
@@ -432,7 +447,26 @@ function publishReject(id, reason) {
 }
 
 function setStatus(text) {
-  $("link-status").textContent = text;
+  const node = $("link-status");
+  if (node) node.textContent = text;
+}
+
+function paintLink() {
+  const mark = $("link-mark");
+  if (mark) {
+    mark.classList.toggle("is-on", streamOpen);
+    mark.setAttribute("aria-label", streamOpen ? "Connected" : "Not connected");
+  }
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) return;
+  const balances = $("balances");
+  if (document.body.classList.contains("gov-theme")) meta.content = "#3a3a3a";
+  else if (balances && balances.classList.contains("is-over") && balances.classList.contains("is-active")) meta.content = "#c0392b";
+  else meta.content = "#1f4d76";
+}
+
+function publishPong(id) {
+  return publish("Still here", { v: 1, kind: "pong", id: id || uid(), ts: Date.now() }).catch(() => {});
 }
 
 function toast(text) {
@@ -673,6 +707,8 @@ function isTransfer(item) {
 
 function exchangeMemo(item) {
   const saved = String(item.memo || "").trim();
+  if (saved === "Chips") return "Casino cash in";
+  if (saved === "Cash out") return "Casino cash out";
   if (saved) return saved.slice(0, 40);
   if (item.op === "interest") return "Interest payment";
   if (String(item.id || "").endsWith("-pay")) return "Income tax invoice";
@@ -759,8 +795,10 @@ function exchangeCard(item) {
     tag.textContent = "Denied";
     row.append(tag);
   }
-  swipe.append(actions, signBtn, row);
-  bindReveal(row, 56, 56);
+  const signed = cleanSign(item.sign).length > 0;
+  if (signed) swipe.append(actions, signBtn, row);
+  else swipe.append(actions, row);
+  bindReveal(row, 56, signed ? 56 : 0);
   return swipe;
 }
 
@@ -948,6 +986,7 @@ function bindReveal(row, openRight, openLeft) {
 }
 
 let balanceEdit = false;
+let showAccountTrash = false;
 
 function setBalanceHead() {
   const head = $("bal-head");
@@ -971,9 +1010,11 @@ function writeQuietBalance(account, input) {
 
 function paintBankTotal() {
   const sum = $("bank-sum");
-  if (!sum) return;
   const total = state.accounts.reduce((running, account) => running + BigInt(account.bal || "0"), 0n);
-  sum.textContent = `${formatLoose(total)} ₲`;
+  if (sum) sum.textContent = `${formatLoose(total)} ₲`;
+  const limit = BigInt(state.settings.bankLimit || DEFAULT_BANK_LIMIT);
+  const page = $("balances");
+  if (page) page.classList.toggle("is-over", total > limit);
 }
 
 function renderRows() {
@@ -988,21 +1029,33 @@ function renderRows() {
     return a.name.localeCompare(b.name);
   });
   ranked.forEach((account) => {
-    const swipe = document.createElement("div");
-    swipe.className = "swipe";
-    const actions = document.createElement("div");
-    actions.className = "swipe-actions";
+    const line = document.createElement("div");
+    line.className = "acct-line";
     const trash = document.createElement("button");
     trash.type = "button";
-    trash.className = "swipe-trash";
+    trash.className = "acct-trash";
+    trash.hidden = !showAccountTrash;
     trash.setAttribute("aria-label", `Delete ${account.name}`);
     trash.innerHTML = trashMarkup();
-    trash.addEventListener("click", () => deleteAccount(account.id));
-    actions.className = "swipe-actions one";
-    actions.append(trash);
+    let taps = 0;
+    let tapTimer = 0;
+    trash.addEventListener("click", (event) => {
+      event.stopPropagation();
+      taps += 1;
+      clearTimeout(tapTimer);
+      if (taps >= 2) {
+        taps = 0;
+        deleteAccount(account.id);
+        return;
+      }
+      tapTimer = window.setTimeout(() => {
+        taps = 0;
+      }, 450);
+    });
     const row = document.createElement("div");
     row.className = "acct";
     const name = document.createElement("span");
+    name.className = "acct-name";
     name.textContent = account.name;
     const type = document.createElement("span");
     type.className = "acct-type";
@@ -1022,10 +1075,10 @@ function renderRows() {
     full.className = "bal-full";
     full.textContent = `${formatFull(account.bal)} GZBT`;
     row.append(name, type, short, full);
-    swipe.append(actions, row);
-    bindReveal(row, 56, 0);
+    bindNameHold(name);
     bindPasswordHold(row);
-    body.append(swipe);
+    line.append(trash, row);
+    body.append(line);
   });
   $("empty").hidden = state.accounts.length > 0;
   paintBankTotal();
@@ -1073,6 +1126,7 @@ function bindPasswordHold(row) {
     hideBalancePasswords();
   };
   row.addEventListener("pointerdown", (event) => {
+    if (event.target.closest(".acct-name, .acct-trash")) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
     startX = event.clientX;
     startY = event.clientY;
@@ -1094,6 +1148,27 @@ function bindPasswordHold(row) {
   row.addEventListener("pointerup", stop);
   row.addEventListener("pointercancel", stop);
   row.addEventListener("contextmenu", (event) => event.preventDefault());
+}
+
+function bindNameHold(name) {
+  let timer = 0;
+  const stop = () => {
+    clearTimeout(timer);
+    timer = 0;
+  };
+  name.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    stop();
+    timer = window.setTimeout(() => {
+      timer = 0;
+      showAccountTrash = true;
+      renderRows();
+    }, 450);
+  });
+  name.addEventListener("pointermove", stop);
+  name.addEventListener("pointerup", stop);
+  name.addEventListener("pointercancel", stop);
+  name.addEventListener("contextmenu", (event) => event.preventDefault());
 }
 
 function renderAccounts() {
@@ -1125,6 +1200,7 @@ function loadSession() {
       opening: data.opening,
       present: cleanIdList(data.present, 40),
       absent: cleanIdList(data.absent, 40),
+      reasons: cleanReasons(data.reasons),
     };
   } catch {
     return null;
@@ -1366,7 +1442,7 @@ function closeSessionSides() {
 
 function sessionChrono() {
   const past = sessions.slice().reverse();
-  return sessionLive ? [...past, sessionLive] : past;
+  return sessionLive ? [...past, { ...sessionLive, live: true }] : past;
 }
 
 function sessionNumber(id) {
@@ -1392,7 +1468,9 @@ function sessionStartedLine(ts) {
 
 function sessionDurationText(record) {
   const end = record.live ? Date.now() : Number(record.ended) || record.started;
-  return formatMinutes(end - record.started);
+  const minutes = Math.floor(Math.max(0, end - record.started) / 60000);
+  const hours = Math.floor(minutes / 60);
+  return `${hours} h ${minutes % 60} min`;
 }
 
 function lastSessionBooks() {
@@ -1408,15 +1486,33 @@ function pieMarkup() {
   return `<span class="pie-box" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="24" fill="#e7eef5"/><path d="M32 32 L32 8 A24 24 0 0 1 52.8 44 Z" fill="#1f4d76"/><circle cx="32" cy="32" r="24" fill="none" stroke="#1f4d76" stroke-width="3"/></svg></span>`;
 }
 
-function tickButton(kind, pressed, label, onClick) {
+function squareButton(kind, pressed, label, onClick) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = `tick ${kind}`;
-  button.innerHTML = `<img src="${kind === "present" ? "mark-in.png" : "mark-out.png"}" alt="" />`;
+  button.className = "sq";
+  button.innerHTML = `<span class="swatch ${kind}"></span>`;
   button.setAttribute("aria-label", label);
   button.setAttribute("aria-pressed", pressed ? "true" : "false");
   button.addEventListener("click", onClick);
   return button;
+}
+
+function moneyOf(id, record) {
+  const account = state.accounts.find((item) => item.id === id);
+  if (account) return BigInt(account.bal || "0");
+  const books = (record && (record.closing || record.opening)) || [];
+  const row = books.find((item) => item.id === id);
+  return BigInt((row && row.bal) || "0");
+}
+
+function richestIds(ids, record) {
+  return ids.slice().sort((a, b) => {
+    const left = moneyOf(b, record);
+    const right = moneyOf(a, record);
+    if (left > right) return 1;
+    if (left < right) return -1;
+    return personName(a, record).localeCompare(personName(b, record));
+  });
 }
 
 function sessionLength(record) {
@@ -1436,7 +1532,7 @@ function sessionListing(item) {
   const main = document.createElement("button");
   main.type = "button";
   main.className = "session-main";
-  main.insertAdjacentHTML("beforeend", pieMarkup());
+  main.insertAdjacentHTML("beforeend", `<span class="session-icon">${clockMarkup()}</span>`);
   const copy = document.createElement("span");
   copy.className = "session-copy";
   const name = document.createElement("strong");
@@ -1446,7 +1542,6 @@ function sessionListing(item) {
   when.textContent = sessionStartedLine(item.started);
   const dur = document.createElement("span");
   dur.className = "session-dur";
-  dur.insertAdjacentHTML("beforeend", clockMarkup());
   const length = document.createElement("span");
   length.textContent = sessionDurationText(item);
   if (item.live) length.dataset.liveDur = "1";
@@ -1471,6 +1566,8 @@ function openSessionMenu(id) {
   menuSessionId = id;
   const card = $("session-menu-card");
   if (card) card.style.transform = "";
+  const edit = $("session-menu-edit");
+  if (edit) edit.hidden = !(sessionLive && sessionLive.id === id);
   $("session-menu").hidden = false;
 }
 
@@ -1490,19 +1587,35 @@ function paintSessions() {
   if (sessionLive) list.append(sessionListing({ ...sessionLive, live: true }));
   sessions.forEach((item) => list.append(sessionListing(item)));
   const total = $("session-total");
+  const count = $("session-count");
+  const all = sessionChrono();
   if (total) {
-    const all = sessionChrono();
     const ms = all.reduce((sum, item) => {
       const end = item.live ? Date.now() : Number(item.ended) || item.started;
       return sum + Math.max(0, end - item.started);
     }, 0);
     const minutes = Math.floor(ms / 60000);
     const hours = Math.floor(minutes / 60);
-    total.textContent = all.length ? `Total sessions duration ${hours} h ${minutes % 60} min` : "";
+    total.textContent = all.length ? `${hours} h ${minutes % 60} min` : "";
   }
+  if (count) count.textContent = all.length ? String(all.length) : "";
   paintSessionClock();
   paintOpenSession();
   if ($("session-attend").classList.contains("is-open")) renderAttendance();
+}
+
+function reasonField(value, onInput) {
+  const reason = document.createElement("label");
+  reason.className = "reason-line";
+  const cap = document.createElement("span");
+  cap.textContent = "Reason";
+  const input = document.createElement("input");
+  input.placeholder = "Optional";
+  input.maxLength = 80;
+  input.value = value || "";
+  input.addEventListener("input", () => onInput(input.value.trim().slice(0, 80)));
+  reason.append(cap, input);
+  return reason;
 }
 
 function renderAttendance() {
@@ -1511,14 +1624,26 @@ function renderAttendance() {
   const start = $("attend-start");
   if (!box) return;
   box.replaceChildren();
-  state.accounts.forEach((account) => {
+  const ranked = state.accounts.slice().sort((a, b) => {
+    const left = BigInt(b.bal || "0");
+    const right = BigInt(a.bal || "0");
+    if (left > right) return 1;
+    if (left < right) return -1;
+    return a.name.localeCompare(b.name);
+  });
+  ranked.forEach((account) => {
     const row = document.createElement("div");
     row.className = "attend-row";
     const name = document.createElement("span");
     name.textContent = account.name;
-    const present = tickButton("present", attendMarks.get(account.id) !== "absent", `Present, ${account.name}`, () => setAttend(account.id, "present"));
-    const absent = tickButton("absent", attendMarks.get(account.id) === "absent", `Absent, ${account.name}`, () => setAttend(account.id, "absent"));
+    const absentOn = attendMarks.get(account.id) === "absent";
+    const present = squareButton("present", !absentOn, `Present, ${account.name}`, () => setAttend(account.id, "present"));
+    const absent = squareButton("absent", absentOn, `Absent, ${account.name}`, () => setAttend(account.id, "absent"));
     row.append(name, present, absent);
+    if (absentOn) row.append(reasonField(attendReasons.get(account.id) || "", (text) => {
+      if (text) attendReasons.set(account.id, text);
+      else attendReasons.delete(account.id);
+    }));
     box.append(row);
   });
   if (empty) empty.hidden = state.accounts.length > 0;
@@ -1536,6 +1661,7 @@ function openAttendance() {
     return;
   }
   attendMarks = new Map();
+  attendReasons = new Map();
   state.accounts.forEach((account) => attendMarks.set(account.id, "present"));
   closeArchives();
   renderAttendance();
@@ -1563,6 +1689,7 @@ function attendanceIds(record) {
 }
 
 function setSessionMark(sessionId, accountId, kind) {
+  if (!sessionLive || sessionLive.id !== sessionId) return;
   const record = sessionSource(sessionId);
   if (!record) return;
   if (!Array.isArray(record.present)) record.present = [];
@@ -1571,12 +1698,13 @@ function setSessionMark(sessionId, accountId, kind) {
   record.absent = record.absent.filter((id) => id !== accountId);
   if (kind === "present") record.present.push(accountId);
   if (kind === "absent") record.absent.push(accountId);
+  if (kind !== "absent" && record.reasons) delete record.reasons[accountId];
   if (sessionLive && sessionLive.id === sessionId) saveSession();
   else saveSessions();
   const fresh = sessionById(sessionId);
   if (fresh) {
     fillSessionFacts(fresh);
-    if ($("session-roster") && $("session-roster").classList.contains("is-open")) fillRoster(fresh, $("roster-title") && $("roster-title").textContent === "People Absent" ? "absent" : "present");
+    if ($("session-roster") && $("session-roster").classList.contains("is-open")) fillRoster(fresh, $("roster-title") && $("roster-title").textContent === "Accounts absent" ? "absent" : "present");
   }
 }
 
@@ -1584,14 +1712,20 @@ function fillSessionFacts(record) {
   const date = $("session-date");
   if (!date) return;
   date.textContent = sessionDateLong(record.started);
+  const number = $("session-no");
+  if (number) number.textContent = String(sessionNumber(record.id));
   $("session-started").textContent = sessionClockTime(record.started);
-  $("session-ended").textContent = record.live || !record.ended ? "Still going" : sessionClockTime(record.ended);
+  $("session-ended").textContent = record.live || !record.ended ? "-" : sessionClockTime(record.ended);
   $("session-duration").textContent = sessionDurationText(record);
   $("attended-count").textContent = String((record.present || []).length);
   $("absent-count").textContent = String((record.absent || []).length);
   fillExtremes(record);
   const pen = $("session-edit");
-  if (pen) pen.classList.toggle("is-on", attendEdit);
+  if (!record.live) attendEdit = false;
+  if (pen) {
+    pen.hidden = !record.live;
+    pen.classList.toggle("is-on", attendEdit);
+  }
   const box = $("session-edit-box");
   if (box) box.hidden = !attendEdit;
   if (attendEdit) fillSessionEdit(record);
@@ -1601,16 +1735,26 @@ function fillSessionEdit(record) {
   const list = $("session-edit-rows");
   if (!list) return;
   list.replaceChildren();
-  attendanceIds(record).forEach((id) => {
+  richestIds(attendanceIds(record), record).forEach((id) => {
     const name = personName(id, record);
     if (!name) return;
     const row = document.createElement("div");
     row.className = "attend-row";
     const label = document.createElement("span");
     label.textContent = name;
-    const present = tickButton("present", (record.present || []).includes(id), `Present, ${name}`, () => setSessionMark(record.id, id, "present"));
-    const absent = tickButton("absent", (record.absent || []).includes(id), `Absent, ${name}`, () => setSessionMark(record.id, id, "absent"));
+    const absentOn = (record.absent || []).includes(id);
+    const present = squareButton("present", (record.present || []).includes(id), `Present, ${name}`, () => setSessionMark(record.id, id, "present"));
+    const absent = squareButton("absent", absentOn, `Absent, ${name}`, () => setSessionMark(record.id, id, "absent"));
     row.append(label, present, absent);
+    if (absentOn) {
+      row.append(reasonField((record.reasons && record.reasons[id]) || "", (text) => {
+        if (!record.reasons) record.reasons = {};
+        if (text) record.reasons[id] = text;
+        else delete record.reasons[id];
+        if (sessionLive && sessionLive.id === record.id) saveSession();
+        else saveSessions();
+      }));
+    }
     list.append(row);
   });
 }
@@ -1651,9 +1795,9 @@ function fillRoster(record, kind) {
   const title = $("roster-title");
   if (!list || !empty) return;
   const present = kind !== "absent";
-  if (title) title.textContent = present ? "People Present" : "People Absent";
+  if (title) title.textContent = present ? "Accounts present" : "Accounts absent";
   list.replaceChildren();
-  const ids = present ? (record.present || []) : (record.absent || []);
+  const ids = richestIds(present ? (record.present || []) : (record.absent || []), record);
   ids.forEach((id) => {
     const line = rosterLine(id, record, present ? "present" : "absent");
     if (line) list.append(line);
@@ -1772,7 +1916,11 @@ function startSession() {
     if (attendMarks.get(account.id) === "absent") absent.push(account.id);
     else present.push(account.id);
   });
-  sessionLive = { id: uid(), started: Date.now(), opening: snapshotBooks(), present, absent };
+  const reasons = {};
+  attendReasons.forEach((text, id) => {
+    if (absent.includes(id) && text) reasons[id] = text;
+  });
+  sessionLive = { id: uid(), started: Date.now(), opening: snapshotBooks(), present, absent, reasons };
   saveSession();
   if (interest.joined) {
     interest.mark = Date.now();
@@ -1795,6 +1943,7 @@ function endSession() {
     closing: snapshotBooks(),
     present: sessionLive.present || [],
     absent: sessionLive.absent || [],
+    reasons: cleanReasons(sessionLive.reasons),
   });
   sessions.splice(40);
   sessionLive = null;
@@ -2085,21 +2234,7 @@ function saveLoans() {
 }
 
 function fillLoanAccount() {
-  const select = $("loan-account");
-  if (!select) return;
-  const current = select.value || state.settings.loanAccountId || "";
-  select.replaceChildren();
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = "Choose an account";
-  select.append(blank);
-  state.accounts.forEach((account) => {
-    const option = document.createElement("option");
-    option.value = account.id;
-    option.textContent = account.name;
-    select.append(option);
-  });
-  if ([...select.options].some((option) => option.value === current)) select.value = current;
+  fillRole("loan-account", state.settings.loanAccountId, "loanAccountId");
 }
 
 function fillLoanBorrowers() {
@@ -2259,8 +2394,7 @@ function render() {
   fillTaxAccount();
   fillGamingAccount();
   fillInterestAccount();
-  fillBoardSkips(false);
-  fillInterestSkips(false);
+  fillMarkRows(false);
   paintSessions();
   renderInterestRows();
   renderAssetList();
@@ -2282,6 +2416,7 @@ function showTab(name) {
   });
   $("add-account").hidden = name !== "balances";
   document.body.classList.toggle("gov-theme", name === "government");
+  paintLink();
   $("main").scrollTop = 0;
 }
 
@@ -2801,6 +2936,12 @@ async function catchUp() {
   const asked = Boolean(bucket.ping || bucket.applied.length || bucket.requests);
   if (!asked && announced) return;
   if (!state.accounts.length && !bucket.applied.length && !bucket.requests) return;
+  if (bucket.ping && !bucket.sync && !bucket.applied.length && !bucket.requests) {
+    await publishPong(bucket.ping);
+    announced = true;
+    lastAnnounce = Date.now();
+    return;
+  }
   if (bucket.sync) showSyncing();
   try {
     await publishLedger(bucket.applied, bucket.ping || "");
@@ -2818,11 +2959,11 @@ function listen() {
   source.onopen = () => {
     streamOpen = true;
     lastStream = Date.now();
-    setStatus("Listening for the other phone");
+    paintLink();
   };
   source.onerror = () => {
     streamOpen = false;
-    setStatus("Reconnecting…");
+    setTimeout(paintLink, 4000);
   };
   source.onmessage = (event) => {
     lastStream = Date.now();
@@ -2835,6 +2976,10 @@ function listen() {
     const bucket = { ping: false, applied: [] };
     handleMessage(data, bucket);
     if (!state.accounts.length) return;
+    if (bucket.ping && !bucket.sync && !bucket.applied.length && !bucket.requests) {
+      publishPong(bucket.ping);
+      return;
+    }
     if (!bucket.ping && !bucket.applied.length && !bucket.requests) return;
     if (bucket.sync) showSyncing();
     publishLedger(bucket.applied, bucket.ping || "")
@@ -3154,7 +3299,7 @@ function disburseChips(id) {
     applied: play.amount,
     toId: sink.id,
     toName: sink.name,
-    memo: "Chips",
+    memo: "Casino cash in",
     ts: Date.now(),
     sign: play.sign || [],
   });
@@ -3230,7 +3375,7 @@ function cashOutPlay(id) {
       applied: net.toString(),
       toId: player.id,
       toName: player.name,
-      memo: "Cash out",
+      memo: "Casino cash out",
       ts: Date.now(),
     });
   }
@@ -3279,7 +3424,7 @@ function renderGaming() {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "btn";
-      button.textContent = "Chips disbursed";
+      button.textContent = "Casino cash in";
       button.addEventListener("click", () => disburseChips(play.id));
       card.append(button);
     } else if (play.status === "chips") {
@@ -3605,132 +3750,243 @@ function readPercent(id) {
   return rate.toString();
 }
 
-function fillSettings() {
-  const box = $("preset-fields");
-  box.replaceChildren();
-  state.settings.presets.forEach((value, index) => {
-    const label = document.createElement("label");
-    label.className = "field";
-    const span = document.createElement("span");
-    span.textContent = `Amount ${index + 1}`;
-    const input = document.createElement("input");
-    input.inputMode = "numeric";
-    input.autocomplete = "off";
-    input.dataset.preset = String(index);
-    input.value = value;
-    label.append(span, input);
-    box.append(label);
+function mountPicker(root, options, value, onPick) {
+  if (!root) return;
+  const open = root.querySelector(".picker-menu");
+  if (open && !open.hidden) return;
+  const current = options.find((item) => item.value === value) || options[0];
+  root.dataset.value = current ? current.value : "";
+  root.replaceChildren();
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "picker-btn";
+  button.textContent = current ? current.label : "Choose";
+  const menu = document.createElement("div");
+  menu.className = "picker-menu";
+  menu.hidden = true;
+  options.forEach((item) => {
+    const choice = document.createElement("button");
+    choice.type = "button";
+    choice.textContent = item.label;
+    choice.addEventListener("click", (event) => {
+      event.stopPropagation();
+      root.dataset.value = item.value;
+      button.textContent = item.label;
+      menu.hidden = true;
+      if (onPick) onPick(item.value);
+    });
+    menu.append(choice);
   });
-  $("terms-text").value = state.settings.terms;
-  $("min-amount").value = state.settings.minAmount;
-  $("max-amount").value = state.settings.maxAmount;
-  $("euro-rate").value = state.settings.euroRate;
-  $("vat-rate").value = state.settings.vatRate;
-  $("gaming-tax").value = state.settings.gamingTax;
-  $("profit-low").value = state.settings.profitLow;
-  $("profit-high").value = state.settings.profitHigh;
-  $("profit-threshold").value = state.settings.profitThreshold;
-  $("tax-terms").value = state.settings.taxTerms;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    document.querySelectorAll(".picker-menu").forEach((node) => {
+      if (node !== menu) node.hidden = true;
+    });
+    menu.hidden = !menu.hidden;
+  });
+  root.append(button, menu);
+}
+
+function accountChoices() {
+  const options = [{ value: "", label: "Choose an account" }];
+  state.accounts.forEach((account) => options.push({ value: account.id, label: account.name }));
+  return options;
+}
+
+function fillRole(id, saved, key) {
+  const root = $(id);
+  if (!root) return;
+  const value = root.dataset.ready ? (root.dataset.value || "") : (saved || "");
+  root.dataset.ready = "1";
+  mountPicker(root, accountChoices(), value, (picked) => {
+    state.settings[key] = picked;
+    saveAccounts();
+    publishLedger([]).catch(() => {});
+  });
+}
+
+function fillTaxAccount() { fillRole("tax-account", state.settings.taxAccountId, "taxAccountId"); }
+function fillGamingAccount() { fillRole("gaming-account", state.settings.gamingAccountId, "gamingAccountId"); }
+function fillInterestAccount() { fillRole("interest-account", state.settings.interestAccountId, "interestAccountId"); }
+
+function fillMarkRows(fromSaved) {
+  const box = $("mark-rows");
+  if (!box) return;
+  const skip = new Set(fromSaved || !box.childElementCount
+    ? (state.settings.skipInterest || [])
+    : [...box.querySelectorAll("[data-skip]:checked")].map((input) => input.value));
+  const board = new Set(fromSaved || !box.childElementCount
+    ? (state.settings.boardSkip || [])
+    : [...box.querySelectorAll("[data-board]:checked")].map((input) => input.value));
+  const ranked = state.accounts.slice().sort((a, b) => {
+    const left = BigInt(b.bal || "0");
+    const right = BigInt(a.bal || "0");
+    if (left > right) return 1;
+    if (left < right) return -1;
+    return a.name.localeCompare(b.name);
+  });
+  box.replaceChildren();
+  ranked.forEach((account) => {
+    const row = document.createElement("div");
+    row.className = "mark-row";
+    const name = document.createElement("span");
+    name.textContent = account.name;
+    const skipBox = document.createElement("input");
+    skipBox.type = "checkbox";
+    skipBox.dataset.skip = "1";
+    skipBox.value = account.id;
+    skipBox.checked = skip.has(account.id);
+    const boardBox = document.createElement("input");
+    boardBox.type = "checkbox";
+    boardBox.dataset.board = "1";
+    boardBox.value = account.id;
+    boardBox.checked = board.has(account.id);
+    skipBox.addEventListener("change", commitSettings);
+    boardBox.addEventListener("change", commitSettings);
+    row.append(name, skipBox, boardBox);
+    box.append(row);
+  });
+}
+
+function presetRow(value) {
+  const label = document.createElement("label");
+  label.className = "field";
+  const input = document.createElement("input");
+  input.inputMode = "numeric";
+  input.autocomplete = "off";
+  input.dataset.preset = "1";
+  input.value = groupDigits(String(value || ""));
+  input.addEventListener("input", () => {
+    placeGroupedCaret(input);
+    queueSettings();
+  });
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "btn slim";
+  remove.textContent = "Remove";
+  remove.addEventListener("click", () => {
+    if (document.querySelectorAll("[data-preset]").length < 2) return;
+    label.remove();
+    queueSettings();
+  });
+  label.append(input, remove);
+  return label;
+}
+
+function fillPresetFields() {
+  const box = $("preset-fields");
+  if (!box || document.activeElement && box.contains(document.activeElement)) return;
+  box.replaceChildren();
+  state.settings.presets.forEach((value) => box.append(presetRow(value)));
+}
+
+function setGrouped(id, value) {
+  const node = $(id);
+  if (!node || document.activeElement === node) return;
+  node.value = value ? groupDigits(String(value)) : "";
+}
+
+let settingsTimer = 0;
+
+function queueSettings() {
+  clearTimeout(settingsTimer);
+  settingsTimer = window.setTimeout(commitSettings, 500);
+}
+
+function commitSettings() {
+  const presetError = $("preset-error");
+  const taxError = $("tax-error");
+  const bankError = $("bank-error");
+  if (presetError) presetError.textContent = "";
+  if (taxError) taxError.textContent = "";
+  if (bankError) bankError.textContent = "";
+  const next = { ...state.settings, maxAmount: "" };
+  if ($("preset-fields") && $("preset-fields").querySelector("[data-preset]")) {
+    const presets = [...document.querySelectorAll("[data-preset]")].map((input) => parseAmount(input.value));
+    if (!presets.length || presets.some((value) => value == null)) {
+      if (presetError) presetError.textContent = "Each preset needs a whole number of gizbits.";
+      return;
+    }
+    next.presets = presets;
+  }
+  if ($("min-amount")) {
+    const minAmount = parseAmount($("min-amount").value);
+    if (minAmount == null) {
+      if (presetError) presetError.textContent = "Enter a minimum amount.";
+      return;
+    }
+    next.minAmount = minAmount;
+  }
+  if ($("vat-rate") || $("profit-low") || $("profit-high") || $("gaming-tax")) {
+    const vatRate = $("vat-rate") ? readPercent("vat-rate") : next.vatRate;
+    const profitLow = $("profit-low") ? readPercent("profit-low") : next.profitLow;
+    const profitHigh = $("profit-high") ? readPercent("profit-high") : next.profitHigh;
+    const gamingTax = $("gaming-tax") ? readPercent("gaming-tax") : next.gamingTax;
+    if (!vatRate || !profitLow || !profitHigh || !gamingTax) {
+      if (taxError) taxError.textContent = "Enter each tax rate as a whole number from 0 to 100.";
+      return;
+    }
+    next.vatRate = vatRate;
+    next.profitLow = profitLow;
+    next.profitHigh = profitHigh;
+    next.gamingTax = gamingTax;
+  }
+  if ($("profit-threshold")) {
+    const profitThreshold = parseAmount($("profit-threshold").value);
+    if (!profitThreshold) {
+      if (taxError) taxError.textContent = "Enter the profit tax threshold.";
+      return;
+    }
+    next.profitThreshold = profitThreshold;
+  }
+  if ($("euro-rate")) {
+    const euroRate = parseAmount($("euro-rate").value);
+    if (euroRate == null || BigInt(euroRate) <= 0n) {
+      if (taxError) taxError.textContent = "Enter how many gizbits one euro is worth.";
+      return;
+    }
+    next.euroRate = euroRate;
+  }
+  if ($("terms-text")) next.terms = $("terms-text").value.trim().slice(0, 800) || DEFAULT_TERMS;
+  if ($("tax-terms")) next.taxTerms = $("tax-terms").value.trim().slice(0, 400) || DEFAULT_TAX_TERMS;
+  if ($("bank-limit")) {
+    const bankLimit = parseAmount($("bank-limit").value);
+    if (bankLimit == null || BigInt(bankLimit) <= 0n) {
+      if (bankError) bankError.textContent = "Enter the bank capacity limit.";
+      return;
+    }
+    next.bankLimit = bankLimit;
+  }
+  if ($("mark-rows") && $("mark-rows").childElementCount) {
+    next.skipInterest = [...document.querySelectorAll("[data-skip]:checked")].map((input) => input.value);
+    next.boardSkip = [...document.querySelectorAll("[data-board]:checked")].map((input) => input.value);
+  }
+  if (JSON.stringify(next) === JSON.stringify(state.settings)) return;
+  state.settings = next;
+  saveAccounts();
+  paintBankTotal();
+  publishLedger([]).catch(() => {});
+}
+
+function fillSettings() {
+  fillPresetFields();
+  setGrouped("min-amount", state.settings.minAmount);
+  setGrouped("euro-rate", state.settings.euroRate);
+  setGrouped("vat-rate", state.settings.vatRate);
+  setGrouped("gaming-tax", state.settings.gamingTax);
+  setGrouped("profit-low", state.settings.profitLow);
+  setGrouped("profit-high", state.settings.profitHigh);
+  setGrouped("profit-threshold", state.settings.profitThreshold);
+  setGrouped("bank-limit", state.settings.bankLimit);
+  const terms = $("terms-text");
+  if (terms && document.activeElement !== terms) terms.value = state.settings.terms;
+  const taxTerms = $("tax-terms");
+  if (taxTerms && document.activeElement !== taxTerms) taxTerms.value = state.settings.taxTerms;
   fillTaxAccount();
   fillGamingAccount();
   fillInterestAccount();
   fillLoanAccount();
-  fillInterestSkips(true);
-  fillBoardSkips(true);
-}
-
-function fillInterestAccount() {
-  const select = $("interest-account");
-  if (!select) return;
-  const current = select.value || state.settings.interestAccountId || "";
-  select.replaceChildren();
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = "Choose an account";
-  select.append(blank);
-  state.accounts.forEach((account) => {
-    const option = document.createElement("option");
-    option.value = account.id;
-    option.textContent = account.name;
-    select.append(option);
-  });
-  if ([...select.options].some((option) => option.value === current)) select.value = current;
-}
-
-function fillBoardSkips(fromSaved) {
-  const box = $("board-skips");
-  if (!box) return;
-  const saved = new Set(state.settings.boardSkip || []);
-  const picked = fromSaved || box.childElementCount === 0
-    ? saved
-    : new Set([...box.querySelectorAll("input:checked")].map((input) => input.value));
-  box.replaceChildren();
-  state.accounts.forEach((account) => {
-    const label = document.createElement("label");
-    label.className = "check";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.value = account.id;
-    input.checked = picked.has(account.id);
-    label.append(input, document.createTextNode(account.name));
-    box.append(label);
-  });
-}
-
-function fillInterestSkips(fromSaved) {
-  const box = $("interest-skips");
-  if (!box) return;
-  const saved = new Set(state.settings.skipInterest || []);
-  const picked = fromSaved || box.childElementCount === 0
-    ? saved
-    : new Set([...box.querySelectorAll("input:checked")].map((input) => input.value));
-  box.replaceChildren();
-  state.accounts.forEach((account) => {
-    const label = document.createElement("label");
-    label.className = "check";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.value = account.id;
-    input.checked = picked.has(account.id);
-    label.append(input, document.createTextNode(account.name));
-    box.append(label);
-  });
-}
-
-function fillTaxAccount() {
-  const select = $("tax-account");
-  if (!select) return;
-  const current = select.value || state.settings.taxAccountId || "";
-  select.replaceChildren();
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = "Choose an account";
-  select.append(blank);
-  state.accounts.forEach((account) => {
-    const option = document.createElement("option");
-    option.value = account.id;
-    option.textContent = account.name;
-    select.append(option);
-  });
-  if ([...select.options].some((option) => option.value === current)) select.value = current;
-}
-
-function fillGamingAccount() {
-  const select = $("gaming-account");
-  if (!select) return;
-  const current = select.value || state.settings.gamingAccountId || "";
-  select.replaceChildren();
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = "Choose an account";
-  select.append(blank);
-  state.accounts.forEach((account) => {
-    const option = document.createElement("option");
-    option.value = account.id;
-    option.textContent = account.name;
-    select.append(option);
-  });
-  if ([...select.options].some((option) => option.value === current)) select.value = current;
+  fillMarkRows(true);
 }
 
 function bindViewport() {
@@ -4024,76 +4280,52 @@ $("sync-go").addEventListener("click", async () => {
     button.disabled = false;
   }
 });
-$("settings-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  const error = $("settings-error");
-  error.textContent = "";
-  const presets = [...document.querySelectorAll("[data-preset]")].map((input) => parseAmount(input.value));
-  if (presets.some((value) => value == null)) {
-    error.textContent = "Each preset needs a whole number of gizbits.";
-    return;
-  }
-  const minAmount = parseAmount($("min-amount").value);
-  const maxText = $("max-amount").value.trim();
-  const maxAmount = maxText ? parseAmount(maxText) : "";
-  if (minAmount == null) {
-    error.textContent = "Enter a minimum amount.";
-    return;
-  }
-  if (maxText && maxAmount == null) {
-    error.textContent = "Enter a maximum amount, or leave it empty.";
-    return;
-  }
-  if (maxAmount && BigInt(maxAmount) < BigInt(minAmount)) {
-    error.textContent = "The maximum must be at least the minimum.";
-    return;
-  }
-  const euroRate = parseAmount($("euro-rate").value);
-  if (euroRate == null || BigInt(euroRate) <= 0n) {
-    error.textContent = "Enter how many gizbits one euro is worth.";
-    return;
-  }
-  const vatRate = readPercent("vat-rate");
-  const profitLow = readPercent("profit-low");
-  const profitHigh = readPercent("profit-high");
-  const gamingTax = readPercent("gaming-tax");
-  if (!vatRate || !profitLow || !profitHigh || !gamingTax) {
-    error.textContent = "Enter each tax rate as a whole number from 0 to 100.";
-    return;
-  }
-  const profitThreshold = parseAmount($("profit-threshold").value);
-  if (!profitThreshold) {
-    error.textContent = "Enter the profit tax threshold.";
-    return;
-  }
-  state.settings = {
-    presets,
-    terms: $("terms-text").value.trim().slice(0, 800) || DEFAULT_TERMS,
-    minAmount,
-    maxAmount: maxAmount || "",
-    euroRate,
-    vatRate,
-    profitLow,
-    profitHigh,
-    profitThreshold,
-    taxTerms: $("tax-terms").value.trim().slice(0, 400) || DEFAULT_TAX_TERMS,
-    taxAccountId: $("tax-account").value || "",
-    gamingAccountId: $("gaming-account").value || "",
-    gamingTax,
-    interestAccountId: $("interest-account").value || "",
-    loanAccountId: $("loan-account").value || "",
-    skipInterest: [...document.querySelectorAll("#interest-skips input:checked")].map((input) => input.value),
-    boardSkip: [...document.querySelectorAll("#board-skips input:checked")].map((input) => input.value),
-  };
-  saveAccounts();
+function openSetting(id) {
+  ["set-presets", "set-taxes", "set-terms", "set-roles", "set-marks", "set-bank"].forEach((name) => setSide(name, name === id));
   fillSettings();
-  toast("Settings saved");
-  publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
+}
+$("open-presets").addEventListener("click", () => openSetting("set-presets"));
+$("open-taxes").addEventListener("click", () => openSetting("set-taxes"));
+$("open-terms").addEventListener("click", () => openSetting("set-terms"));
+$("open-roles").addEventListener("click", () => openSetting("set-roles"));
+$("open-marks").addEventListener("click", () => openSetting("set-marks"));
+$("open-bank").addEventListener("click", () => openSetting("set-bank"));
+[
+  ["presets-back", "set-presets"],
+  ["taxes-back", "set-taxes"],
+  ["terms-back", "set-terms"],
+  ["roles-back", "set-roles"],
+  ["marks-back", "set-marks"],
+  ["bank-back", "set-bank"],
+].forEach(([id, page]) => {
+  $(id).addEventListener("click", () => {
+    commitSettings();
+    setSide(page, false);
+  });
+});
+$("preset-add").addEventListener("click", () => {
+  $("preset-fields").append(presetRow(state.settings.minAmount || DEFAULT_MIN));
+  queueSettings();
+});
+["min-amount", "euro-rate", "vat-rate", "profit-low", "profit-high", "profit-threshold", "gaming-tax", "bank-limit"].forEach((id) => {
+  const node = $(id);
+  if (!node) return;
+  node.addEventListener("input", () => {
+    placeGroupedCaret(node);
+    queueSettings();
+  });
+  node.addEventListener("change", commitSettings);
+});
+["terms-text", "tax-terms"].forEach((id) => {
+  const node = $(id);
+  if (!node) return;
+  node.addEventListener("input", queueSettings);
+  node.addEventListener("change", commitSettings);
 });
 document.querySelectorAll(".tabs button").forEach((button) => {
   button.addEventListener("click", () => {
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().then(() => renderRequests());
-    ["tax-archive", "earnings", "assets-archive", "gaming-archive", "loans-page"].forEach((id) => {
+    ["tax-archive", "earnings", "assets-archive", "gaming-archive", "loans-page", "set-presets", "set-taxes", "set-terms", "set-roles", "set-marks", "set-bank"].forEach((id) => {
       $(id).classList.remove("is-open");
       $(id).setAttribute("aria-hidden", "true");
     });
@@ -4152,6 +4384,7 @@ $("session-books-go").addEventListener("click", openSessionBooks);
 $("books-back").addEventListener("click", () => setSide("session-books", false));
 $("end-session").addEventListener("click", endSession);
 $("session-edit").addEventListener("click", () => {
+  if (!sessionLive || sessionLive.id !== viewingSession) return;
   attendEdit = !attendEdit;
   const record = viewingSession ? sessionById(viewingSession) : null;
   if (record) fillSessionFacts(record);
@@ -4196,22 +4429,22 @@ $("asset-price").addEventListener("input", () => placeGroupedCaret($("asset-pric
 $("filter-min").addEventListener("input", () => placeGroupedCaret($("filter-min")));
 $("filter-max").addEventListener("input", () => placeGroupedCaret($("filter-max")));
 $("exchange-filter").addEventListener("click", () => {
-  const select = $("filter-account");
-  const current = exchangeFilter.account;
-  select.replaceChildren();
-  const any = document.createElement("option");
-  any.value = "";
-  any.textContent = "Any account";
-  select.append(any);
-  state.accounts.forEach((account) => {
-    const option = document.createElement("option");
-    option.value = account.id;
-    option.textContent = account.name;
-    select.append(option);
-  });
-  $("filter-time").value = exchangeFilter.time;
-  $("filter-type").value = exchangeFilter.type;
-  if ([...select.options].some((option) => option.value === current)) select.value = current;
+  mountPicker($("filter-time"), [
+    { value: "all", label: "Any time" },
+    { value: "today", label: "Today" },
+    { value: "week", label: "Last 7 days" },
+    { value: "month", label: "Last 30 days" },
+  ], exchangeFilter.time, (value) => { exchangeFilter.time = value; });
+  mountPicker($("filter-type"), [
+    { value: "all", label: "All types" },
+    { value: "deposit", label: "Deposit" },
+    { value: "withdraw", label: "Withdrawal" },
+    { value: "transfer", label: "Transfer" },
+    { value: "interest", label: "Interest" },
+  ], exchangeFilter.type, (value) => { exchangeFilter.type = value; });
+  const accounts = [{ value: "", label: "Any account" }];
+  state.accounts.forEach((account) => accounts.push({ value: account.id, label: account.name }));
+  mountPicker($("filter-account"), accounts, exchangeFilter.account, (value) => { exchangeFilter.account = value; });
   $("filter-min").value = exchangeFilter.min ? groupDigits(exchangeFilter.min) : "";
   $("filter-max").value = exchangeFilter.max ? groupDigits(exchangeFilter.max) : "";
   $("filter-sheet").hidden = false;
@@ -4220,9 +4453,9 @@ $("filter-sheet").addEventListener("click", (event) => {
   if (event.target === $("filter-sheet")) $("filter-sheet").hidden = true;
 });
 $("filter-apply").addEventListener("click", () => {
-  exchangeFilter.time = $("filter-time").value;
-  exchangeFilter.type = $("filter-type").value;
-  exchangeFilter.account = $("filter-account").value;
+  exchangeFilter.time = $("filter-time").dataset.value || "all";
+  exchangeFilter.type = $("filter-type").dataset.value || "all";
+  exchangeFilter.account = $("filter-account").dataset.value || "";
   exchangeFilter.min = readBillion($("filter-min").value);
   exchangeFilter.max = readBillion($("filter-max").value);
   $("filter-sheet").hidden = true;
@@ -4251,6 +4484,19 @@ stopOverscroll(document.querySelector(".sheet-card"));
 lockGestures();
 setupInstall();
 fillSettings();
+const boot = $("boot");
+if (boot) boot.hidden = true;
+document.addEventListener("pointerdown", (event) => {
+  if (showAccountTrash && !event.target.closest(".acct-trash, .acct-name")) {
+    showAccountTrash = false;
+    renderRows();
+  }
+  if (!event.target.closest(".picker")) {
+    document.querySelectorAll(".picker-menu").forEach((node) => {
+      node.hidden = true;
+    });
+  }
+});
 bindBalanceColumn();
 ["gizbit-network-name", "gizbit-network-pair", "gizbit-phones", "gizbit-network-device"].forEach((key) => localStorage.removeItem(key));
 $("app-version").textContent = VERSION;
