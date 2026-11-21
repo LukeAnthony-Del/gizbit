@@ -30,7 +30,7 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.24.000";
+const VERSION = "2.24.001";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -392,36 +392,48 @@ function publishLedger(applied, answered) {
       ph: account.ph,
     })),
     settings: state.settings,
-    requests: requests.filter((item) => item.op !== "interest").slice(0, 30).map((item) => {
-      const row = {
-        id: item.id,
-        accountId: item.accountId,
-        name: item.name,
-        op: item.op,
-        amount: item.amount,
-        status: item.status,
-        applied: item.applied || "",
-        ts: item.ts,
-      };
-      if (item.toId) row.toId = item.toId;
-      if (item.toName) row.toName = item.toName;
-      if (item.note) row.note = String(item.note).slice(0, 40);
-      if (item.memo) row.memo = String(item.memo).slice(0, 40);
-      return row;
-    }),
-    plays: plays.slice(0, 20).map((item) => ({
+    ts: Date.now(),
+  };
+  const requestRows = requests.filter((item) => item.op !== "interest").slice(0, 8).map((item) => {
+    const row = {
       id: item.id,
       accountId: item.accountId,
       name: item.name,
+      op: item.op,
       amount: item.amount,
-      cashOut: item.cashOut || "",
-      tax: item.tax || "0",
       status: item.status,
+      applied: item.applied || "",
       ts: item.ts,
-    })),
-    lastBooks: lastSessionBooks(),
-    ts: Date.now(),
+    };
+    if (item.toId) row.toId = item.toId;
+    if (item.toName) row.toName = item.toName;
+    if (item.note) row.note = String(item.note).slice(0, 40);
+    if (item.memo) row.memo = String(item.memo).slice(0, 40);
+    return row;
+  });
+  const playRows = plays.slice(0, 6).map((item) => ({
+    id: item.id,
+    accountId: item.accountId,
+    name: item.name,
+    amount: item.amount,
+    cashOut: item.cashOut || "",
+    tax: item.tax || "0",
+    status: item.status,
+    ts: item.ts,
+  }));
+  const books = lastSessionBooks();
+  const fits = (body) => encode("Balances updated", body).length <= 3900;
+  const pack = (key, rows) => {
+    const kept = [];
+    rows.forEach((row) => {
+      const trial = { ...payload, [key]: kept.concat([row]) };
+      if (fits(trial)) kept.push(row);
+    });
+    if (kept.length) payload[key] = kept;
   };
+  pack("requests", requestRows);
+  pack("plays", playRows);
+  if (books.length && fits({ ...payload, lastBooks: books })) payload.lastBooks = books;
   const sent = publish("Balances updated", payload);
   publishAssets();
   return sent;
@@ -1003,6 +1015,7 @@ function writeQuietBalance(account, input) {
   account.bal = amount;
   input.value = formatFull(amount);
   saveAccounts();
+  publishLedger([]).catch(() => {});
   const full = input.parentElement && input.parentElement.querySelector(".bal-full");
   if (full) full.textContent = `${formatFull(amount)} GZBT`;
   paintBankTotal();
@@ -2445,10 +2458,23 @@ function noteCursor(data) {
   localStorage.setItem(CURSOR, JSON.stringify({ id: data.id, time: data.time }));
 }
 
-function handleMessage(data, bucket) {
+async function messageText(data) {
+  const text = typeof data?.message === "string" ? data.message : "";
+  const url = data?.attachment && typeof data.attachment.url === "string" ? data.attachment.url : "";
+  if (!url || !url.startsWith(`${NTFY}/`) || decode(text)) return text;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return text;
+    return await res.text();
+  } catch {
+    return text;
+  }
+}
+
+async function handleMessage(data, bucket) {
   noteCursor(data);
   if (data.event && data.event !== "message") return;
-  const body = decode(data.message);
+  const body = decode(await messageText(data));
   if (!body || body.v !== 1) return;
   if (body.kind === "ping") {
     if (!state.accounts.length) return;
@@ -2928,7 +2954,7 @@ async function catchUp() {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      handleMessage(JSON.parse(trimmed), bucket);
+      await handleMessage(JSON.parse(trimmed), bucket);
     } catch {
       /* Skip a line that is not a message. */
     }
@@ -2936,12 +2962,7 @@ async function catchUp() {
   const asked = Boolean(bucket.ping || bucket.applied.length || bucket.requests);
   if (!asked && announced) return;
   if (!state.accounts.length && !bucket.applied.length && !bucket.requests) return;
-  if (bucket.ping && !bucket.sync && !bucket.applied.length && !bucket.requests) {
-    await publishPong(bucket.ping);
-    announced = true;
-    lastAnnounce = Date.now();
-    return;
-  }
+  if (bucket.ping) await publishPong(bucket.ping);
   if (bucket.sync) showSyncing();
   try {
     await publishLedger(bucket.applied, bucket.ping || "");
@@ -2965,32 +2986,32 @@ function listen() {
     streamOpen = false;
     setTimeout(paintLink, 4000);
   };
+  let inbound = Promise.resolve();
   source.onmessage = (event) => {
     lastStream = Date.now();
-    let data;
-    try {
-      data = JSON.parse(event.data);
-    } catch {
-      return;
-    }
-    const bucket = { ping: false, applied: [] };
-    handleMessage(data, bucket);
-    if (!state.accounts.length) return;
-    if (bucket.ping && !bucket.sync && !bucket.applied.length && !bucket.requests) {
-      publishPong(bucket.ping);
-      return;
-    }
-    if (!bucket.ping && !bucket.applied.length && !bucket.requests) return;
-    if (bucket.sync) showSyncing();
-    publishLedger(bucket.applied, bucket.ping || "")
-      .then(() => {
+    inbound = inbound.then(async () => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      const bucket = { ping: false, applied: [] };
+      await handleMessage(data, bucket);
+      if (!state.accounts.length) return;
+      if (bucket.ping) publishPong(bucket.ping);
+      if (!bucket.ping && !bucket.applied.length && !bucket.requests) return;
+      if (bucket.sync) showSyncing();
+      try {
+        await publishLedger(bucket.applied, bucket.ping || "");
         lastAnnounce = Date.now();
         if (streamOpen) setStatus("Listening for the other phone");
-      })
-      .catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."))
-      .finally(() => {
+      } catch {
+        setStatus("Saved on this phone. The other phone will catch up when the connection is back.");
+      } finally {
         if (bucket.sync) hideSyncing();
-      });
+      }
+    }).catch(() => {});
   };
 }
 

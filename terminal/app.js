@@ -18,7 +18,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.27.000";
+const VERSION = "2.27.001";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 const WAIT_EXCHANGE = "gizbit-terminal-wait-exchange";
@@ -520,10 +520,23 @@ function noteCursor(data) {
   localStorage.setItem(CURSOR, JSON.stringify({ id: data.id, time: data.time }));
 }
 
-function handleMessage(data) {
+async function messageText(data) {
+  const text = typeof data?.message === "string" ? data.message : "";
+  const url = data?.attachment && typeof data.attachment.url === "string" ? data.attachment.url : "";
+  if (!url || !url.startsWith(`${NTFY}/`) || decode(text)) return text;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return text;
+    return await res.text();
+  } catch {
+    return text;
+  }
+}
+
+async function handleMessage(data) {
   noteCursor(data);
   if (data.event && data.event !== "message") return;
-  const body = decode(data.message);
+  const body = decode(await messageText(data));
   if (!body || body.v !== 1) return;
   if (body.kind === "reset") {
     acceptReset(body);
@@ -580,7 +593,7 @@ async function catchUp() {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      handleMessage(JSON.parse(trimmed));
+      await handleMessage(JSON.parse(trimmed));
     } catch {
       /* Skip a line that is not a message. */
     }
@@ -600,13 +613,16 @@ function listen() {
     streamOpen = false;
     setTimeout(refreshStatus, 4000);
   };
+  let inbound = Promise.resolve();
   source.onmessage = (event) => {
     lastStream = Date.now();
-    try {
-      handleMessage(JSON.parse(event.data));
-    } catch {
-      /* Ignore a malformed event. */
-    }
+    inbound = inbound.then(async () => {
+      try {
+        await handleMessage(JSON.parse(event.data));
+      } catch {
+        /* Ignore a malformed event. */
+      }
+    }).catch(() => {});
   };
 }
 
