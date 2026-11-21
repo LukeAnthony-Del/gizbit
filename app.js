@@ -31,7 +31,8 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.25.000";
+const VERSION = "2.26.000";
+const TERM_LOCK = "gizbit-term-lock";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -48,6 +49,9 @@ let sessionLive = loadSession();
 let attendMarks = new Map();
 let attendReasons = new Map();
 let viewingSession = "";
+let terminalLocked = localStorage.getItem(TERM_LOCK) === "1";
+let taxPane = "income";
+const taxOpen = new Set();
 let attendEdit = false;
 let interest = loadInterest();
 const seen = new Set(loadList(SEEN));
@@ -396,6 +400,7 @@ function publishLedger(applied, answered) {
       ph: account.ph,
     })),
     settings: state.settings,
+    locked: terminalLocked,
     ts: Date.now(),
   };
   const requestRows = requests.filter((item) => item.op !== "interest").slice(0, 8).map((item) => {
@@ -1448,7 +1453,7 @@ function setSide(id, on) {
 }
 
 function closeArchives() {
-  ["tax-archive", "earnings", "assets-archive", "gaming-archive", "loans-page", "contracts-page"].forEach((id) => setSide(id, false));
+  ["tax-archive", "tax-split", "earnings", "assets-archive", "gaming-archive", "loans-page", "contracts-page"].forEach((id) => setSide(id, false));
 }
 
 function closeSessionSides() {
@@ -1792,10 +1797,9 @@ function rosterLine(id, record, kind) {
   const name = personName(id, record);
   if (!name) return null;
   const li = document.createElement("li");
-  const mark = document.createElement("img");
-  mark.className = "roster-mark";
-  mark.alt = "";
-  mark.src = kind === "present" ? "mark-in.png" : "mark-out.png";
+  const mark = document.createElement("span");
+  mark.className = `sq ${kind}`;
+  mark.setAttribute("aria-hidden", "true");
   li.append(mark, document.createTextNode(name));
   return li;
 }
@@ -2771,29 +2775,40 @@ function takeTax(body) {
 
 function payTax(item, totals) {
   const account = state.accounts.find((entry) => entry.id === item.accountId);
-  const invoice = BigInt(totals.invoice || "0");
+  const nextInvoice = BigInt(totals.invoice || "0");
+  const prevInvoice = item.status === "paid" ? BigInt(item.totals?.invoice || "0") : 0n;
+  const delta = nextInvoice - prevInvoice;
   const sink = state.accounts.find((entry) => entry.id === state.settings.taxAccountId);
-  if (invoice > 0n) {
+  if (delta !== 0n) {
     if (!account) return "That account is no longer on this phone.";
     if (!sink) return "Set the account that receives tax payments in Settings.";
     if (sink.id === account.id) return "Choose a different account for tax payments.";
-    if (BigInt(account.bal) < invoice) return "Not enough gizbits to pay that tax.";
-    const nextSink = BigInt(sink.bal) + invoice;
-    if (nextSink > MAX) return "That tax account cannot hold that much.";
-    account.bal = (BigInt(account.bal) - invoice).toString();
-    sink.bal = nextSink.toString();
+    if (delta > 0n) {
+      if (BigInt(account.bal) < delta) return "Not enough gizbits to pay that tax.";
+      if (BigInt(sink.bal) + delta > MAX) return "That tax account cannot hold that much.";
+      account.bal = (BigInt(account.bal) - delta).toString();
+      sink.bal = (BigInt(sink.bal) + delta).toString();
+    } else {
+      const back = -delta;
+      if (BigInt(sink.bal) < back) return "The tax account does not have enough gizbits to change this.";
+      if (BigInt(account.bal) + back > MAX) return "That account cannot hold that much.";
+      sink.bal = (BigInt(sink.bal) - back).toString();
+      account.bal = (BigInt(account.bal) + back).toString();
+    }
     saveAccounts();
+    const moved = delta > 0n ? delta : -delta;
+    const refund = delta < 0n;
     requests.unshift({
-      id: `${item.id}-pay`,
-      accountId: account.id,
-      name: account.name,
+      id: `${item.id}-pay-${Date.now()}`,
+      accountId: refund ? sink.id : account.id,
+      name: refund ? sink.name : account.name,
       op: "transfer",
-      amount: totals.invoice,
+      amount: moved.toString(),
       status: "done",
-      applied: totals.invoice,
-      toId: sink.id,
-      toName: sink.name,
-      memo: "Income tax invoice",
+      applied: moved.toString(),
+      toId: refund ? account.id : sink.id,
+      toName: refund ? account.name : sink.name,
+      memo: refund ? "Income tax refund" : "Income tax invoice",
       ts: Date.now(),
     });
     saveRequests();
@@ -2804,7 +2819,7 @@ function payTax(item, totals) {
   saveTaxes();
   renderGovernment();
   publishLedger([item.id]).catch(() => {});
-  toast("Tax payment sent");
+  toast(prevInvoice === 0n ? "Tax payment sent" : "Tax return updated");
   return "";
 }
 
@@ -2896,7 +2911,7 @@ let reviewId = "";
 
 function openTaxReview(id) {
   const item = taxes.find((entry) => entry.id === id);
-  if (!item || item.status !== "review") return;
+  if (!item) return;
   reviewId = id;
   const totals = item.totals || {};
   const write = (field, amount) => {
@@ -2960,11 +2975,106 @@ function confirmTaxReview() {
   $("tax-review").hidden = true;
 }
 
+function paidTaxes() {
+  return taxes.filter((item) => item.status === "paid");
+}
+
+function taxBuckets() {
+  const income = paidTaxes().reduce((sum, item) => sum + BigInt(item.totals?.tax || "0"), 0n);
+  const vat = paidTaxes().reduce((sum, item) => sum + BigInt(item.totals?.vat || "0"), 0n);
+  const gaming = plays.reduce((sum, item) => item.status === "out" ? sum + BigInt(item.tax || "0") : sum, 0n);
+  return { income, vat, gaming, total: income + vat + gaming };
+}
+
 function taxCollected() {
-  return taxes.reduce((sum, item) => {
-    if (item.status === "review") return sum;
-    return sum + BigInt(item.totals?.invoice || "0");
-  }, 0n);
+  return taxBuckets().total;
+}
+
+const TAX_COLORS = ["#8ec5ff", "#f08a8a", "#f2c14e", "#7dcea0", "#c39bd3", "#f5b041", "#85c1e9", "#e6b0aa"];
+
+function addPayer(map, id, name, amount) {
+  if (amount <= 0n) return;
+  const key = id || name || "Account";
+  const row = map.get(key) || { name: name || "Account", amount: 0n };
+  row.amount += amount;
+  if (name) row.name = name;
+  map.set(key, row);
+}
+
+function taxSlices(kind) {
+  const map = new Map();
+  if (kind === "income" || kind === "vat" || kind === "total") {
+    paidTaxes().forEach((item) => {
+      const tax = BigInt(item.totals?.tax || "0");
+      const vat = BigInt(item.totals?.vat || "0");
+      const amount = kind === "income" ? tax : kind === "vat" ? vat : tax + vat;
+      addPayer(map, item.accountId, item.owner || item.business, amount);
+    });
+  }
+  if (kind === "gaming" || kind === "total") {
+    plays.forEach((item) => {
+      if (item.status !== "out") return;
+      addPayer(map, item.accountId, item.name, BigInt(item.tax || "0"));
+    });
+  }
+  return [...map.values()].sort((a, b) => (a.amount < b.amount ? 1 : a.amount > b.amount ? -1 : 0));
+}
+
+function sharePercents(amounts) {
+  const total = amounts.reduce((sum, amount) => sum + amount, 0n);
+  if (total <= 0n) return amounts.map(() => 0);
+  const scaled = amounts.map((amount) => (amount * 10000n) / total);
+  const floors = scaled.map((value) => Number(value / 100n));
+  let left = 100 - floors.reduce((sum, value) => sum + value, 0);
+  const order = scaled.map((value, index) => ({ index, rem: value % 100n }))
+    .sort((a, b) => (a.rem === b.rem ? 0 : a.rem > b.rem ? -1 : 1));
+  for (let step = 0; step < left; step += 1) floors[order[step % order.length].index] += 1;
+  return floors;
+}
+
+function openTaxSplit(kind) {
+  const titles = {
+    income: "Income tax",
+    vat: "VAT",
+    gaming: "Tax on gaming profits",
+    total: "Tax collected",
+  };
+  const title = $("tax-split-title");
+  if (title) title.textContent = titles[kind] || "Tax collected";
+  const slices = taxSlices(kind);
+  const pie = $("tax-pie");
+  const key = $("tax-pie-key");
+  const empty = $("tax-pie-empty");
+  if (!pie || !key || !empty) return;
+  key.replaceChildren();
+  if (!slices.length) {
+    pie.hidden = true;
+    empty.hidden = false;
+    setSide("tax-split", true);
+    return;
+  }
+  empty.hidden = true;
+  pie.hidden = false;
+  const percents = sharePercents(slices.map((slice) => slice.amount));
+  let cursor = 0;
+  const stops = [];
+  slices.forEach((slice, index) => {
+    const color = TAX_COLORS[index % TAX_COLORS.length];
+    const next = cursor + percents[index];
+    stops.push(`${color} ${cursor}% ${next}%`);
+    cursor = next;
+    const row = document.createElement("p");
+    const swatch = document.createElement("i");
+    swatch.style.background = color;
+    const label = document.createElement("span");
+    label.textContent = slice.name;
+    const share = document.createElement("strong");
+    share.textContent = `${percents[index]}%`;
+    row.append(swatch, label, share);
+    key.append(row);
+  });
+  pie.style.background = `conic-gradient(${stops.join(", ")})`;
+  setSide("tax-split", true);
 }
 
 function renderEarnings() {
@@ -2972,7 +3082,7 @@ function renderEarnings() {
   if (!body) return;
   const income = taxes.reduce((sum, item) => item.status === "review" ? sum : sum + BigInt(item.totals?.tax || "0"), 0n);
   const vat = taxes.reduce((sum, item) => item.status === "review" ? sum : sum + BigInt(item.totals?.vat || "0"), 0n);
-  const gaming = plays.reduce((sum, item) => sum + BigInt(item.tax || "0"), 0n);
+  const gaming = plays.reduce((sum, item) => item.status === "out" ? sum + BigInt(item.tax || "0") : sum, 0n);
   const sales = assetBuys.reduce((sum, item) => item.status === "done" ? sum + BigInt(item.amount || "0") : sum, 0n);
   const rows = [
     ["Income tax", income],
@@ -2998,13 +3108,11 @@ function renderTaxBar() {
   const bar = $("tax-bar");
   const key = $("tax-bar-key");
   if (!bar || !key) return;
-  const income = taxes.reduce((sum, item) => item.status === "review" ? sum : sum + BigInt(item.totals?.tax || "0"), 0n);
-  const vat = taxes.reduce((sum, item) => item.status === "review" ? sum : sum + BigInt(item.totals?.vat || "0"), 0n);
-  const gaming = plays.reduce((sum, item) => sum + BigInt(item.tax || "0"), 0n);
+  const buckets = taxBuckets();
   const parts = [
-    ["Income tax", income, "#8ec5ff"],
-    ["VAT", vat, "#f2c14e"],
-    ["Gaming profit tax", gaming, "#f08a8a"],
+    ["Income tax", buckets.income, "#8ec5ff", "income"],
+    ["VAT", buckets.vat, "#f2c14e", "vat"],
+    ["Tax on gaming profits", buckets.gaming, "#f08a8a", "gaming"],
   ].filter(([, amount]) => amount > 0n).sort((a, b) => (a[1] < b[1] ? 1 : a[1] > b[1] ? -1 : 0));
   const total = parts.reduce((sum, [, amount]) => sum + amount, 0n);
   bar.replaceChildren();
@@ -3016,16 +3124,21 @@ function renderTaxBar() {
   }
   bar.hidden = false;
   key.hidden = false;
-  parts.forEach(([label, amount, color]) => {
-    const seg = document.createElement("span");
+  parts.forEach(([label, amount, color, kind]) => {
+    const seg = document.createElement("button");
+    seg.type = "button";
     const share = Number((amount * 10000n) / total) / 100;
     seg.style.width = `${Math.max(share, 4)}%`;
     seg.style.background = color;
+    seg.setAttribute("aria-label", label);
+    seg.addEventListener("click", () => openTaxSplit(kind));
     bar.append(seg);
-    const item = document.createElement("p");
+    const item = document.createElement("button");
+    item.type = "button";
     const swatch = document.createElement("i");
     swatch.style.background = color;
     item.append(swatch, document.createTextNode(`${label} · ${formatAmount(amount.toString())} ₲`));
+    item.addEventListener("click", () => openTaxSplit(kind));
     key.append(item);
   });
 }
@@ -3037,92 +3150,130 @@ function renderGovernment() {
   renderEarnings();
   const list = $("gov-list");
   const empty = $("gov-empty");
+  const gamingList = $("gaming-tax-list");
+  const gamingEmpty = $("gaming-tax-empty");
+  const switcher = $("tax-switch");
+  if (switcher) switcher.classList.toggle("is-gaming", taxPane === "gaming");
+  const incomeTab = $("tax-tab-income");
+  const gamingTab = $("tax-tab-gaming");
+  if (incomeTab) incomeTab.setAttribute("aria-selected", taxPane === "income" ? "true" : "false");
+  if (gamingTab) gamingTab.setAttribute("aria-selected", taxPane === "gaming" ? "true" : "false");
+  if (list) list.hidden = taxPane !== "income";
+  if (empty) empty.hidden = taxPane !== "income" || taxes.length > 0;
+  if (gamingList) gamingList.hidden = taxPane !== "gaming";
+  if (gamingEmpty) gamingEmpty.hidden = taxPane !== "gaming" || plays.some((item) => item.status === "out" && BigInt(item.tax || "0") > 0n);
   if (!list || !empty) return;
   list.replaceChildren();
-  empty.hidden = taxes.length > 0;
   taxes.forEach((item) => {
     const totals = item.totals || { revenue: "0", vat: "0", profit: "0", expenses: "0", tax: "0", invoice: "0" };
-    const swipe = document.createElement("div");
-    swipe.className = "swipe tax-swipe";
-    const actions = document.createElement("div");
-    actions.className = "swipe-actions one";
-    const trash = document.createElement("button");
-    trash.type = "button";
-    trash.className = "swipe-trash";
-    trash.setAttribute("aria-label", `Remove the tax return for ${item.business}`);
-    trash.innerHTML = trashMarkup();
-    trash.addEventListener("click", () => deleteTax(item.id));
-    actions.append(trash);
-    const signBtn = document.createElement("button");
-    signBtn.type = "button";
-    signBtn.className = "swipe-sign";
-    signBtn.setAttribute("aria-label", "Show signature");
-    signBtn.innerHTML = signMarkup();
-    signBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      showSignature(item);
+    const card = document.createElement("article");
+    card.className = "tax-file tax-fold";
+    const bar = document.createElement("div");
+    bar.className = "tax-fold-bar";
+    const main = document.createElement("button");
+    main.type = "button";
+    main.className = "tax-fold-main";
+    const business = document.createElement("strong");
+    business.textContent = item.business || "Tax return";
+    const who = document.createElement("span");
+    who.textContent = item.status === "review" ? `${item.owner} · Needs approval` : item.owner;
+    const money = document.createElement("span");
+    money.textContent = `${formatAmount(totals.invoice)} ₲`;
+    main.append(business, who, money);
+    main.addEventListener("click", () => {
+      if (taxOpen.has(item.id)) taxOpen.delete(item.id);
+      else taxOpen.add(item.id);
+      renderGovernment();
     });
+    const pen = document.createElement("button");
+    pen.type = "button";
+    pen.className = "tax-pen";
+    pen.setAttribute("aria-label", `Edit ${item.business || "tax return"}`);
+    pen.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 20l4.5-1.2L19 8.3 15.7 5 5.2 15.5 4 20z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.8 6.8l3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>`;
+    pen.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openTaxReview(item.id);
+    });
+    bar.append(main, pen);
+    card.append(bar);
+    if (taxOpen.has(item.id)) {
+      const detail = document.createElement("div");
+      detail.className = "tax-fold-detail";
+      const meta = document.createElement("p");
+      meta.className = "quiet";
+      meta.textContent = `Sheet ${item.sheet} · Session ${item.session}`;
+      const grid = document.createElement("div");
+      grid.className = "tax-grid";
+      const head = document.createElement("div");
+      head.className = "tax-grid-head";
+      [["Product", "name"], ["Quantity", "sold"], ["Gross", "amount"], ["VAT", ""], ["Net", "profit"]].forEach(([label, sub]) => {
+        head.append(stackLabel(label, sub));
+      });
+      grid.append(head);
+      (item.lines || []).forEach((line) => {
+        const parts = splitVat(line.revenue, item.vatRate);
+        const row = document.createElement("div");
+        row.className = "tax-grid-row";
+        const name = document.createElement("span");
+        name.className = "tax-grid-name";
+        name.textContent = line.name;
+        const qty = document.createElement("span");
+        qty.textContent = formatFull(line.qty);
+        row.append(name, qty, stackMoney(parts.revenue), stackMoney(parts.vat), stackMoney(parts.profit));
+        grid.append(row);
+      });
+      const sums = document.createElement("div");
+      sums.className = "tax-file-totals";
+      const lead = document.createElement("div");
+      lead.className = "tax-sum";
+      lead.append(
+        sumRow("Gross revenue", totals.revenue),
+        sumRow("Gross profit", totals.profit),
+        sumRow("Gross expenses", totals.expenses || "0"),
+      );
+      const rule = document.createElement("hr");
+      const rest = document.createElement("div");
+      rest.className = "tax-sum";
+      rest.append(sumRow("Gross VAT", totals.vat), sumRow("Tax on gross profit", totals.tax));
+      sums.append(lead, rule, rest, sumRow("Total invoice", totals.invoice, true));
+      const tools = document.createElement("div");
+      tools.className = "tax-fold-tools";
+      const signBtn = document.createElement("button");
+      signBtn.type = "button";
+      signBtn.className = "btn ghost";
+      signBtn.textContent = "Signature";
+      signBtn.addEventListener("click", () => showSignature(item));
+      const trash = document.createElement("button");
+      trash.type = "button";
+      trash.className = "btn danger";
+      trash.textContent = "Remove";
+      trash.addEventListener("click", () => deleteTax(item.id));
+      tools.append(signBtn, trash);
+      detail.append(meta, grid, sums, tools);
+      card.append(detail);
+    }
+    list.append(card);
+  });
+  if (!gamingList) return;
+  gamingList.replaceChildren();
+  const casino = state.accounts.find((account) => account.id === state.settings.gamingAccountId);
+  plays.filter((item) => item.status === "out" && BigInt(item.tax || "0") > 0n).forEach((item) => {
     const card = document.createElement("article");
     card.className = "tax-file";
-    const top = document.createElement("div");
-    top.className = "tax-file-top";
-    const owner = document.createElement("strong");
-    owner.textContent = item.owner;
-    const business = document.createElement("strong");
-    business.textContent = item.business;
-    top.append(owner, business);
-    const meta = document.createElement("p");
-    meta.className = "quiet";
-    meta.textContent = `Sheet ${item.sheet} · Session ${item.session}`;
-    const grid = document.createElement("div");
-    grid.className = "tax-grid";
-    const head = document.createElement("div");
-    head.className = "tax-grid-head";
-    [["Product", "name"], ["Quantity", "sold"], ["Gross", "amount"], ["VAT", ""], ["Net", "profit"]].forEach(([label, sub]) => {
-      head.append(stackLabel(label, sub));
-    });
-    grid.append(head);
-    (item.lines || []).forEach((line) => {
-      const parts = splitVat(line.revenue, item.vatRate);
-      const row = document.createElement("div");
-      row.className = "tax-grid-row";
-      const name = document.createElement("span");
-      name.className = "tax-grid-name";
-      name.textContent = line.name;
-      const qty = document.createElement("span");
-      qty.textContent = formatFull(line.qty);
-      row.append(name, qty, stackMoney(parts.revenue), stackMoney(parts.vat), stackMoney(parts.profit));
-      grid.append(row);
-    });
-    const sums = document.createElement("div");
-    sums.className = "tax-file-totals";
-    const lead = document.createElement("div");
-    lead.className = "tax-sum";
-    lead.append(
-      sumRow("Gross revenue", totals.revenue),
-      sumRow("Gross profit", totals.profit),
-      sumRow("Gross expenses", totals.expenses || "0"),
-    );
-    const rule = document.createElement("hr");
-    const rest = document.createElement("div");
-    rest.className = "tax-sum";
-    rest.append(sumRow("Gross VAT", totals.vat), sumRow("Tax on gross profit", totals.tax));
-    sums.append(lead, rule, rest, sumRow("Total invoice", totals.invoice, true));
-    card.append(top, meta, grid, sums);
-    if (item.status === "review") {
-      const approve = document.createElement("button");
-      approve.type = "button";
-      approve.className = "btn";
-      approve.textContent = "Approve";
-      approve.addEventListener("click", (event) => {
-        event.stopPropagation();
-        openTaxReview(item.id);
-      });
-      card.append(approve);
-    }
-    swipe.append(actions, signBtn, card);
-    bindReveal(card, 56, 56);
-    list.append(swipe);
+    const filed = document.createElement("strong");
+    filed.textContent = casino ? casino.name : "Casino";
+    const paid = document.createElement("p");
+    paid.textContent = `Paid by ${item.name}`;
+    const money = document.createElement("p");
+    money.className = "is-invoice";
+    const amount = document.createElement("strong");
+    amount.textContent = `${formatAmount(item.tax)} ₲`;
+    money.append(amount);
+    const note = document.createElement("p");
+    note.className = "quiet";
+    note.textContent = `Cashed out ${formatAmount(item.cashOut || "0")} ₲`;
+    card.append(filed, paid, money, note);
+    gamingList.append(card);
   });
 }
 
@@ -3592,7 +3743,7 @@ function cashOutPlay(id) {
       applied: tax.toString(),
       toId: taxAccount.id,
       toName: taxAccount.name,
-      memo: "Gaming profit tax",
+      memo: "Tax on gaming profits",
       ts: Date.now(),
     });
   }
@@ -4441,6 +4592,9 @@ function deleteEverything() {
   contracts.splice(0, contracts.length);
   localStorage.removeItem(LOANS);
   localStorage.removeItem(CONTRACTS);
+  terminalLocked = false;
+  localStorage.setItem(TERM_LOCK, "0");
+  paintLock();
   localStorage.removeItem(LISTED);
   localStorage.removeItem(ASSET_BUYS);
   localStorage.removeItem(PLAYS);
@@ -4539,7 +4693,7 @@ $("preset-add").addEventListener("click", () => {
 document.querySelectorAll(".tabs button").forEach((button) => {
   button.addEventListener("click", () => {
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().then(() => renderRequests());
-    ["tax-archive", "earnings", "assets-archive", "gaming-archive", "loans-page", "contracts-page", "set-presets", "set-taxes", "set-terms", "set-roles", "set-marks", "set-bank"].forEach((id) => {
+    ["tax-archive", "tax-split", "earnings", "assets-archive", "gaming-archive", "loans-page", "contracts-page", "set-presets", "set-taxes", "set-terms", "set-roles", "set-marks", "set-bank"].forEach((id) => {
       $(id).classList.remove("is-open");
       $(id).setAttribute("aria-hidden", "true");
     });
@@ -4646,6 +4800,44 @@ $("open-contracts").addEventListener("click", () => {
 $("contracts-back").addEventListener("click", () => setSide("contracts-page", false));
 $("contract-make").addEventListener("click", makeContract);
 $("contract-amount").addEventListener("input", () => placeGroupedCaret($("contract-amount")));
+function paintLock() {
+  const button = $("lock-go");
+  if (!button) return;
+  button.classList.toggle("is-locked", terminalLocked);
+  button.setAttribute("aria-label", terminalLocked ? "Unlock terminal" : "Lock terminal");
+}
+
+$("lock-go").addEventListener("click", async () => {
+  const button = $("lock-go");
+  button.disabled = true;
+  const next = !terminalLocked;
+  try {
+    await publish(next ? "Terminal locked" : "Terminal unlocked", {
+      v: 1,
+      kind: "lock",
+      locked: next,
+      ts: Date.now(),
+    });
+    terminalLocked = next;
+    localStorage.setItem(TERM_LOCK, next ? "1" : "0");
+    paintLock();
+    toast(next ? "Terminal locked" : "Terminal unlocked");
+  } catch {
+    toast("Couldn't reach the terminal. Try again.");
+  } finally {
+    button.disabled = false;
+  }
+});
+$("tax-collected").addEventListener("click", () => openTaxSplit("total"));
+$("tax-split-back").addEventListener("click", () => setSide("tax-split", false));
+$("tax-tab-income").addEventListener("click", () => {
+  taxPane = "income";
+  renderGovernment();
+});
+$("tax-tab-gaming").addEventListener("click", () => {
+  taxPane = "gaming";
+  renderGovernment();
+});
 $("ring-go").addEventListener("click", async () => {
   const button = $("ring-go");
   button.disabled = true;
@@ -4735,6 +4927,7 @@ document.addEventListener("pointerdown", (event) => {
 bindBalanceColumn();
 ["gizbit-network-name", "gizbit-network-pair", "gizbit-phones", "gizbit-network-device"].forEach((key) => localStorage.removeItem(key));
 $("app-version").textContent = VERSION;
+paintLock();
 absorbStoredSigns();
 render();
 showTab("home");

@@ -160,6 +160,22 @@ h1 {
   place-items: center;
 }
 .sat.is-on .sat-slash { display: none; }
+.head-tools { display: flex; align-items: center; gap: 2px; flex: none; }
+.head-lock {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #fff;
+  display: grid;
+  place-items: center;
+}
+.head-lock .lock-open { display: none; }
+.head-lock.is-locked .lock-shut { display: none; }
+.head-lock.is-locked .lock-open { display: block; }
 .page-head .head-filter {
   flex: none;
   width: 28px;
@@ -448,7 +464,18 @@ input, select {
 #pay-interest { margin-bottom: 8px; }
 .gov-actions { display: grid; gap: 10px; }
 .gov-kicker { margin: 0; color: #c8c8c8; font-size: 13px; font-weight: 700; }
-.gov-figure { margin: 2px 0 6px; font-size: 34px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
+.gov-figure {
+  margin: 2px 0 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 34px;
+  font-weight: 800;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
 .gov-actions .btn { width: 100%; }
 .log-swipe.is-interest .log-row { background: #e4e4e4; color: #6b6b6b; }
 .log-memo { color: var(--muted); font-size: 13px; font-weight: 650; }
@@ -1164,10 +1191,98 @@ textarea {
 .attend-row .sq.present[aria-pressed="true"] { background: #1f7a3a; box-shadow: none; }
 .attend-row .sq.absent[aria-pressed="true"] { background: #c0392b; box-shadow: none; }
 .tax-bar { display: flex; height: 18px; border-radius: 9px; overflow: hidden; background: #3a3a3a; }
-.tax-bar span { display: block; height: 100%; min-width: 8px; }
+.tax-bar button { display: block; height: 100%; min-width: 8px; padding: 0; border: 0; }
 .tax-bar-key { display: grid; gap: 6px; }
-.tax-bar-key p { display: flex; align-items: center; gap: 8px; margin: 0; color: #f4f4f4; font-size: 13px; font-weight: 700; }
+.tax-bar-key button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #f4f4f4;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+}
 .tax-bar-key i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.pie { width: 220px; height: 220px; border-radius: 50%; margin: 8px auto 16px; }
+.pie-key { display: grid; gap: 8px; }
+.pie-key p { display: flex; align-items: center; gap: 8px; margin: 0; color: #f4f4f4; font-size: 14px; font-weight: 700; }
+.pie-key i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.pie-key strong { margin-left: auto; }
+body.gov-theme #tax-split { background: #2a2a2a; color: #f4f4f4; }
+body.gov-theme #tax-split h1,
+body.gov-theme #tax-split .side-back { color: #fff; }
+.tax-switch {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin: 0 0 14px;
+  padding: 4px;
+  border-radius: 12px;
+  background: #161616;
+}
+.tax-switch-pill {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  border-radius: 9px;
+  background: #3a3a3a;
+  transition: transform 0.25s ease;
+}
+.tax-switch.is-gaming .tax-switch-pill { transform: translateX(100%); }
+.tax-switch button {
+  position: relative;
+  z-index: 1;
+  min-height: 48px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+.tax-fold { position: relative; }
+.tax-fold-bar { display: flex; align-items: stretch; gap: 8px; }
+.tax-fold-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.tax-fold-main strong { font-size: 16px; }
+.tax-fold-main span { color: #c8c8c8; font-size: 13px; font-weight: 700; }
+.tax-pen {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #fff;
+}
+.tax-fold-detail { display: grid; gap: 10px; margin-top: 12px; }
+.tax-fold-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tax-fold-tools .btn { width: 100%; }
+.tax-file .is-invoice { margin: 4px 0; font-size: 22px; }
+.people .sq { width: 26px; height: 26px; border-radius: 4px; flex: none; }
+.people .sq.present { background: #1f7a3a; }
+.people .sq.absent { background: #c0392b; }
 .settings-menu { display: grid; gap: 8px; }
 .loan-card { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .loan-card p { margin: 0 0 6px; }

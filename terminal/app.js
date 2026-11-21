@@ -18,7 +18,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.28.000";
+const VERSION = "2.29.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 const WAIT_EXCHANGE = "gizbit-terminal-wait-exchange";
@@ -382,6 +382,7 @@ function acceptReset(body) {
   forgetBook();
   showLogin();
   $("login-msg").textContent = "The main phone deleted every account.";
+  setTerminalLock(false);
 }
 
 function sanitizeBooks(value) {
@@ -445,7 +446,14 @@ function acceptPlay(body) {
   if (sessionPh) renderBank();
 }
 
+function setTerminalLock(on) {
+  localStorage.setItem("gizbit-term-locked", on ? "1" : "0");
+  const node = $("term-lock");
+  if (node) node.hidden = !on;
+}
+
 function acceptLedger(body) {
+  if (body && typeof body.locked === "boolean") setTerminalLock(body.locked);
   if (!body || !Array.isArray(body.accounts) || !body.accounts.length) return;
   const ts = Number(body.ts) || 0;
   if (wipedAt && ts && ts <= wipedAt) return;
@@ -545,10 +553,11 @@ async function handleMessage(data) {
     return;
   }
   if (body.kind === "ledger") acceptLedger(body);
-  if (body.kind === "pong" || body.kind === "ledger" || body.kind === "ring") {
+  if (body.kind === "pong" || body.kind === "ledger" || body.kind === "ring" || body.kind === "lock") {
     lastPong = Date.now();
     refreshStatus();
   }
+  if (body.kind === "lock") setTerminalLock(body.locked === true);
   if (body.kind === "ring") {
     const ring = $("ring");
     if (ring) ring.hidden = false;
@@ -3501,6 +3510,7 @@ stopOverscroll($("main"));
 lockGestures();
 setupInstall();
 refreshStatus();
+setTerminalLock(localStorage.getItem("gizbit-term-locked") === "1");
 document.querySelectorAll(".ver").forEach((node) => {
   node.textContent = VERSION;
 });
