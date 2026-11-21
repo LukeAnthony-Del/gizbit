@@ -15,6 +15,7 @@ const LISTED = "gizbit-assets";
 const ASSET_BUYS = "gizbit-asset-buys";
 const PLAYS = "gizbit-gaming";
 const LOANS = "gizbit-loans";
+const CONTRACTS = "gizbit-contracts";
 const SEEN = "gizbit-seen";
 const CURSOR = "gizbit-cursor";
 const MAX = 10n ** 18n;
@@ -30,7 +31,7 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.24.001";
+const VERSION = "2.25.000";
 
 const state = loadState();
 const activity = loadList(ACTIVITY);
@@ -41,6 +42,7 @@ const assets = loadList(LISTED);
 const assetBuys = loadList(ASSET_BUYS);
 const plays = loadList(PLAYS);
 const loans = loadList(LOANS);
+const contracts = loadList(CONTRACTS);
 const sessions = loadList(SESSIONS);
 let sessionLive = loadSession();
 let attendMarks = new Map();
@@ -93,6 +95,7 @@ function defaultSettings() {
     bankLimit: DEFAULT_BANK_LIMIT,
     skipInterest: [],
     boardSkip: [],
+    skipAttend: [],
   };
 }
 
@@ -129,6 +132,7 @@ function normalizeSettings(value) {
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
       : [],
     boardSkip: cleanIdList(value?.boardSkip, 40),
+    skipAttend: cleanIdList(value?.skipAttend, 40),
   };
 }
 
@@ -1444,7 +1448,7 @@ function setSide(id, on) {
 }
 
 function closeArchives() {
-  ["tax-archive", "earnings", "assets-archive", "gaming-archive", "loans-page"].forEach((id) => setSide(id, false));
+  ["tax-archive", "earnings", "assets-archive", "gaming-archive", "loans-page", "contracts-page"].forEach((id) => setSide(id, false));
 }
 
 function closeSessionSides() {
@@ -1502,12 +1506,15 @@ function pieMarkup() {
 function squareButton(kind, pressed, label, onClick) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "sq";
-  button.innerHTML = `<span class="swatch ${kind}"></span>`;
+  button.className = `sq ${kind}`;
   button.setAttribute("aria-label", label);
   button.setAttribute("aria-pressed", pressed ? "true" : "false");
   button.addEventListener("click", onClick);
   return button;
+}
+
+function skippedAttendance(id) {
+  return (state.settings.skipAttend || []).includes(id);
 }
 
 function moneyOf(id, record) {
@@ -1644,7 +1651,8 @@ function renderAttendance() {
     if (left < right) return -1;
     return a.name.localeCompare(b.name);
   });
-  ranked.forEach((account) => {
+  const asked = ranked.filter((account) => !skippedAttendance(account.id));
+  asked.forEach((account) => {
     const row = document.createElement("div");
     row.className = "attend-row";
     const name = document.createElement("span");
@@ -1659,8 +1667,13 @@ function renderAttendance() {
     }));
     box.append(row);
   });
-  if (empty) empty.hidden = state.accounts.length > 0;
-  if (start) start.disabled = state.accounts.length === 0;
+  if (empty) {
+    empty.hidden = asked.length > 0;
+    empty.textContent = state.accounts.length
+      ? "No accounts are asked to attend."
+      : "No accounts yet. Add one before starting a session.";
+  }
+  if (start) start.disabled = asked.length === 0;
 }
 
 function setAttend(id, kind) {
@@ -1675,7 +1688,10 @@ function openAttendance() {
   }
   attendMarks = new Map();
   attendReasons = new Map();
-  state.accounts.forEach((account) => attendMarks.set(account.id, "present"));
+  state.accounts.forEach((account) => {
+    if (skippedAttendance(account.id)) return;
+    attendMarks.set(account.id, "present");
+  });
   closeArchives();
   renderAttendance();
   setSide("session-books", false);
@@ -1922,10 +1938,11 @@ function deleteSession(id) {
 }
 
 function startSession() {
-  if (sessionLive || !state.accounts.length) return;
+  const asked = state.accounts.filter((account) => !skippedAttendance(account.id));
+  if (sessionLive || !asked.length) return;
   const present = [];
   const absent = [];
-  state.accounts.forEach((account) => {
+  asked.forEach((account) => {
     if (attendMarks.get(account.id) === "absent") absent.push(account.id);
     else present.push(account.id);
   });
@@ -2398,6 +2415,133 @@ function repayLoan(id) {
   toast("Loan repaid");
 }
 
+function saveContracts() {
+  localStorage.setItem(CONTRACTS, JSON.stringify(contracts.slice(0, 40)));
+}
+
+function contractChoices() {
+  return [{ value: "", label: "Choose an account" }].concat(
+    state.accounts.map((account) => ({ value: account.id, label: account.name })),
+  );
+}
+
+function renderContracts() {
+  const from = $("contract-from");
+  const to = $("contract-to");
+  if (from) mountPicker(from, contractChoices(), from.dataset.value || "");
+  if (to) mountPicker(to, contractChoices(), to.dataset.value || "");
+  const list = $("contract-list");
+  const note = $("contract-note");
+  if (!list) return;
+  const open = contracts.filter((item) => !item.paid);
+  if (note) note.textContent = open.length ? `${open.length} still open.` : "No contracts between accounts yet.";
+  list.replaceChildren();
+  contracts.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "loan-card";
+    const title = document.createElement("p");
+    title.textContent = item.paid
+      ? `${item.title}: ${item.fromName} paid ${item.toName} ${formatAmount(item.amount)} ₲`
+      : `${item.title}: ${item.fromName} owes ${item.toName} ${formatAmount(item.amount)} ₲`;
+    card.append(title);
+    if (!item.paid) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn slim";
+      button.textContent = "Settle";
+      button.addEventListener("click", () => settleContract(item.id));
+      card.append(button);
+    }
+    list.append(card);
+  });
+}
+
+function makeContract() {
+  const error = $("contract-error");
+  if (error) error.textContent = "";
+  const from = state.accounts.find((item) => item.id === ($("contract-from").dataset.value || ""));
+  const to = state.accounts.find((item) => item.id === ($("contract-to").dataset.value || ""));
+  const amount = readBillion($("contract-amount").value);
+  const title = $("contract-title").value.trim().slice(0, 40);
+  if (!from || !to || from.id === to.id) {
+    if (error) error.textContent = "Choose two different accounts.";
+    return;
+  }
+  if (!amount) {
+    if (error) error.textContent = "Enter at least 1 billion gizbits.";
+    return;
+  }
+  if (!title) {
+    if (error) error.textContent = "Name the contract.";
+    return;
+  }
+  contracts.unshift({
+    id: uid(),
+    fromId: from.id,
+    toId: to.id,
+    fromName: from.name,
+    toName: to.name,
+    amount,
+    title,
+    paid: false,
+    ts: Date.now(),
+  });
+  contracts.splice(40);
+  saveContracts();
+  $("contract-amount").value = "";
+  $("contract-title").value = "";
+  renderContracts();
+  toast("Contract made");
+}
+
+function settleContract(id) {
+  const item = contracts.find((row) => row.id === id && !row.paid);
+  const error = $("contract-error");
+  if (!item) return;
+  const from = state.accounts.find((account) => account.id === item.fromId);
+  const to = state.accounts.find((account) => account.id === item.toId);
+  if (!from || !to) {
+    if (error) error.textContent = "That account is no longer on this phone.";
+    return;
+  }
+  if (BigInt(from.bal) < BigInt(item.amount)) {
+    if (error) error.textContent = `${from.name} does not have enough gizbits.`;
+    return;
+  }
+  const next = BigInt(to.bal) + BigInt(item.amount);
+  if (next > MAX) {
+    if (error) error.textContent = "That account cannot hold that much.";
+    return;
+  }
+  from.bal = (BigInt(from.bal) - BigInt(item.amount)).toString();
+  to.bal = next.toString();
+  item.paid = true;
+  item.fromName = from.name;
+  item.toName = to.name;
+  requests.unshift({
+    id: `${item.id}-contract`,
+    accountId: from.id,
+    name: from.name,
+    op: "transfer",
+    amount: item.amount,
+    status: "done",
+    applied: item.amount,
+    toId: to.id,
+    toName: to.name,
+    memo: "Contract",
+    ts: Date.now(),
+  });
+  requests.splice(80);
+  saveAccounts();
+  saveRequests();
+  saveContracts();
+  if (error) error.textContent = "";
+  render();
+  renderContracts();
+  publishLedger([]).catch(() => {});
+  toast("Contract settled");
+}
+
 function render() {
   renderRows();
   renderAccounts();
@@ -2850,9 +2994,46 @@ function renderEarnings() {
   });
 }
 
+function renderTaxBar() {
+  const bar = $("tax-bar");
+  const key = $("tax-bar-key");
+  if (!bar || !key) return;
+  const income = taxes.reduce((sum, item) => item.status === "review" ? sum : sum + BigInt(item.totals?.tax || "0"), 0n);
+  const vat = taxes.reduce((sum, item) => item.status === "review" ? sum : sum + BigInt(item.totals?.vat || "0"), 0n);
+  const gaming = plays.reduce((sum, item) => sum + BigInt(item.tax || "0"), 0n);
+  const parts = [
+    ["Income tax", income, "#8ec5ff"],
+    ["VAT", vat, "#f2c14e"],
+    ["Gaming profit tax", gaming, "#f08a8a"],
+  ].filter(([, amount]) => amount > 0n).sort((a, b) => (a[1] < b[1] ? 1 : a[1] > b[1] ? -1 : 0));
+  const total = parts.reduce((sum, [, amount]) => sum + amount, 0n);
+  bar.replaceChildren();
+  key.replaceChildren();
+  if (!parts.length || total <= 0n) {
+    bar.hidden = true;
+    key.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  key.hidden = false;
+  parts.forEach(([label, amount, color]) => {
+    const seg = document.createElement("span");
+    const share = Number((amount * 10000n) / total) / 100;
+    seg.style.width = `${Math.max(share, 4)}%`;
+    seg.style.background = color;
+    bar.append(seg);
+    const item = document.createElement("p");
+    const swatch = document.createElement("i");
+    swatch.style.background = color;
+    item.append(swatch, document.createTextNode(`${label} · ${formatAmount(amount.toString())} ₲`));
+    key.append(item);
+  });
+}
+
 function renderGovernment() {
   const collected = $("tax-collected");
   if (collected) collected.textContent = `${formatAmount(taxCollected().toString())} ₲`;
+  renderTaxBar();
   renderEarnings();
   const list = $("gov-list");
   const empty = $("gov-empty");
@@ -3839,6 +4020,9 @@ function fillMarkRows(fromSaved) {
   const board = new Set(fromSaved || !box.childElementCount
     ? (state.settings.boardSkip || [])
     : [...box.querySelectorAll("[data-board]:checked")].map((input) => input.value));
+  const attend = new Set(fromSaved || !box.childElementCount
+    ? (state.settings.skipAttend || [])
+    : [...box.querySelectorAll("[data-attend]:checked")].map((input) => input.value));
   const ranked = state.accounts.slice().sort((a, b) => {
     const left = BigInt(b.bal || "0");
     const right = BigInt(a.bal || "0");
@@ -3862,9 +4046,15 @@ function fillMarkRows(fromSaved) {
     boardBox.dataset.board = "1";
     boardBox.value = account.id;
     boardBox.checked = board.has(account.id);
+    const attendBox = document.createElement("input");
+    attendBox.type = "checkbox";
+    attendBox.dataset.attend = "1";
+    attendBox.value = account.id;
+    attendBox.checked = attend.has(account.id);
     skipBox.addEventListener("change", commitSettings);
     boardBox.addEventListener("change", commitSettings);
-    row.append(name, skipBox, boardBox);
+    attendBox.addEventListener("change", commitSettings);
+    row.append(name, skipBox, boardBox, attendBox);
     box.append(row);
   });
 }
@@ -3981,6 +4171,7 @@ function commitSettings() {
   if ($("mark-rows") && $("mark-rows").childElementCount) {
     next.skipInterest = [...document.querySelectorAll("[data-skip]:checked")].map((input) => input.value);
     next.boardSkip = [...document.querySelectorAll("[data-board]:checked")].map((input) => input.value);
+    next.skipAttend = [...document.querySelectorAll("[data-attend]:checked")].map((input) => input.value);
   }
   if (JSON.stringify(next) === JSON.stringify(state.settings)) return;
   state.settings = next;
@@ -4247,7 +4438,9 @@ function deleteEverything() {
   assetBuys.splice(0, assetBuys.length);
   plays.splice(0, plays.length);
   loans.splice(0, loans.length);
+  contracts.splice(0, contracts.length);
   localStorage.removeItem(LOANS);
+  localStorage.removeItem(CONTRACTS);
   localStorage.removeItem(LISTED);
   localStorage.removeItem(ASSET_BUYS);
   localStorage.removeItem(PLAYS);
@@ -4346,7 +4539,7 @@ $("preset-add").addEventListener("click", () => {
 document.querySelectorAll(".tabs button").forEach((button) => {
   button.addEventListener("click", () => {
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().then(() => renderRequests());
-    ["tax-archive", "earnings", "assets-archive", "gaming-archive", "loans-page", "set-presets", "set-taxes", "set-terms", "set-roles", "set-marks", "set-bank"].forEach((id) => {
+    ["tax-archive", "earnings", "assets-archive", "gaming-archive", "loans-page", "contracts-page", "set-presets", "set-taxes", "set-terms", "set-roles", "set-marks", "set-bank"].forEach((id) => {
       $(id).classList.remove("is-open");
       $(id).setAttribute("aria-hidden", "true");
     });
@@ -4444,6 +4637,27 @@ $("open-loans").addEventListener("click", () => {
   setSide("loans-page", true);
 });
 $("loans-back").addEventListener("click", () => setSide("loans-page", false));
+$("open-contracts").addEventListener("click", () => {
+  closeArchives();
+  closeSessionSides();
+  renderContracts();
+  setSide("contracts-page", true);
+});
+$("contracts-back").addEventListener("click", () => setSide("contracts-page", false));
+$("contract-make").addEventListener("click", makeContract);
+$("contract-amount").addEventListener("input", () => placeGroupedCaret($("contract-amount")));
+$("ring-go").addEventListener("click", async () => {
+  const button = $("ring-go");
+  button.disabled = true;
+  try {
+    await publish("Ringing", { v: 1, kind: "ring", id: uid(), ts: Date.now() });
+    toast("Ringing the terminal");
+  } catch {
+    toast("Couldn't reach the terminal. Try again.");
+  } finally {
+    button.disabled = false;
+  }
+});
 $("loan-give").addEventListener("click", giveLoan);
 $("loan-amount").addEventListener("input", () => placeGroupedCaret($("loan-amount")));
 $("asset-price").addEventListener("input", () => placeGroupedCaret($("asset-price")));

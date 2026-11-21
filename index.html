@@ -67,14 +67,14 @@
             <h1>Registered Sessions</h1>
           </div>
           <hr />
-          <div id="session-idle">
-            <button type="button" id="start-session" class="btn" aria-label="Start session">+</button>
-          </div>
-          <ul id="session-list" class="feed"></ul>
           <div class="session-sums">
             <p class="session-sum"><span>Total session time</span><strong id="session-total"></strong></p>
             <p class="session-sum"><span>Total sessions</span><strong id="session-count"></strong></p>
           </div>
+          <div id="session-idle">
+            <button type="button" id="start-session" class="btn" aria-label="Start session">+</button>
+          </div>
+          <ul id="session-list" class="feed"></ul>
         </section>
 
         <section id="moves" class="page" role="tabpanel" hidden>
@@ -115,6 +115,13 @@
               </svg>
               Sync
             </button>
+            <button type="button" id="ring-go" class="btn sync-btn">
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <path d="M6 9a6 6 0 0 1 12 0c0 5 2 6.5 2 6.5H4S6 14 6 9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                <path d="M10 18a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Ring
+            </button>
           </div>
           <div class="panel">
             <button type="button" id="delete-returns" class="btn danger">Delete all returns</button>
@@ -145,27 +152,30 @@
           <hr />
           <button type="button" id="open-interest" class="btn">Interest</button>
           <button type="button" id="open-loans" class="btn">Loans</button>
+          <button type="button" id="open-contracts" class="btn">Contracts</button>
         </section>
 
         <section id="government" class="page" role="tabpanel" hidden>
           <div class="page-head">
             <h1>My Gov Center</h1>
-            <div class="net-crest">
-              <svg viewBox="0 0 64 48" aria-hidden="true">
-                <path fill="currentColor" d="M32 1.5 60 16H4L32 1.5z"/>
-                <path fill="currentColor" d="M2 16h60v5H2z"/>
-                <path fill="currentColor" d="M7 22h9v3H7zm13 0h9v3h-9zm13 0h9v3h-9zm13 0h9v3h-9z"/>
-                <path fill="currentColor" d="M8.2 25h6.6v12H8.2zm13 0h6.6v12h-6.6zm13 0h6.6v12h-6.6zm13 0h6.6v12h-6.6z"/>
-                <path fill="currentColor" d="M7 37h9v2.4H7zm13 0h9v2.4h-9zm13 0h9v2.4h-9zm13 0h9v2.4h-9z"/>
-                <path fill="currentColor" d="M6 40.2h52v2.6H6zM2 43.2h60v2.4H2zM0 46h64v2H0z"/>
-              </svg>
-              <p>National Gizbit Government</p>
-            </div>
+          </div>
+          <div class="net-crest">
+            <svg viewBox="0 0 64 48" aria-hidden="true">
+              <path fill="currentColor" d="M32 1.5 60 16H4L32 1.5z"/>
+              <path fill="currentColor" d="M2 16h60v5H2z"/>
+              <path fill="currentColor" d="M7 22h9v3H7zm13 0h9v3h-9zm13 0h9v3h-9zm13 0h9v3h-9z"/>
+              <path fill="currentColor" d="M8.2 25h6.6v12H8.2zm13 0h6.6v12h-6.6zm13 0h6.6v12h-6.6zm13 0h6.6v12h-6.6z"/>
+              <path fill="currentColor" d="M7 37h9v2.4H7zm13 0h9v2.4h-9zm13 0h9v2.4h-9zm13 0h9v2.4h-9z"/>
+              <path fill="currentColor" d="M6 40.2h52v2.6H6zM2 43.2h60v2.4H2zM0 46h64v2H0z"/>
+            </svg>
+            <p>National Gizbit Government</p>
           </div>
           <hr />
           <div class="gov-actions">
             <p class="gov-kicker">Tax collected</p>
             <p id="tax-collected" class="gov-figure">0 ₲</p>
+            <div id="tax-bar" class="tax-bar" hidden></div>
+            <div id="tax-bar-key" class="tax-bar-key" hidden></div>
             <button type="button" id="view-taxes" class="btn">View all Tax returns</button>
             <button type="button" id="view-earnings" class="btn">Government earnings</button>
             <button type="button" id="view-assets" class="btn">Assets</button>
@@ -273,6 +283,27 @@
           <p id="loan-error" class="error" role="status"></p>
           <button type="button" id="loan-give" class="btn">Give loan</button>
           <div id="loan-list"></div>
+        </div>
+      </section>
+      <section id="contracts-page" class="side-page" aria-hidden="true">
+        <div class="archive-head">
+          <button type="button" id="contracts-back" class="side-back">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Back
+          </button>
+          <h1>Contracts</h1>
+        </div>
+        <div class="archive-body">
+          <p id="contract-note" class="quiet">No contracts between accounts yet.</p>
+          <div class="field"><span>From</span><div id="contract-from" class="picker" data-value=""></div></div>
+          <div class="field"><span>To</span><div id="contract-to" class="picker" data-value=""></div></div>
+          <label class="field"><span>Amount (₲)</span><input id="contract-amount" inputmode="numeric" autocomplete="off" placeholder="At least 1 billion" /></label>
+          <label class="field"><span>Contract</span><input id="contract-title" maxlength="40" autocomplete="off" placeholder="What it is for" /></label>
+          <p id="contract-error" class="error" role="status"></p>
+          <button type="button" id="contract-make" class="btn">Make contract</button>
+          <div id="contract-list"></div>
         </div>
       </section>
       <section id="earnings" class="archive" aria-hidden="true">
@@ -609,7 +640,7 @@
         <h1>Interest and leaderboard</h1>
       </div>
       <div class="archive-body">
-        <div class="mark-head"><span>Account</span><span>Skip interest</span><span>Not on leaderboard</span></div>
+        <div class="mark-head"><span>Account</span><span>Skip interest</span><span>Not on leaderboard</span><span>Exclude from attending</span></div>
         <div id="mark-rows"></div>
       </div>
     </section>

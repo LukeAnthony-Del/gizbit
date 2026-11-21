@@ -18,7 +18,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.27.001";
+const VERSION = "2.28.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 const WAIT_EXCHANGE = "gizbit-terminal-wait-exchange";
@@ -165,6 +165,7 @@ function defaultSettings() {
     bankLimit: DEFAULT_BANK_LIMIT,
     skipInterest: [],
     boardSkip: [],
+    skipAttend: [],
   };
 }
 
@@ -201,6 +202,7 @@ function normalizeSettings(value) {
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
       : [],
     boardSkip: cleanIdList(value?.boardSkip, 40),
+    skipAttend: cleanIdList(value?.skipAttend, 40),
   };
 }
 
@@ -543,9 +545,13 @@ async function handleMessage(data) {
     return;
   }
   if (body.kind === "ledger") acceptLedger(body);
-  if (body.kind === "pong" || body.kind === "ledger") {
+  if (body.kind === "pong" || body.kind === "ledger" || body.kind === "ring") {
     lastPong = Date.now();
     refreshStatus();
+  }
+  if (body.kind === "ring") {
+    const ring = $("ring");
+    if (ring) ring.hidden = false;
   }
   if (body.kind === "play") acceptPlay(body);
   if (body.kind === "tax-delete" && body.id) {
@@ -3484,6 +3490,9 @@ $("terms").addEventListener("click", (event) => {
   if (event.target === $("terms")) $("terms").hidden = true;
 });
 $("exchange").addEventListener("click", () => exchange());
+$("ring-ok").addEventListener("click", () => {
+  $("ring").hidden = true;
+});
 $("done-ok").addEventListener("click", () => {
   $("done").hidden = true;
 });

@@ -128,11 +128,22 @@ main {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  box-sizing: border-box;
+  height: calc(env(safe-area-inset-top) + 68px);
   margin: 0 -16px 12px;
-  padding: calc(env(safe-area-inset-top) + 16px) 16px 14px;
+  padding: calc(env(safe-area-inset-top) + 12px) 16px 12px;
   background: var(--navy);
+  overflow: hidden;
 }
-.page-head h1 { color: #fff; }
+.page-head h1 {
+  color: #fff;
+  min-width: 0;
+  font-size: 24px;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 h1 {
   margin: 0;
   font-size: 28px;
@@ -149,7 +160,17 @@ h1 {
   place-items: center;
 }
 .sat.is-on .sat-slash { display: none; }
-.head-filter { color: #fff; background: transparent; border: 0; padding: 4px; }
+.page-head .head-filter {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #b7c3ce;
+}
 .sync-btn { display: flex; align-items: center; justify-content: center; gap: 8px; }
 .sync-btn svg { flex: none; }
 .ver {
@@ -293,13 +314,12 @@ input, select {
   min-height: 0;
 }
 .net-crest {
-  margin-left: auto;
   display: grid;
   justify-items: end;
   gap: 2px;
+  margin: -4px 0 10px;
   color: var(--navy);
   text-align: right;
-  flex: none;
 }
 .net-crest p {
   margin: 0;
@@ -424,7 +444,7 @@ input, select {
   bottom: calc(78px + env(safe-area-inset-bottom));
 }
 #session-list { padding-bottom: 84px; }
-#open-interest, #pay-interest { width: 100%; }
+#open-interest, #open-loans, #open-contracts, #pay-interest { width: 100%; margin-bottom: 8px; }
 #pay-interest { margin-bottom: 8px; }
 .gov-actions { display: grid; gap: 10px; }
 .gov-kicker { margin: 0; color: #c8c8c8; font-size: 13px; font-weight: 700; }
@@ -1097,7 +1117,7 @@ textarea {
 .swatch.absent { background: #c0392b; }
 .pl-mark { margin-right: 6px; font-weight: 800; }
 .session-extremes { margin: 8px 0 0; color: var(--muted); font-size: 14px; font-weight: 700; white-space: pre-line; }
-.session-sums { margin-top: auto; padding: 8px 0 10px; }
+.session-sums { margin: 0 0 12px; padding: 0; }
 .session-sum { display: flex; justify-content: space-between; gap: 12px; margin: 2px 0; color: var(--navy); font-weight: 800; }
 .session-icon { width: 42px; height: 42px; display: grid; place-items: center; color: var(--navy); background: #e7eef5; border-radius: 12px; flex: none; }
 .session-icon svg { width: 26px; height: 26px; }
@@ -1125,12 +1145,29 @@ textarea {
 .tax-table th, .tax-table td { border-bottom: 1px solid var(--line); padding: 8px 0; text-align: left; vertical-align: middle; }
 .tax-table th { font-size: 14px; padding-right: 10px; }
 .tax-table input { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
-.mark-head, .mark-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px 92px; gap: 8px; align-items: center; }
-.mark-head { font-size: 12px; font-weight: 800; color: var(--muted); }
+.mark-head, .mark-row { display: grid; grid-template-columns: minmax(0, 1fr) 52px 72px 78px; gap: 6px; align-items: center; }
+.mark-head { font-size: 11px; font-weight: 800; color: var(--muted); line-height: 1.15; }
+.mark-head span:not(:first-child), .mark-row input { justify-self: center; text-align: center; }
 .mark-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
-.sq { width: 36px; height: 36px; border: 0; background: transparent; padding: 0; justify-self: center; opacity: 0.35; }
-.sq .swatch { width: 22px; height: 22px; border-radius: 4px; }
-.sq[aria-pressed="true"] { opacity: 1; }
+.attend-row .sq {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  justify-self: center;
+  opacity: 1;
+}
+.attend-row .sq.present { background: #d7eadc; box-shadow: inset 0 0 0 2px #1f7a3a; }
+.attend-row .sq.absent { background: #f8dcd8; box-shadow: inset 0 0 0 2px #c0392b; }
+.attend-row .sq.present[aria-pressed="true"] { background: #1f7a3a; box-shadow: none; }
+.attend-row .sq.absent[aria-pressed="true"] { background: #c0392b; box-shadow: none; }
+.tax-bar { display: flex; height: 18px; border-radius: 9px; overflow: hidden; background: #3a3a3a; }
+.tax-bar span { display: block; height: 100%; min-width: 8px; }
+.tax-bar-key { display: grid; gap: 6px; }
+.tax-bar-key p { display: flex; align-items: center; gap: 8px; margin: 0; color: #f4f4f4; font-size: 13px; font-weight: 700; }
+.tax-bar-key i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
 .settings-menu { display: grid; gap: 8px; }
 .loan-card { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .loan-card p { margin: 0 0 6px; }
