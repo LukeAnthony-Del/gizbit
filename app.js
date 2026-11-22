@@ -31,7 +31,7 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.26.000";
+const VERSION = "2.27.000";
 const TERM_LOCK = "gizbit-term-lock";
 
 const state = loadState();
@@ -445,7 +445,44 @@ function publishLedger(applied, answered) {
   if (books.length && fits({ ...payload, lastBooks: books })) payload.lastBooks = books;
   const sent = publish("Balances updated", payload);
   publishAssets();
+  publishActivity();
   return sent;
+}
+
+function publishActivity() {
+  const requestRows = requests.filter((item) => item.op !== "interest").slice(0, 16).map((item) => {
+    const row = {
+      id: item.id,
+      accountId: item.accountId,
+      name: item.name,
+      op: item.op,
+      amount: item.amount,
+      status: item.status,
+      applied: item.applied || "",
+      ts: item.ts,
+    };
+    if (item.toId) row.toId = item.toId;
+    if (item.toName) row.toName = item.toName;
+    if (item.memo) row.memo = String(item.memo).slice(0, 40);
+    return row;
+  });
+  const playRows = plays.slice(0, 16).map((item) => ({
+    id: item.id,
+    accountId: item.accountId,
+    name: item.name,
+    amount: item.amount,
+    cashOut: item.cashOut || "",
+    tax: item.tax || "0",
+    status: item.status,
+    ts: item.ts,
+  }));
+  const body = { v: 1, kind: "activity", requests: requestRows, plays: playRows, ts: Date.now() };
+  while (encode("Activity", body).length > 3900 && (body.requests.length || body.plays.length)) {
+    if (body.requests.length >= body.plays.length) body.requests.pop();
+    else body.plays.pop();
+  }
+  if (!body.requests.length && !body.plays.length) return;
+  publish("Activity", body).catch(() => {});
 }
 
 function publishPlay(play) {
@@ -2664,6 +2701,10 @@ async function handleMessage(data, bucket) {
     takeAssetBuy(body);
     return;
   }
+  if (body.kind === "call") {
+    takeCall(body);
+    return;
+  }
   if (body.kind === "tx") {
     const id = takeTx(body);
     if (id) bucket.applied.push(id);
@@ -4807,6 +4848,162 @@ function paintLock() {
   button.setAttribute("aria-label", terminalLocked ? "Unlock terminal" : "Lock terminal");
 }
 
+const CALL_ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+let callId = "";
+let callPc = null;
+let callStream = null;
+let callOffer = "";
+let callIce = [];
+
+function stopRingtone() {
+  const audio = $("ringtone");
+  if (!audio) return;
+  audio.pause();
+  audio.currentTime = 0;
+}
+
+function playRingtone() {
+  const audio = $("ringtone");
+  if (!audio) return;
+  audio.currentTime = 0;
+  audio.play().catch(() => {});
+}
+
+function showCall(which) {
+  const incoming = $("call-incoming");
+  const live = $("call-live");
+  if (incoming) incoming.hidden = which !== "incoming";
+  if (live) live.hidden = which !== "live";
+}
+
+function closeCallMedia() {
+  if (callPc) callPc.close();
+  callPc = null;
+  if (callStream) callStream.getTracks().forEach((track) => track.stop());
+  callStream = null;
+  callIce = [];
+  const remote = $("call-remote");
+  if (remote) remote.srcObject = null;
+}
+
+function endNetworkCall(tell) {
+  const id = callId;
+  stopRingtone();
+  closeCallMedia();
+  showCall("");
+  callId = "";
+  callOffer = "";
+  if (tell && id) {
+    publish("Call ended", { v: 1, kind: "call", from: "network", phase: "hangup", id, ts: Date.now() }).catch(() => {});
+  }
+}
+
+async function flushCallIce() {
+  if (!callPc || !callPc.remoteDescription) return;
+  const queued = callIce.splice(0);
+  for (const candidate of queued) {
+    try {
+      await callPc.addIceCandidate(candidate);
+    } catch {
+      /* A late candidate can be ignored. */
+    }
+  }
+}
+
+async function openCallMedia() {
+  if (callPc) return callPc;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  callStream = stream;
+  callPc = new RTCPeerConnection(CALL_ICE);
+  stream.getTracks().forEach((track) => callPc.addTrack(track, stream));
+  callPc.ontrack = (event) => {
+    const remote = $("call-remote");
+    if (!remote) return;
+    remote.srcObject = event.streams[0];
+    remote.play().catch(() => {});
+  };
+  callPc.onicecandidate = (event) => {
+    if (!event.candidate || !callId) return;
+    publish("Call", {
+      v: 1,
+      kind: "call",
+      from: "network",
+      phase: "ice",
+      id: callId,
+      candidate: event.candidate.toJSON(),
+      ts: Date.now(),
+    }).catch(() => {});
+  };
+  return callPc;
+}
+
+async function answerCall() {
+  if (!callId || !callOffer) return;
+  stopRingtone();
+  try {
+    const pc = await openCallMedia();
+    await pc.setRemoteDescription({ type: "offer", sdp: callOffer });
+    await flushCallIce();
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await publish("Call answered", {
+      v: 1,
+      kind: "call",
+      from: "network",
+      phase: "answer",
+      id: callId,
+      sdp: answer.sdp,
+      ts: Date.now(),
+    });
+    showCall("live");
+  } catch {
+    endNetworkCall(true);
+    toast("Couldn't answer the call.");
+  }
+}
+
+function takeCall(body) {
+  if (!body || body.from !== "terminal" || typeof body.id !== "string") return;
+  if (body.phase === "offer") {
+    if (!body.sdp || !remember(`call-offer:${body.id}`)) return;
+    if (callId && callId !== body.id) {
+      publish("Call declined", { v: 1, kind: "call", from: "network", phase: "decline", id: body.id, ts: Date.now() }).catch(() => {});
+      return;
+    }
+    callId = body.id;
+    callOffer = body.sdp;
+    showCall("incoming");
+    playRingtone();
+    return;
+  }
+  if (body.id !== callId) return;
+  if (body.phase === "hangup") {
+    endNetworkCall(false);
+    return;
+  }
+  if (body.phase === "ice" && body.candidate) {
+    callIce.push(body.candidate);
+    flushCallIce();
+  }
+}
+
+$("call-answer").addEventListener("click", answerCall);
+$("call-decline").addEventListener("click", () => {
+  const id = callId;
+  endNetworkCall(false);
+  if (id) publish("Call declined", { v: 1, kind: "call", from: "network", phase: "decline", id, ts: Date.now() }).catch(() => {});
+});
+$("call-hangup").addEventListener("click", () => endNetworkCall(true));
+document.addEventListener("pointerdown", () => {
+  const audio = $("ringtone");
+  if (!audio) return;
+  audio.muted = true;
+  audio.play().then(() => {
+    audio.pause();
+    audio.currentTime = 0;
+    audio.muted = false;
+  }).catch(() => {});
+}, { once: true });
 $("lock-go").addEventListener("click", async () => {
   const button = $("lock-go");
   button.disabled = true;

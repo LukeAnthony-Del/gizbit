@@ -18,7 +18,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.29.000";
+const VERSION = "2.30.000";
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 const WAIT_EXCHANGE = "gizbit-terminal-wait-exchange";
@@ -452,6 +452,44 @@ function setTerminalLock(on) {
   if (node) node.hidden = !on;
 }
 
+function mergeById(current, incoming, limit) {
+  const map = new Map();
+  (Array.isArray(current) ? current : []).forEach((item) => {
+    if (item && item.id) map.set(item.id, item);
+  });
+  (Array.isArray(incoming) ? incoming : []).forEach((item) => {
+    if (!item || !item.id) return;
+    map.set(item.id, { ...(map.get(item.id) || {}), ...item });
+  });
+  return [...map.values()].sort((a, b) => (Number(b.ts) || 0) - (Number(a.ts) || 0)).slice(0, limit);
+}
+
+function saveLedger() {
+  if (ledger) localStorage.setItem(LEDGER, JSON.stringify(ledger));
+}
+
+function noteLocalRequest(row) {
+  if (!ledger || !row || !row.id) return;
+  ledger.requests = mergeById(ledger.requests, [row], 40);
+  saveLedger();
+  renderHistory();
+}
+
+function noteLocalPlay(row) {
+  if (!ledger || !row || !row.id) return;
+  ledger.plays = mergeById(ledger.plays, [row], 40);
+  saveLedger();
+  renderGame();
+}
+
+function acceptActivity(body) {
+  if (!ledger || !body) return;
+  if (Array.isArray(body.requests)) ledger.requests = mergeById(ledger.requests, body.requests, 40);
+  if (Array.isArray(body.plays)) ledger.plays = mergeById(ledger.plays, sanitizePlays(body.plays), 40);
+  saveLedger();
+  if (sessionPh) renderBank();
+}
+
 function acceptLedger(body) {
   if (body && typeof body.locked === "boolean") setTerminalLock(body.locked);
   if (!body || !Array.isArray(body.accounts) || !body.accounts.length) return;
@@ -468,8 +506,8 @@ function acceptLedger(body) {
     answered: body.answered || ledger?.answered || "",
     accounts: body.accounts.map(sanitize).filter(Boolean),
     settings: normalizeSettings(body.settings),
-    requests: Array.isArray(body.requests) ? body.requests : (ledger?.requests || []),
-    plays: Array.isArray(body.plays) ? sanitizePlays(body.plays) : (ledger?.plays || []),
+    requests: mergeById(ledger?.requests, Array.isArray(body.requests) ? body.requests : [], 40),
+    plays: mergeById(ledger?.plays, Array.isArray(body.plays) ? sanitizePlays(body.plays) : [], 40),
     lastBooks: Array.isArray(body.lastBooks) ? sanitizeBooks(body.lastBooks) : (ledger?.lastBooks || []),
   };
   localStorage.setItem(LEDGER, JSON.stringify(ledger));
@@ -562,6 +600,8 @@ async function handleMessage(data) {
     const ring = $("ring");
     if (ring) ring.hidden = false;
   }
+  if (body.kind === "activity") acceptActivity(body);
+  if (body.kind === "call") takeTerminalCall(body);
   if (body.kind === "play") acceptPlay(body);
   if (body.kind === "tax-delete" && body.id) {
     const stored = loadTaxes().filter((item) => item.id !== body.id);
@@ -1125,6 +1165,7 @@ function renderHistory() {
     const alleged = formatAmount(item.amount);
     const actual = item.applied ? formatAmount(item.applied) : "";
     if (item.status === "denied") money.textContent = `${alleged} ₲ · Denied`;
+    else if (item.status === "pending") money.textContent = `${alleged} ₲ · Waiting`;
     else if (actual && String(item.applied) !== String(item.amount)) money.textContent = `${alleged} ₲ asked · ${actual} ₲`;
     else money.textContent = `${alleged} ₲`;
     const memo = document.createElement("p");
@@ -1455,6 +1496,7 @@ function waitForLiveLedger(before, ms) {
 
 function finishExchange(id, status) {
   if (!id || id !== pendingExchangeId || !status || status === "pending") return;
+  noteLocalRequest({ id, status, ts: Date.now() });
   holdExchange("");
   if (status === "denied") {
     $("move-msg").textContent = reasons.get(id) || "The network denied this exchange.";
@@ -1566,7 +1608,7 @@ function resetSend() {
 function checkSendResult() {
   if (!pendingSendId) return;
   const found = (ledger?.requests || []).find((item) => item.id === pendingSendId);
-  if (!found) return;
+  if (!found || !found.status || found.status === "pending") return;
   holdSend("");
   if (found.status === "denied") {
     $("send-msg").textContent = reasons.get(found.id) || "The main phone could not transfer that.";
@@ -1620,6 +1662,17 @@ async function sendGizbits() {
   sendSent = true;
   saveSign(id, strokes);
   holdSend(id);
+  noteLocalRequest({
+    id,
+    accountId: from.id,
+    name: from.name,
+    op: "transfer",
+    amount,
+    status: "pending",
+    toId: to.id,
+    toName: to.name,
+    ts: Date.now(),
+  });
   revealSend();
   message.textContent = "Transferring…";
   try {
@@ -1772,6 +1825,15 @@ async function exchange() {
     ts: Date.now(),
   };
   holdExchange(id);
+  noteLocalRequest({
+    id,
+    accountId: latest.id,
+    name: latest.name,
+    op,
+    amount,
+    status: "pending",
+    ts: Date.now(),
+  });
   exchangeSent = true;
   saveSign(id, strokes);
   paintExchangeButton();
@@ -3082,6 +3144,8 @@ $("fx-swap").addEventListener("click", () => {
 function showGameTab(name) {
   $("game-dash").hidden = name !== "dash";
   $("game-play").hidden = name !== "play";
+  const backLabel = $("game-back-label");
+  if (backLabel) backLabel.textContent = name === "play" ? "Return to home" : "Back";
   $("game-tab-dash").classList.toggle("is-on", name === "dash");
   $("game-tab-play").classList.toggle("is-on", name === "play");
   $("game-tab-dash").setAttribute("aria-selected", name === "dash" ? "true" : "false");
@@ -3177,6 +3241,16 @@ async function sendCashIn() {
       ts: Date.now(),
     });
     pendingPlay = { id, amount, ts: Date.now() };
+    noteLocalPlay({
+      id,
+      accountId: account.id,
+      name: account.name,
+      amount,
+      cashOut: "",
+      tax: "0",
+      status: "review",
+      ts: Date.now(),
+    });
     $("game-amount").value = "";
     $("game-agree").checked = false;
     gamePad.setEnabled(false);
@@ -3499,6 +3573,130 @@ $("terms").addEventListener("click", (event) => {
   if (event.target === $("terms")) $("terms").hidden = true;
 });
 $("exchange").addEventListener("click", () => exchange());
+const CALL_ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+let callId = "";
+let callPc = null;
+let callStream = null;
+let callIce = [];
+
+function showOutgoing(title, note) {
+  const screen = $("call-out");
+  if (screen) screen.hidden = false;
+  if ($("call-out-title")) $("call-out-title").textContent = title;
+  if ($("call-out-note")) $("call-out-note").textContent = note;
+}
+
+function closeTerminalCall(tell) {
+  const id = callId;
+  if (callPc) callPc.close();
+  callPc = null;
+  if (callStream) callStream.getTracks().forEach((track) => track.stop());
+  callStream = null;
+  callIce = [];
+  callId = "";
+  const remote = $("call-remote");
+  if (remote) remote.srcObject = null;
+  const screen = $("call-out");
+  if (screen) screen.hidden = true;
+  if (tell && id) {
+    publish("Call ended", { v: 1, kind: "call", from: "terminal", phase: "hangup", id, ts: Date.now() }).catch(() => {});
+  }
+}
+
+async function flushTerminalIce() {
+  if (!callPc || !callPc.remoteDescription) return;
+  const queued = callIce.splice(0);
+  for (const candidate of queued) {
+    try {
+      await callPc.addIceCandidate(candidate);
+    } catch {
+      /* A late candidate can be ignored. */
+    }
+  }
+}
+
+async function openTerminalCall() {
+  if (callPc) return callPc;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  callStream = stream;
+  callPc = new RTCPeerConnection(CALL_ICE);
+  stream.getTracks().forEach((track) => callPc.addTrack(track, stream));
+  callPc.ontrack = (event) => {
+    const remote = $("call-remote");
+    if (!remote) return;
+    remote.srcObject = event.streams[0];
+    remote.play().catch(() => {});
+  };
+  callPc.onicecandidate = (event) => {
+    if (!event.candidate || !callId) return;
+    publish("Call", {
+      v: 1,
+      kind: "call",
+      from: "terminal",
+      phase: "ice",
+      id: callId,
+      candidate: event.candidate.toJSON(),
+      ts: Date.now(),
+    }).catch(() => {});
+  };
+  return callPc;
+}
+
+async function startRing() {
+  if (callId) return;
+  callId = uid();
+  showOutgoing("Calling", "Waiting for the network to answer.");
+  try {
+    const pc = await openTerminalCall();
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await publish("Terminal is calling", {
+      v: 1,
+      kind: "call",
+      from: "terminal",
+      phase: "offer",
+      id: callId,
+      sdp: offer.sdp,
+      ts: Date.now(),
+    });
+  } catch {
+    closeTerminalCall(true);
+    toast("Couldn't start the call. Allow the microphone and try again.");
+  }
+}
+
+async function takeTerminalCall(body) {
+  if (!body || body.from !== "network" || body.id !== callId) return;
+  if (body.phase === "answer" && body.sdp && callPc) {
+    try {
+      await callPc.setRemoteDescription({ type: "answer", sdp: body.sdp });
+      await flushTerminalIce();
+      showOutgoing("On a call", "Talking with the network.");
+    } catch {
+      closeTerminalCall(true);
+    }
+    return;
+  }
+  if (body.phase === "decline") {
+    const id = callId;
+    showOutgoing("No answer", "The network declined the call.");
+    setTimeout(() => {
+      if (callId === id) closeTerminalCall(false);
+    }, 1200);
+    return;
+  }
+  if (body.phase === "hangup") {
+    closeTerminalCall(false);
+    return;
+  }
+  if (body.phase === "ice" && body.candidate) {
+    callIce.push(body.candidate);
+    flushTerminalIce();
+  }
+}
+
+$("open-ring").addEventListener("click", startRing);
+$("call-out-hang").addEventListener("click", () => closeTerminalCall(true));
 $("ring-ok").addEventListener("click", () => {
   $("ring").hidden = true;
 });
