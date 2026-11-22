@@ -18,7 +18,13 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.30.000";
+const VERSION = "2.31.000";
+const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
+const DEFAULT_LOAN_BANDS = [
+  { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
+  { min: "10000000000000", max: "15000000000000", rate: "12", count: "40" },
+  { min: "15000000000000", max: "20000000000000", rate: "10", count: "60" },
+];
 const SETTINGS_PASSWORD = "321kittymiss";
 const WIPED = "gizbit-terminal-wiped";
 const WAIT_EXCHANGE = "gizbit-terminal-wait-exchange";
@@ -39,6 +45,7 @@ let lastPing = 0;
 let toastTimer = 0;
 let pendingExchangeId = loadHold(WAIT_EXCHANGE);
 let pendingSendId = loadHold(WAIT_SEND);
+let pendingLoanId = "";
 let taxLines = [];
 let taxExpenses = [];
 let taxSigned = false;
@@ -125,6 +132,7 @@ function loadLedger() {
       requests: Array.isArray(data.requests) ? data.requests : [],
       plays: sanitizePlays(data.plays),
       lastBooks: sanitizeBooks(data.lastBooks),
+      loans: Array.isArray(data.loans) ? data.loans : [],
     };
   } catch {
     return null;
@@ -162,6 +170,8 @@ function defaultSettings() {
     gamingTax: "20",
     interestAccountId: "",
     loanAccountId: "",
+    loanTerms: DEFAULT_LOAN_TERMS,
+    loanBands: DEFAULT_LOAN_BANDS.map((band) => ({ ...band })),
     bankLimit: DEFAULT_BANK_LIMIT,
     skipInterest: [],
     boardSkip: [],
@@ -175,6 +185,20 @@ function percentText(value, fallback) {
   const rate = BigInt(raw);
   if (rate > 100n) return fallback;
   return rate.toString();
+}
+
+function normalizeLoanBands(value) {
+  const rows = Array.isArray(value) ? value : [];
+  const clean = rows.slice(0, 8).map((row) => {
+    const min = moneyText(row?.min, false);
+    const max = moneyText(row?.max, false);
+    const rate = percentText(row?.rate, "");
+    const count = String(row?.count ?? "").replace(/\D/g, "");
+    if (!min || !max || rate === "" || !count) return null;
+    if (BigInt(count) < 1n || BigInt(count) > 500n || BigInt(max) < BigInt(min)) return null;
+    return { min, max, rate, count: BigInt(count).toString() };
+  }).filter(Boolean);
+  return clean.length ? clean : DEFAULT_LOAN_BANDS.map((band) => ({ ...band }));
 }
 
 function normalizeSettings(value) {
@@ -197,6 +221,8 @@ function normalizeSettings(value) {
     gamingTax: percentText(value?.gamingTax, "20"),
     interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
     loanAccountId: typeof value?.loanAccountId === "string" && /^[\w-]{8,}$/.test(value.loanAccountId) ? value.loanAccountId : "",
+    loanTerms: String(value?.loanTerms || DEFAULT_LOAN_TERMS).slice(0, 400),
+    loanBands: normalizeLoanBands(value?.loanBands),
     bankLimit: moneyText(value?.bankLimit, false) || DEFAULT_BANK_LIMIT,
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
@@ -485,6 +511,7 @@ function noteLocalPlay(row) {
 function acceptActivity(body) {
   if (!ledger || !body) return;
   if (Array.isArray(body.requests)) ledger.requests = mergeById(ledger.requests, body.requests, 40);
+  if (Array.isArray(body.interest)) ledger.requests = mergeById(ledger.requests, body.interest, 40);
   if (Array.isArray(body.plays)) ledger.plays = mergeById(ledger.plays, sanitizePlays(body.plays), 40);
   saveLedger();
   if (sessionPh) renderBank();
@@ -509,6 +536,7 @@ function acceptLedger(body) {
     requests: mergeById(ledger?.requests, Array.isArray(body.requests) ? body.requests : [], 40),
     plays: mergeById(ledger?.plays, Array.isArray(body.plays) ? sanitizePlays(body.plays) : [], 40),
     lastBooks: Array.isArray(body.lastBooks) ? sanitizeBooks(body.lastBooks) : (ledger?.lastBooks || []),
+    loans: Array.isArray(ledger?.loans) ? ledger.loans : [],
   };
   localStorage.setItem(LEDGER, JSON.stringify(ledger));
   liveThisSession = true;
@@ -601,6 +629,7 @@ async function handleMessage(data) {
     if (ring) ring.hidden = false;
   }
   if (body.kind === "activity") acceptActivity(body);
+  if (body.kind === "loans") acceptLoans(body);
   if (body.kind === "call") takeTerminalCall(body);
   if (body.kind === "play") acceptPlay(body);
   if (body.kind === "tax-delete" && body.id) {
@@ -627,6 +656,10 @@ async function handleMessage(data) {
       holdSend("");
       $("send-msg").textContent = body.reason || "The main phone could not transfer that.";
       revealSend();
+    }
+    if (body.id === pendingLoanId) {
+      pendingLoanId = "";
+      $("gfg-msg").textContent = body.reason || "The main phone could not do that.";
     }
     if (pendingPassword && body.id === pendingPassword.id) {
       pendingPassword = null;
@@ -1293,10 +1326,10 @@ function accountIsEmpty() {
   return !!account && BigInt(account.bal) === 0n;
 }
 
-let idleTimer = 0;
+let idleUntil = 0;
 
 function clearIdle() {
-  clearTimeout(idleTimer);
+  idleUntil = 0;
 }
 
 function inGov() {
@@ -1306,17 +1339,25 @@ function inGov() {
 }
 
 function bumpIdle() {
-  clearIdle();
-  if (!sessionPh || inGov() || pendingExchangeId || pendingSendId) return;
-  idleTimer = setTimeout(() => {
-    if (!sessionPh) return;
-    const typing = document.activeElement && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
-    sessionPh = "";
-    showHome();
-    showLogin(typing);
-    $("login-msg").textContent = "Timer ran out, log in again.";
-  }, 60000);
+  if (!sessionPh || inGov()) {
+    idleUntil = 0;
+    return;
+  }
+  idleUntil = Date.now() + 60000;
 }
+
+function checkIdle() {
+  if (!idleUntil || !sessionPh || inGov()) return;
+  if (Date.now() < idleUntil) return;
+  idleUntil = 0;
+  const typing = document.activeElement && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
+  sessionPh = "";
+  showHome();
+  showLogin(typing);
+  $("login-msg").textContent = "Timer ran out, log in again.";
+}
+
+setInterval(checkIdle, 1000);
 
 document.addEventListener("pointerdown", bumpIdle);
 document.addEventListener("keydown", bumpIdle);
@@ -1325,7 +1366,7 @@ function showHome() {
   const stage = $("stage");
   stage.classList.remove("is-side");
   stage.scrollLeft = 0;
-  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board", "game"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
+  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board", "game", "gfg"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
   closeTaxForm();
   if (sessionPh) {
     $("logout").hidden = false;
@@ -1335,7 +1376,7 @@ function showHome() {
 
 function showSide(name) {
   const stage = $("stage");
-  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board", "game"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
+  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board", "game", "gfg"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
   stage.classList.add("is-side");
   stage.scrollLeft = 0;
   $("logout").hidden = true;
@@ -3695,6 +3736,170 @@ async function takeTerminalCall(body) {
   }
 }
 
+function loanBook() {
+  if (ledger && Array.isArray(ledger.loans)) return ledger.loans;
+  try {
+    const saved = JSON.parse(localStorage.getItem("gizbit-terminal-loans") || "[]");
+    return Array.isArray(saved) ? saved : [];
+  } catch {
+    return [];
+  }
+}
+
+function acceptLoans(body) {
+  const rows = Array.isArray(body?.loans) ? body.loans.map((item) => {
+    const amount = moneyText(item?.amount, false);
+    if (!item || typeof item.id !== "string" || !amount) return null;
+    const status = item.status === "review" || item.status === "active" || item.status === "paid" ? item.status : "review";
+    return {
+      id: item.id,
+      accountId: typeof item.accountId === "string" ? item.accountId : "",
+      name: String(item.name || "").slice(0, 40),
+      amount,
+      rate: percentText(item.rate, "0"),
+      count: String(item.count ?? "0").replace(/\D/g, "") || "0",
+      billed: Math.max(0, Number(item.billed) || 0),
+      paid: moneyText(item.paid, false) || "0",
+      due: moneyText(item.due, false) || "0",
+      status,
+      ts: Number(item.ts) || 0,
+    };
+  }).filter(Boolean) : [];
+  if (ledger) {
+    ledger.loans = rows;
+    saveLedger();
+  } else localStorage.setItem("gizbit-terminal-loans", JSON.stringify(rows));
+  if (pendingLoanId && rows.some((item) => item.status === "paid" || BigInt(item.paid || "0") > 0n)) pendingLoanId = "";
+  renderGfg();
+}
+
+function myLoan() {
+  const account = currentAccount();
+  if (!account) return null;
+  return loanBook().find((item) => item.accountId === account.id && item.status !== "paid") || null;
+}
+
+function loanRepayTotal(loan) {
+  const principal = BigInt(loan.amount || "0");
+  return principal + (principal * BigInt(loan.rate || "0")) / 100n;
+}
+
+function showGfgTab(name) {
+  $("gfg-tab-apply").classList.toggle("is-on", name === "apply");
+  $("gfg-tab-interest").classList.toggle("is-on", name === "interest");
+  $("gfg-apply").hidden = name !== "apply";
+  $("gfg-interest").hidden = name !== "interest";
+}
+
+function renderGfg() {
+  const account = currentAccount();
+  const terms = ledger?.settings?.loanTerms || DEFAULT_LOAN_TERMS;
+  $("gfg-terms").textContent = terms;
+  const loan = myLoan();
+  $("gfg-form").hidden = Boolean(loan);
+  $("gfg-wait").hidden = !loan || loan.status !== "review";
+  $("gfg-pay").hidden = !loan || loan.status !== "active";
+  if (loan && loan.status === "active") {
+    const total = loanRepayTotal(loan);
+    const paid = BigInt(loan.paid || "0");
+    const due = BigInt(loan.due || "0");
+    const left = total > paid ? total - paid : 0n;
+    const ratio = total > 0n ? Number((paid * 10000n) / total) / 100 : 0;
+    $("gfg-fill").style.width = `${Math.max(0, Math.min(100, ratio))}%`;
+    $("gfg-due").textContent = due > 0n
+      ? `Bill due ${formatAmount(due.toString())} ₲. ${formatAmount(left.toString())} ₲ remains. Paying extra makes the later bills smaller.`
+      : `${formatAmount(left.toString())} ₲ remains. The next bill has not been issued yet.`;
+  }
+  const earned = (ledger?.requests || []).filter((item) => item.op === "interest" && account && item.toId === account.id);
+  const sum = earned.reduce((total, item) => total + BigInt(item.amount || "0"), 0n);
+  $("gfg-earned").textContent = account ? `${formatAmount(sum.toString())} ₲ earned in interest.` : "Log in to see interest.";
+  const list = $("gfg-earned-list");
+  list.replaceChildren();
+  earned.slice(0, 20).forEach((item) => {
+    const row = document.createElement("li");
+    row.textContent = `${formatAmount(item.amount)} ₲`;
+    list.append(row);
+  });
+}
+
+async function applyLoan() {
+  const msg = $("gfg-msg");
+  msg.textContent = "";
+  const account = currentAccount();
+  const amount = parseAmount($("gfg-amount").value);
+  if (!account) {
+    msg.textContent = "Log in first.";
+    return;
+  }
+  if (!$("gfg-agree").checked) {
+    msg.textContent = "Agree to the terms and conditions first.";
+    return;
+  }
+  if (!amount) {
+    msg.textContent = "Enter the amount you want to borrow.";
+    return;
+  }
+  pendingLoanId = uid();
+  try {
+    await publish("Loan application", {
+      v: 1,
+      kind: "loan-apply",
+      id: pendingLoanId,
+      accountId: account.id,
+      ph: sessionPh,
+      amount,
+      ts: Date.now(),
+    });
+    msg.textContent = "Application sent.";
+  } catch {
+    pendingLoanId = "";
+    msg.textContent = "Couldn't reach the network. Try again.";
+  }
+}
+
+async function payLoan() {
+  const msg = $("gfg-msg");
+  msg.textContent = "";
+  const account = currentAccount();
+  const loan = myLoan();
+  const amount = parseAmount($("gfg-pay-amount").value);
+  if (!account || !loan || loan.status !== "active") return;
+  if (!amount) {
+    msg.textContent = "Enter how much to pay.";
+    return;
+  }
+  pendingLoanId = uid();
+  try {
+    await publish("Loan payment", {
+      v: 1,
+      kind: "loan-pay",
+      id: pendingLoanId,
+      loanId: loan.id,
+      accountId: account.id,
+      ph: sessionPh,
+      amount,
+      ts: Date.now(),
+    });
+    msg.textContent = "Payment sent.";
+  } catch {
+    pendingLoanId = "";
+    msg.textContent = "Couldn't reach the network. Try again.";
+  }
+}
+
+$("open-gfg").addEventListener("click", () => {
+  showGfgTab("apply");
+  renderGfg();
+  showSide("gfg");
+});
+$("gfg-back").addEventListener("click", showHome);
+$("gfg-tab-apply").addEventListener("click", () => showGfgTab("apply"));
+$("gfg-tab-interest").addEventListener("click", () => {
+  showGfgTab("interest");
+  renderGfg();
+});
+$("gfg-go").addEventListener("click", applyLoan);
+$("gfg-pay-go").addEventListener("click", payLoan);
 $("open-ring").addEventListener("click", startRing);
 $("call-out-hang").addEventListener("click", () => closeTerminalCall(true));
 $("ring-ok").addEventListener("click", () => {
@@ -3747,6 +3952,7 @@ setInterval(() => {
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
+  checkIdle();
   listen();
   wakeLink();
   publishPing().catch(() => {});

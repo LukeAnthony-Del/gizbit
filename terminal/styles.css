@@ -164,7 +164,7 @@ main {
   height: 100%;
   overflow: clip;
 }
-.pane-home, .pane-exchange, .pane-activity, .pane-calc, .pane-prefs, .pane-gov, .pane-tax, .pane-board, .pane-game {
+.pane-home, .pane-exchange, .pane-activity, .pane-calc, .pane-prefs, .pane-gov, .pane-tax, .pane-board, .pane-game, .pane-gfg {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -180,7 +180,7 @@ main {
 }
 .pane-home { transform: translateX(0); z-index: 1; }
 .pane-home h1 { margin: 0 0 2px; font-size: 26px; }
-.pane-exchange, .pane-activity, .pane-calc, .pane-prefs, .pane-gov, .pane-board, .pane-game { transform: translateX(100%); z-index: 2; }
+.pane-exchange, .pane-activity, .pane-calc, .pane-prefs, .pane-gov, .pane-board, .pane-game, .pane-gfg { transform: translateX(100%); z-index: 2; }
 #stage.is-side > .pane-home { transform: translateX(-100%); }
 #stage.is-side > .is-front { transform: translateX(0%); }
 .pane-game {
@@ -311,8 +311,8 @@ main {
   text-align: center;
 }
 .app-icon {
-  width: 52px;
-  height: 52px;
+  width: 46px;
+  height: 46px;
   border-radius: 16px;
   background: var(--navy);
   color: #fff;
@@ -322,6 +322,20 @@ main {
   font-weight: 800;
   letter-spacing: -0.06em;
 }
+.gfg-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.gfg-tabs button {
+  border: 0;
+  border-radius: 999px;
+  min-height: 36px;
+  background: #e7eef5;
+  color: var(--navy);
+  font: inherit;
+  font-weight: 700;
+}
+.gfg-tabs button.is-on { background: var(--navy); color: #fff; }
+.loan-bar { height: 8px; border-radius: 999px; background: #e4ebf2; overflow: hidden; }
+.loan-bar span { display: block; height: 100%; background: #1f4d76; }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; }
 .app-tile.grey .app-icon {
   background: #d5dde5;
   color: #1b2c3a;

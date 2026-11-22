@@ -31,7 +31,13 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.27.000";
+const VERSION = "2.28.000";
+const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
+const DEFAULT_LOAN_BANDS = [
+  { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
+  { min: "10000000000000", max: "15000000000000", rate: "12", count: "40" },
+  { min: "15000000000000", max: "20000000000000", rate: "10", count: "60" },
+];
 const TERM_LOCK = "gizbit-term-lock";
 
 const state = loadState();
@@ -96,6 +102,8 @@ function defaultSettings() {
     gamingTax: DEFAULT_GAMING_TAX,
     interestAccountId: "",
     loanAccountId: "",
+    loanTerms: DEFAULT_LOAN_TERMS,
+    loanBands: DEFAULT_LOAN_BANDS.map((band) => ({ ...band })),
     bankLimit: DEFAULT_BANK_LIMIT,
     skipInterest: [],
     boardSkip: [],
@@ -109,6 +117,20 @@ function percentText(value, fallback) {
   const rate = BigInt(raw);
   if (rate > 100n) return fallback;
   return rate.toString();
+}
+
+function normalizeLoanBands(value) {
+  const rows = Array.isArray(value) ? value : [];
+  const clean = rows.slice(0, 8).map((row) => {
+    const min = moneyText(row?.min, false);
+    const max = moneyText(row?.max, false);
+    const rate = percentText(row?.rate, "");
+    const count = String(row?.count ?? "").replace(/\D/g, "");
+    if (!min || !max || rate === "" || !count) return null;
+    if (BigInt(count) < 1n || BigInt(count) > 500n || BigInt(max) < BigInt(min)) return null;
+    return { min, max, rate, count: BigInt(count).toString() };
+  }).filter(Boolean);
+  return clean.length ? clean : DEFAULT_LOAN_BANDS.map((band) => ({ ...band }));
 }
 
 function normalizeSettings(value) {
@@ -131,6 +153,8 @@ function normalizeSettings(value) {
     gamingTax: percentText(value?.gamingTax, DEFAULT_GAMING_TAX),
     interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
     loanAccountId: typeof value?.loanAccountId === "string" && /^[\w-]{8,}$/.test(value.loanAccountId) ? value.loanAccountId : "",
+    loanTerms: String(value?.loanTerms || DEFAULT_LOAN_TERMS).slice(0, 400),
+    loanBands: normalizeLoanBands(value?.loanBands),
     bankLimit: moneyText(value?.bankLimit, false) || DEFAULT_BANK_LIMIT,
     skipInterest: Array.isArray(value?.skipInterest)
       ? [...new Set(value.skipInterest.filter((id) => typeof id === "string" && /^[\w-]{8,}$/.test(id)))].slice(0, 40)
@@ -446,6 +470,7 @@ function publishLedger(applied, answered) {
   const sent = publish("Balances updated", payload);
   publishAssets();
   publishActivity();
+  publishLoans();
   return sent;
 }
 
@@ -476,12 +501,26 @@ function publishActivity() {
     status: item.status,
     ts: item.ts,
   }));
-  const body = { v: 1, kind: "activity", requests: requestRows, plays: playRows, ts: Date.now() };
-  while (encode("Activity", body).length > 3900 && (body.requests.length || body.plays.length)) {
-    if (body.requests.length >= body.plays.length) body.requests.pop();
-    else body.plays.pop();
+  const interestRows = requests.filter((item) => item.op === "interest").slice(0, 12).map((item) => ({
+    id: item.id,
+    accountId: item.accountId,
+    name: item.name,
+    op: "interest",
+    amount: item.amount,
+    status: "done",
+    applied: item.applied || item.amount,
+    toId: item.toId || "",
+    toName: item.toName || "",
+    ts: item.ts,
+  }));
+  const body = { v: 1, kind: "activity", requests: requestRows, plays: playRows, interest: interestRows, ts: Date.now() };
+  while (encode("Activity", body).length > 3900 && (body.requests.length || body.plays.length || body.interest.length)) {
+    const longest = body.requests.length >= body.plays.length && body.requests.length >= body.interest.length
+      ? body.requests
+      : body.plays.length >= body.interest.length ? body.plays : body.interest;
+    longest.pop();
   }
-  if (!body.requests.length && !body.plays.length) return;
+  if (!body.requests.length && !body.plays.length && !body.interest.length) return;
   publish("Activity", body).catch(() => {});
 }
 
@@ -527,14 +566,50 @@ function publishPong(id) {
   return publish("Still here", { v: 1, kind: "pong", id: id || uid(), ts: Date.now() }).catch(() => {});
 }
 
-function toast(text) {
-  const node = $("toast");
+let pingCtx = null;
+let bannerTimer = 0;
+
+function playPing() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  const dot = $("ping-dot");
+  if (dot) {
+    dot.classList.remove("is-on");
+    void dot.offsetWidth;
+    dot.classList.add("is-on");
+  }
+  if (!Ctx) return;
+  if (!pingCtx) pingCtx = new Ctx();
+  const ctx = pingCtx;
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = 880;
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.18, now + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + 0.12);
+}
+
+function toast() {
+  playPing();
+}
+
+function showBanner(text, dest) {
+  const node = $("incoming");
   node.textContent = text;
-  node.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    node.hidden = true;
-  }, 2800);
+  node.dataset.goto = dest || "";
+  node.setAttribute("aria-hidden", "false");
+  node.classList.add("is-down");
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => {
+    node.classList.remove("is-down");
+    node.setAttribute("aria-hidden", "true");
+  }, 1000);
 }
 
 function logActivity(text, extra) {
@@ -1411,6 +1486,7 @@ function catchInterest() {
     }
     spent -= interest.left;
     interest.left = INTEREST_MS;
+    billLoans();
   }
   if (!hold && spent < interest.left) interest.left -= spent;
   saveInterest();
@@ -2308,70 +2384,211 @@ function fillLoanAccount() {
   fillRole("loan-account", state.settings.loanAccountId, "loanAccountId");
 }
 
-function fillLoanBorrowers() {
-  const select = $("loan-who");
-  if (!select) return;
-  const current = select.value;
-  select.replaceChildren();
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = "Choose an account";
-  select.append(blank);
-  state.accounts.forEach((account) => {
-    if (account.id === state.settings.loanAccountId) return;
-    const option = document.createElement("option");
-    option.value = account.id;
-    option.textContent = account.name;
-    select.append(option);
+function cleanLoan(item) {
+  if (!item || typeof item.id !== "string") return null;
+  const amount = moneyText(item.amount, false);
+  if (!amount) return null;
+  const status = item.status === "review" || item.status === "active" || item.status === "paid"
+    ? item.status
+    : item.repaid ? "paid" : "active";
+  const count = String(item.count ?? "").replace(/\D/g, "");
+  return {
+    id: item.id,
+    accountId: typeof item.accountId === "string" ? item.accountId : "",
+    name: String(item.name || "Account").slice(0, 40),
+    amount,
+    rate: percentText(item.rate, "0"),
+    count: count || (status === "active" ? "1" : "0"),
+    billed: Math.max(0, Number(item.billed) || 0),
+    paid: moneyText(item.paid, false) || "0",
+    due: moneyText(item.due, false) || "0",
+    status,
+    ts: Number(item.ts) || 0,
+  };
+}
+
+function loanTotal(loan) {
+  const principal = BigInt(loan.amount || "0");
+  const rate = BigInt(loan.rate || "0");
+  return principal + (principal * rate) / 100n;
+}
+
+function loanBand(amount) {
+  const value = BigInt(amount);
+  return (state.settings.loanBands || []).find((band) => value >= BigInt(band.min) && value <= BigInt(band.max)) || null;
+}
+
+function publishLoans() {
+  const rows = loans.slice(0, 20).map((loan) => ({
+    id: loan.id,
+    accountId: loan.accountId,
+    name: loan.name,
+    amount: loan.amount,
+    rate: loan.rate,
+    count: loan.count,
+    billed: loan.billed,
+    paid: loan.paid,
+    due: loan.due,
+    status: loan.status,
+    ts: loan.ts,
+  }));
+  publish("Loans", { v: 1, kind: "loans", loans: rows, ts: Date.now() }).catch(() => {});
+}
+
+function billLoans() {
+  let changed = false;
+  loans.forEach((loan) => {
+    if (loan.status !== "active") return;
+    const count = Number(loan.count) || 0;
+    if (loan.billed >= count) return;
+    const total = loanTotal(loan);
+    const paid = BigInt(loan.paid || "0");
+    const due = BigInt(loan.due || "0");
+    const outstanding = total > paid ? total - paid : 0n;
+    const unbilled = outstanding > due ? outstanding - due : 0n;
+    if (unbilled <= 0n) return;
+    const left = count - loan.billed;
+    const installment = left <= 1 ? unbilled : unbilled / BigInt(left);
+    if (installment <= 0n) return;
+    loan.due = (due + installment).toString();
+    loan.billed += 1;
+    changed = true;
   });
-  if ([...select.options].some((option) => option.value === current)) select.value = current;
+  if (!changed) return;
+  saveLoans();
+  renderLoans();
+  publishLoans();
 }
 
 function renderLoans() {
-  fillLoanBorrowers();
+  if (loans.some((item) => !item || !item.status)) {
+    const cleaned = loans.map(cleanLoan).filter(Boolean);
+    loans.splice(0, loans.length, ...cleaned);
+    saveLoans();
+  }
   const list = $("loan-list");
   const note = $("loan-out");
   if (!list) return;
-  const open = loans.filter((item) => !item.repaid);
-  const owed = open.reduce((sum, item) => sum + BigInt(item.amount || "0"), 0n);
-  if (note) note.textContent = owed > 0n ? `${formatAmount(owed.toString())} ₲ is out on loan.` : "Nothing is out on loan.";
+  const open = loans.filter((item) => item.status === "active");
+  const owed = open.reduce((sum, item) => {
+    const left = loanTotal(item) - BigInt(item.paid || "0");
+    return sum + (left > 0n ? left : 0n);
+  }, 0n);
+  if (note) note.textContent = owed > 0n ? `${formatAmount(owed.toString())} ₲ is still to be paid back.` : "Nothing is out on loan.";
   list.replaceChildren();
   loans.forEach((item) => {
     const card = document.createElement("article");
     card.className = "loan-card";
     const title = document.createElement("p");
-    title.textContent = item.repaid
-      ? `${item.name} repaid ${formatAmount(item.amount)} ₲`
-      : `${item.name} owes ${formatAmount(item.amount)} ₲`;
+    title.className = "loan-title";
+    if (item.status === "review") title.textContent = `${item.name} asked for ${formatAmount(item.amount)} ₲`;
+    else if (item.status === "paid") title.textContent = `${item.name} paid off ${formatAmount(item.amount)} ₲`;
+    else title.textContent = `${item.name} owes ${formatAmount((loanTotal(item) - BigInt(item.paid || "0")).toString())} ₲`;
     card.append(title);
-    if (!item.repaid) {
+    if (item.status === "review") {
+      const field = document.createElement("label");
+      field.className = "field";
+      const span = document.createElement("span");
+      span.textContent = "Amount to approve (₲)";
+      const input = document.createElement("input");
+      input.inputMode = "numeric";
+      input.autocomplete = "off";
+      input.value = groupDigits(item.amount);
+      input.addEventListener("input", () => placeGroupedCaret(input));
+      field.append(span, input);
       const button = document.createElement("button");
       button.type = "button";
       button.className = "btn slim";
-      button.textContent = "Mark repaid";
-      button.addEventListener("click", () => repayLoan(item.id));
-      card.append(button);
+      button.textContent = "Approve";
+      button.addEventListener("click", () => approveLoan(item.id, input.value));
+      card.append(field, button);
+    } else if (item.status === "active") {
+      const total = loanTotal(item);
+      const paid = BigInt(item.paid || "0");
+      const ratio = total > 0n ? Number((paid * 10000n) / total) / 100 : 0;
+      const bar = document.createElement("div");
+      bar.className = "loan-bar";
+      const fill = document.createElement("span");
+      fill.style.width = `${Math.max(0, Math.min(100, ratio))}%`;
+      bar.append(fill);
+      const meta = document.createElement("p");
+      meta.className = "quiet";
+      meta.textContent = `${formatAmount(paid.toString())} ₲ paid of ${formatAmount(total.toString())} ₲ · ${item.rate}% · bill ${formatAmount(item.due)} ₲ · ${item.billed} of ${item.count}`;
+      card.append(bar, meta);
     }
     list.append(card);
   });
 }
 
-function giveLoan() {
+function fillLoanFormula() {
+  const box = $("loan-bands");
+  if (!box || box.querySelector("input:focus")) return;
+  box.replaceChildren();
+  state.settings.loanBands.forEach((band) => {
+    const row = document.createElement("div");
+    row.className = "loan-band";
+    ["min", "max", "rate", "count"].forEach((key) => {
+      const input = document.createElement("input");
+      input.dataset.band = key;
+      input.inputMode = "numeric";
+      input.autocomplete = "off";
+      input.value = key === "rate" || key === "count" ? band[key] : groupDigits(band[key]);
+      if (key === "min" || key === "max") input.addEventListener("input", () => placeGroupedCaret(input));
+      row.append(input);
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn slim";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => row.remove());
+    row.append(remove);
+    box.append(row);
+  });
+}
+
+function saveLoanFormula() {
+  const error = $("loan-error");
+  const rows = [...document.querySelectorAll("#loan-bands .loan-band")].map((row) => ({
+    min: parseAmount(row.querySelector("[data-band=min]").value),
+    max: parseAmount(row.querySelector("[data-band=max]").value),
+    rate: row.querySelector("[data-band=rate]").value,
+    count: row.querySelector("[data-band=count]").value,
+  }));
+  const bands = normalizeLoanBands(rows);
+  const valid = rows.length && rows.every((row) => row.min && row.max) && bands.length === rows.length;
+  if (!valid) {
+    if (error) error.textContent = "Each range needs a minimum, a maximum, a rate, and a payment count.";
+    return;
+  }
+  state.settings = { ...state.settings, loanBands: bands };
+  saveAccounts();
+  if (error) error.textContent = "";
+  publishLedger([]).catch(() => {});
+  toast("Loan formula saved");
+}
+
+function approveLoan(id, raw) {
   const error = $("loan-error");
   if (error) error.textContent = "";
+  const loan = loans.find((item) => item.id === id && item.status === "review");
   const lender = state.accounts.find((item) => item.id === state.settings.loanAccountId);
-  const borrower = state.accounts.find((item) => item.id === $("loan-who").value);
-  const amount = readBillion($("loan-amount").value);
+  const borrower = loan && state.accounts.find((item) => item.id === loan.accountId);
+  const amount = readBillion(raw);
+  if (!loan || !borrower) {
+    if (error) error.textContent = "That application is no longer here.";
+    return;
+  }
   if (!lender) {
     if (error) error.textContent = "Choose the account that pays loans in Settings.";
     return;
   }
-  if (!borrower || borrower.id === lender.id) {
-    if (error) error.textContent = "Choose who is borrowing.";
+  if (!amount) {
+    if (error) error.textContent = "Enter the amount to approve.";
     return;
   }
-  if (!amount) {
-    if (error) error.textContent = "Enter at least 1 billion gizbits.";
+  const band = loanBand(amount);
+  if (!band) {
+    if (error) error.textContent = "That amount is outside the loan ranges.";
     return;
   }
   if (BigInt(lender.bal) < BigInt(amount)) {
@@ -2385,9 +2602,13 @@ function giveLoan() {
   }
   lender.bal = (BigInt(lender.bal) - BigInt(amount)).toString();
   borrower.bal = next.toString();
-  const loan = { id: uid(), accountId: borrower.id, name: borrower.name, amount, repaid: false, ts: Date.now() };
-  loans.unshift(loan);
-  loans.splice(40);
+  loan.amount = amount;
+  loan.rate = band.rate;
+  loan.count = band.count;
+  loan.billed = 0;
+  loan.paid = "0";
+  loan.due = "0";
+  loan.status = "active";
   requests.unshift({
     id: `${loan.id}-loan`,
     accountId: lender.id,
@@ -2405,42 +2626,80 @@ function giveLoan() {
   saveAccounts();
   saveRequests();
   saveLoans();
-  $("loan-amount").value = "";
   render();
-  publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
-  toast("Loan given");
+  publishLedger([]).catch(() => {});
+  publishLoans();
+  showBanner(`${borrower.name} was approved for a loan`, "");
 }
 
-function repayLoan(id) {
-  const loan = loans.find((item) => item.id === id && !item.repaid);
-  const error = $("loan-error");
-  if (!loan) return;
+function takeLoanApply(body) {
+  if (!body || !body.id || !remember(body.id)) return;
+  const account = state.accounts.find((item) => item.id === body.accountId);
+  const amount = moneyText(body.amount, false);
+  if (!account || body.ph !== account.ph || !amount) {
+    publishReject(body.id, "The loan application was not accepted.");
+    return;
+  }
+  if (loans.some((item) => item.accountId === account.id && item.status !== "paid")) {
+    publishReject(body.id, "That account already has a loan.");
+    return;
+  }
+  loans.unshift(cleanLoan({
+    id: body.id,
+    accountId: account.id,
+    name: account.name,
+    amount: floorBillion(BigInt(amount)).toString(),
+    status: "review",
+    ts: Date.now(),
+  }));
+  loans.splice(40);
+  saveLoans();
+  renderLoans();
+  publishLoans();
+  showBanner(`${account.name} applied for a loan`, "");
+}
+
+function takeLoanPay(body) {
+  if (!body || !body.id || !remember(body.id)) return;
+  const loan = loans.find((item) => item.id === body.loanId && item.status === "active");
+  const borrower = loan && state.accounts.find((item) => item.id === loan.accountId);
   const lender = state.accounts.find((item) => item.id === state.settings.loanAccountId);
-  const borrower = state.accounts.find((item) => item.id === loan.accountId);
-  if (!lender || !borrower) {
-    if (error) error.textContent = "That account is no longer on this phone.";
+  const amount = moneyText(body.amount, false);
+  if (!loan || !borrower || !lender || body.ph !== borrower.ph || body.accountId !== borrower.id || !amount) {
+    publishReject(body.id, "The loan payment was not accepted.");
     return;
   }
-  if (BigInt(borrower.bal) < BigInt(loan.amount)) {
-    if (error) error.textContent = "That account does not have enough gizbits to repay.";
+  const pay = floorBillion(BigInt(amount));
+  const total = loanTotal(loan);
+  const paid = BigInt(loan.paid || "0");
+  const due = BigInt(loan.due || "0");
+  const outstanding = total > paid ? total - paid : 0n;
+  if (pay <= 0n || pay > outstanding || (due > 0n && pay < due)) {
+    publishReject(body.id, due > 0n ? "Pay at least the bill that is due." : "That payment does not match the loan.");
     return;
   }
-  const next = BigInt(lender.bal) + BigInt(loan.amount);
+  if (BigInt(borrower.bal) < pay) {
+    publishReject(body.id, "That account does not have enough gizbits.");
+    return;
+  }
+  const next = BigInt(lender.bal) + pay;
   if (next > MAX) {
-    if (error) error.textContent = "The loan account cannot hold that much.";
+    publishReject(body.id, "The loan account cannot hold that much.");
     return;
   }
-  borrower.bal = (BigInt(borrower.bal) - BigInt(loan.amount)).toString();
+  borrower.bal = (BigInt(borrower.bal) - pay).toString();
   lender.bal = next.toString();
-  loan.repaid = true;
+  loan.paid = (paid + pay).toString();
+  loan.due = "0";
+  if (BigInt(loan.paid) >= total) loan.status = "paid";
   requests.unshift({
-    id: `${loan.id}-repay`,
+    id: body.id,
     accountId: borrower.id,
     name: borrower.name,
     op: "transfer",
-    amount: loan.amount,
+    amount: pay.toString(),
     status: "done",
-    applied: loan.amount,
+    applied: pay.toString(),
     toId: lender.id,
     toName: lender.name,
     memo: "Loan repayment",
@@ -2450,10 +2709,9 @@ function repayLoan(id) {
   saveAccounts();
   saveRequests();
   saveLoans();
-  if (error) error.textContent = "";
   render();
-  publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
-  toast("Loan repaid");
+  publishLedger([body.id]).catch(() => {});
+  publishLoans();
 }
 
 function saveContracts() {
@@ -2703,6 +2961,14 @@ async function handleMessage(data, bucket) {
   }
   if (body.kind === "call") {
     takeCall(body);
+    return;
+  }
+  if (body.kind === "loan-apply") {
+    takeLoanApply(body);
+    return;
+  }
+  if (body.kind === "loan-pay") {
+    takeLoanPay(body);
     return;
   }
   if (body.kind === "tx") {
@@ -3864,12 +4130,7 @@ function renderGaming() {
 }
 
 function showIncoming(text, dest) {
-  const node = $("incoming");
-  if (!node) return;
-  node.textContent = text;
-  node.dataset.goto = dest || "";
-  node.hidden = false;
-  playSuccess();
+  showBanner(text, dest);
 }
 
 function notifyPending(item) {
@@ -4352,6 +4613,7 @@ function commitSettings() {
   }
   if ($("terms-text")) next.terms = $("terms-text").value.trim().slice(0, 800) || DEFAULT_TERMS;
   if ($("tax-terms")) next.taxTerms = $("tax-terms").value.trim().slice(0, 400) || DEFAULT_TAX_TERMS;
+  if ($("loan-terms")) next.loanTerms = $("loan-terms").value.trim().slice(0, 400) || DEFAULT_LOAN_TERMS;
   if ($("bank-limit")) {
     const bankLimit = parseAmount($("bank-limit").value);
     if (bankLimit == null || BigInt(bankLimit) <= 0n) {
@@ -4386,6 +4648,8 @@ function fillSettings() {
   if (terms && document.activeElement !== terms) terms.value = state.settings.terms;
   const taxTerms = $("tax-terms");
   if (taxTerms && document.activeElement !== taxTerms) taxTerms.value = state.settings.taxTerms;
+  const loanTerms = $("loan-terms");
+  if (loanTerms && document.activeElement !== loanTerms) loanTerms.value = state.settings.loanTerms;
   fillTaxAccount();
   fillGamingAccount();
   fillInterestAccount();
@@ -4594,7 +4858,7 @@ $("notify-go").addEventListener("click", async () => {
 });
 $("incoming").addEventListener("click", () => {
   const dest = $("incoming").dataset.goto || "";
-  $("incoming").hidden = true;
+  $("incoming").classList.remove("is-down");
   $("incoming").dataset.goto = "";
   if (dest === "gaming") {
     showTab("government");
@@ -4829,6 +5093,7 @@ $("open-loans").addEventListener("click", () => {
   closeArchives();
   closeSessionSides();
   renderLoans();
+  fillLoanFormula();
   setSide("loans-page", true);
 });
 $("loans-back").addEventListener("click", () => setSide("loans-page", false));
@@ -5047,8 +5312,27 @@ $("ring-go").addEventListener("click", async () => {
     button.disabled = false;
   }
 });
-$("loan-give").addEventListener("click", giveLoan);
-$("loan-amount").addEventListener("input", () => placeGroupedCaret($("loan-amount")));
+$("loan-formula").addEventListener("click", saveLoanFormula);
+$("loan-add").addEventListener("click", () => {
+  const box = $("loan-bands");
+  const row = document.createElement("div");
+  row.className = "loan-band";
+  ["min", "max", "rate", "count"].forEach((key) => {
+    const input = document.createElement("input");
+    input.dataset.band = key;
+    input.inputMode = "numeric";
+    input.autocomplete = "off";
+    if (key === "min" || key === "max") input.addEventListener("input", () => placeGroupedCaret(input));
+    row.append(input);
+  });
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "btn slim";
+  remove.textContent = "Remove";
+  remove.addEventListener("click", () => row.remove());
+  row.append(remove);
+  box.append(row);
+});
 $("asset-price").addEventListener("input", () => placeGroupedCaret($("asset-price")));
 $("filter-min").addEventListener("input", () => placeGroupedCaret($("filter-min")));
 $("filter-max").addEventListener("input", () => placeGroupedCaret($("filter-max")));

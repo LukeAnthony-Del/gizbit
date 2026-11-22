@@ -284,17 +284,17 @@
         </div>
         <div class="archive-body">
           <p id="loan-out" class="quiet">Nothing is out on loan.</p>
-          <label class="field">
-            <span>Borrower</span>
-            <select id="loan-who"></select>
-          </label>
-          <label class="field">
-            <span>Amount (₲)</span>
-            <input id="loan-amount" inputmode="numeric" autocomplete="off" placeholder="At least 1 billion" />
-          </label>
-          <p id="loan-error" class="error" role="status"></p>
-          <button type="button" id="loan-give" class="btn">Give loan</button>
           <div id="loan-list"></div>
+          <h2 class="loan-head">Loan formula</h2>
+          <div class="loan-band loan-band-label">
+            <span>From</span><span>To</span><span>Rate %</span><span>Payments</span><span></span>
+          </div>
+          <div id="loan-bands"></div>
+          <p id="loan-error" class="error" role="status"></p>
+          <div class="row-actions">
+            <button type="button" id="loan-add" class="btn slim">Add range</button>
+            <button type="button" id="loan-formula" class="btn slim">Save formula</button>
+          </div>
         </div>
       </section>
       <section id="contracts-page" class="side-page" aria-hidden="true">
@@ -655,6 +655,7 @@
       <div class="archive-body">
         <label class="field"><span>Exchange terms</span><textarea id="terms-text" rows="6" maxlength="800"></textarea></label>
         <label class="field"><span>Tax return terms</span><textarea id="tax-terms" rows="4" maxlength="400"></textarea></label>
+        <label class="field"><span>Loan terms</span><textarea id="loan-terms" rows="4" maxlength="400"></textarea></label>
       </div>
     </section>
     <section id="set-roles" class="side-page" aria-hidden="true">
@@ -739,7 +740,8 @@
         <p>Syncing with terminal</p>
       </div>
     </div>
-    <button type="button" id="incoming" class="incoming" hidden></button>
+    <button type="button" id="incoming" class="incoming" aria-hidden="true"></button>
+    <span id="ping-dot" class="ping-dot" aria-hidden="true"></span>
     <div id="call-incoming" class="call-screen" hidden>
       <div class="call-card">
         <svg viewBox="0 0 24 24" width="48" height="48" aria-hidden="true">

@@ -1037,7 +1037,6 @@ textarea {
   z-index: 40;
   left: 50%;
   top: calc(env(safe-area-inset-top) + 12px);
-  transform: translateX(-50%);
   width: min(440px, calc(100% - 24px));
   border: 0;
   border-radius: 16px;
@@ -1047,8 +1046,48 @@ textarea {
   font-weight: 750;
   padding: 14px 16px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  transform: translateX(-50%) translateY(calc(-100% - 28px));
+  transition: transform 0.28s ease;
+  pointer-events: none;
 }
+.incoming.is-down {
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
+.ping-dot {
+  position: fixed;
+  z-index: 45;
+  right: 12px;
+  top: 46%;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #d7e6f4;
+  opacity: 0;
+  pointer-events: none;
+}
+.ping-dot.is-on { animation: ping-flash 0.16s linear; }
+@keyframes ping-flash {
+  0% { opacity: 0.95; }
+  100% { opacity: 0; }
+}
+.loan-head { margin: 18px 0 8px; font-size: 16px; }
+.loan-band {
+  display: grid;
+  grid-template-columns: 1.3fr 1.3fr 0.6fr 0.7fr auto;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.loan-band input,
+.loan-band .btn { min-width: 0; font-size: 12px; }
+.loan-band-label { color: #5d6b78; font-size: 11px; }
+.loan-title { margin: 0 0 8px; font-weight: 700; }
+.loan-bar { height: 8px; border-radius: 999px; background: #e4ebf2; overflow: hidden; }
+.loan-bar span { display: block; height: 100%; background: #1f4d76; }
+.row-actions { display: flex; gap: 8px; }
 .toast {
+  display: none;
   position: fixed;
   z-index: 30;
   left: 50%;
