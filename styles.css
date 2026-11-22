@@ -173,9 +173,9 @@ h1 {
   display: grid;
   place-items: center;
 }
-.head-lock .lock-open { display: none; }
-.head-lock.is-locked .lock-shut { display: none; }
-.head-lock.is-locked .lock-open { display: block; }
+.head-lock .lock-shut { display: none; }
+.head-lock.is-locked .lock-open { display: none; }
+.head-lock.is-locked .lock-shut { display: block; }
 .page-head .head-filter {
   flex: none;
   width: 28px;
@@ -460,7 +460,7 @@ input, select {
   bottom: calc(78px + env(safe-area-inset-bottom));
 }
 #session-list { padding-bottom: 84px; }
-#open-interest, #open-loans, #open-contracts, #pay-interest { width: 100%; margin-bottom: 8px; }
+#open-interest, #open-loans, #pay-interest { width: 100%; margin-bottom: 8px; }
 #pay-interest { margin-bottom: 8px; }
 .gov-actions { display: grid; gap: 10px; }
 .gov-kicker { margin: 0; color: #c8c8c8; font-size: 13px; font-weight: 700; }
@@ -769,8 +769,10 @@ body.show-passwords .acct .bal-short { white-space: normal; overflow-wrap: anywh
   object-fit: contain;
   filter: brightness(0) invert(1);
 }
-.log-row.is-open { transform: translateX(56px); }
+.log-row.is-open, .log-row.is-trash { transform: translateX(56px); }
 .log-row.is-sign { transform: translateX(-56px); }
+.page-head .head-filter.is-on { color: #fff; }
+body.show-exchange-trash .interest-stack:not(.is-split) .swipe-actions { display: flex; }
 .acct, .log-row, .tax-file, .session-row {
   position: relative;
   z-index: 1;
@@ -1344,6 +1346,9 @@ body.gov-theme #tax-split .side-back { color: #fff; }
 .people .sq { width: 26px; height: 26px; border-radius: 4px; flex: none; }
 .people .sq.present { background: #1f7a3a; }
 .people .sq.absent { background: #c0392b; }
+.roster-text { display: grid; gap: 2px; min-width: 0; }
+.roster-reason { color: var(--muted); font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
+.people li:has(.roster-reason) { align-items: flex-start; }
 .settings-menu { display: grid; gap: 8px; }
 .loan-card { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .loan-card p { margin: 0 0 6px; }

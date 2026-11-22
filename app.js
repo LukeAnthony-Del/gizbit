@@ -31,7 +31,7 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.28.000";
+const VERSION = "2.29.000";
 const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
 const DEFAULT_LOAN_BANDS = [
   { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
@@ -928,10 +928,11 @@ function exchangeCard(item) {
     tag.textContent = "Denied";
     row.append(tag);
   }
+  if (showExchangeTrash) row.classList.add("is-trash");
   const signed = cleanSign(item.sign).length > 0;
   if (signed) swipe.append(actions, signBtn, row);
   else swipe.append(actions, row);
-  bindReveal(row, 56, signed ? 56 : 0);
+  if (signed) bindReveal(row, 0, 56);
   return swipe;
 }
 
@@ -1120,6 +1121,7 @@ function bindReveal(row, openRight, openLeft) {
 
 let balanceEdit = false;
 let showAccountTrash = false;
+let showExchangeTrash = false;
 
 function setBalanceHead() {
   const head = $("bal-head");
@@ -1913,7 +1915,21 @@ function rosterLine(id, record, kind) {
   const mark = document.createElement("span");
   mark.className = `sq ${kind}`;
   mark.setAttribute("aria-hidden", "true");
-  li.append(mark, document.createTextNode(name));
+  const text = document.createElement("span");
+  text.className = "roster-text";
+  const who = document.createElement("span");
+  who.textContent = name;
+  text.append(who);
+  if (kind === "absent") {
+    const reason = String((record.reasons && record.reasons[id]) || "").trim();
+    if (reason) {
+      const note = document.createElement("span");
+      note.className = "roster-reason";
+      note.textContent = reason;
+      text.append(note);
+    }
+  }
+  li.append(mark, text);
   return li;
 }
 
@@ -5097,12 +5113,6 @@ $("open-loans").addEventListener("click", () => {
   setSide("loans-page", true);
 });
 $("loans-back").addEventListener("click", () => setSide("loans-page", false));
-$("open-contracts").addEventListener("click", () => {
-  closeArchives();
-  closeSessionSides();
-  renderContracts();
-  setSide("contracts-page", true);
-});
 $("contracts-back").addEventListener("click", () => setSide("contracts-page", false));
 $("contract-make").addEventListener("click", makeContract);
 $("contract-amount").addEventListener("input", () => placeGroupedCaret($("contract-amount")));
@@ -5336,6 +5346,20 @@ $("loan-add").addEventListener("click", () => {
 $("asset-price").addEventListener("input", () => placeGroupedCaret($("asset-price")));
 $("filter-min").addEventListener("input", () => placeGroupedCaret($("filter-min")));
 $("filter-max").addEventListener("input", () => placeGroupedCaret($("filter-max")));
+function paintExchangeTrash() {
+  const button = $("exchange-trash");
+  if (!button) return;
+  button.classList.toggle("is-on", showExchangeTrash);
+  button.setAttribute("aria-pressed", showExchangeTrash ? "true" : "false");
+  document.body.classList.toggle("show-exchange-trash", showExchangeTrash);
+}
+
+$("exchange-trash").addEventListener("click", () => {
+  showExchangeTrash = !showExchangeTrash;
+  paintExchangeTrash();
+  renderActivity();
+  if (viewingSession && $("session-view").classList.contains("is-open")) fillSessionView(viewingSession);
+});
 $("exchange-filter").addEventListener("click", () => {
   mountPicker($("filter-time"), [
     { value: "all", label: "Any time" },

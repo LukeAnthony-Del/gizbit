@@ -92,11 +92,18 @@
         <section id="moves" class="page" role="tabpanel" hidden>
           <div class="page-head">
             <h1>Registered Exchanges</h1>
-            <button type="button" id="exchange-filter" class="icon-btn head-filter" aria-label="Filter">
-              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-                <path d="M4 5h16l-6 7.2V19l-4 2v-8.8L4 5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
-              </svg>
-            </button>
+            <div class="head-tools">
+              <button type="button" id="exchange-trash" class="icon-btn head-filter" aria-label="Show delete" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                  <path d="M5 7h14M9 7V5h6v2M8 7l1 13h6l1-13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <button type="button" id="exchange-filter" class="icon-btn head-filter" aria-label="Filter">
+                <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                  <path d="M4 5h16l-6 7.2V19l-4 2v-8.8L4 5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </div>
           </div>
           <hr />
           <p id="activity-empty" class="empty">Reviewed exchanges and transfers show up here.</p>
@@ -164,7 +171,6 @@
           <hr />
           <button type="button" id="open-interest" class="btn">Interest</button>
           <button type="button" id="open-loans" class="btn">Loans</button>
-          <button type="button" id="open-contracts" class="btn">Contracts</button>
         </section>
 
         <section id="government" class="page" role="tabpanel" hidden>
