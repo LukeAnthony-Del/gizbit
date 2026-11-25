@@ -57,7 +57,7 @@ let attendReasons = new Map();
 let viewingSession = "";
 let terminalLocked = localStorage.getItem(TERM_LOCK) === "1";
 let taxPane = "income";
-const taxOpen = new Set();
+let taxSheetId = "";
 let attendEdit = false;
 let interest = loadInterest();
 const seen = new Set(loadList(SEEN));
@@ -305,6 +305,19 @@ function taxTotals(lines, rates, expenses) {
     tax: tax.toString(),
     invoice: floorBillion(vat + tax).toString(),
   };
+}
+
+function formatBillions(value) {
+  let amount = 0n;
+  try {
+    amount = BigInt(value || "0");
+  } catch {
+    amount = 0n;
+  }
+  const neg = amount < 0n;
+  const whole = (neg ? -amount : amount) / 100000000n;
+  const text = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${neg && whole !== 0n ? "-" : ""}${text}*`;
 }
 
 function formatLoose(value) {
@@ -1603,11 +1616,18 @@ function sessionStartedLine(ts) {
   return `${sessionDate(ts)}, ${sessionClockTime(ts)}`;
 }
 
+function sessionSpanText(ms) {
+  const minutes = Math.floor(Math.max(0, ms) / 60000);
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours <= 0) return minutes === 1 ? "1 min" : `${minutes} mins`;
+  if (mins === 0) return hours === 1 ? "1 h" : `${hours} h`;
+  return `${hours} h ${mins} min`;
+}
+
 function sessionDurationText(record) {
   const end = record.live ? Date.now() : Number(record.ended) || record.started;
-  const minutes = Math.floor(Math.max(0, end - record.started) / 60000);
-  const hours = Math.floor(minutes / 60);
-  return `${hours} h ${minutes % 60} min`;
+  return sessionSpanText(end - record.started);
 }
 
 function lastSessionBooks() {
@@ -1734,9 +1754,7 @@ function paintSessions() {
       const end = item.live ? Date.now() : Number(item.ended) || item.started;
       return sum + Math.max(0, end - item.started);
     }, 0);
-    const minutes = Math.floor(ms / 60000);
-    const hours = Math.floor(minutes / 60);
-    total.textContent = all.length ? `${hours} h ${minutes % 60} min` : "";
+    total.textContent = all.length ? sessionSpanText(ms) : "";
   }
   if (count) count.textContent = all.length ? String(all.length) : "";
   paintSessionClock();
@@ -1982,34 +2000,30 @@ function fillSessionBooks(id) {
     return;
   }
   rows.forEach((row) => {
-    const block = document.createElement("div");
-    block.className = "book-line";
-    const name = document.createElement("p");
-    name.className = "book-name";
-    const arrow = document.createElement("span");
-    if (row.diff > 0n) {
-      arrow.className = "arrow up";
-      arrow.textContent = "↑";
-    } else if (row.diff < 0n) {
-      arrow.className = "arrow down";
-      arrow.textContent = "↓";
+    const line = document.createElement("div");
+    line.className = "acct";
+    if (row.diff > 0n) line.classList.add("is-gain");
+    else if (row.diff < 0n) line.classList.add("is-loss");
+    const name = document.createElement("span");
+    name.textContent = row.name;
+    const type = document.createElement("span");
+    type.className = "acct-type";
+    const account = state.accounts.find((item) => item.name === row.name);
+    type.textContent = account ? account.type : "";
+    const short = document.createElement("span");
+    short.className = "bal-short";
+    if (row.diff === 0n) {
+      short.textContent = "–";
+      line.append(name, type, short);
     } else {
-      arrow.className = "arrow flat";
-      arrow.textContent = "–";
+      const shown = row.diff > 0n ? row.diff : -row.diff;
+      short.textContent = `${formatAmount(shown.toString())} ₲`;
+      const full = document.createElement("span");
+      full.className = "bal-full";
+      full.textContent = `${formatFull(shown.toString())} GZBT`;
+      line.append(name, type, short, full);
     }
-    name.append(arrow, document.createTextNode(row.name));
-    const change = document.createElement("p");
-    change.textContent = `${formatLoose(row.before)} ₲ → ${formatLoose(row.after)} ₲`;
-    const result = document.createElement("p");
-    if (row.diff > 0n) {
-      result.className = "gain";
-      result.textContent = `Profit ${formatLoose(row.diff)} ₲`;
-    } else if (row.diff < 0n) {
-      result.className = "loss";
-      result.textContent = `Loss ${formatLoose(-row.diff)} ₲`;
-    } else result.textContent = "No change";
-    block.append(name, change, result);
-    box.append(block);
+    box.append(line);
   });
 }
 
@@ -3466,6 +3480,107 @@ function renderTaxBar() {
   });
 }
 
+function taxCell(text, className) {
+  const span = document.createElement("span");
+  if (className) span.className = className;
+  span.textContent = text;
+  return span;
+}
+
+function levyRow(name, total, rate, tax) {
+  const row = document.createElement("div");
+  row.className = "tax-grid-row levy-row";
+  row.append(taxCell(name, "tax-grid-name"), taxCell(total), taxCell(rate), taxCell(tax));
+  return row;
+}
+
+function openTaxSheet(id) {
+  taxSheetId = id;
+  fillTaxSheet();
+  setSide("tax-sheet", true);
+}
+
+function fillTaxSheet() {
+  const item = taxes.find((entry) => entry.id === taxSheetId);
+  if (!item || !$("tax-sheet")) {
+    taxSheetId = "";
+    setSide("tax-sheet", false);
+    return;
+  }
+  const totals = item.totals || { revenue: "0", vat: "0", profit: "0", expenses: "0", tax: "0", invoice: "0" };
+  $("tax-sheet-name").textContent = `${item.business || "Tax return"} tax return`;
+  $("tax-sheet-date").textContent = sessionDateLong(item.ts || Date.now());
+  const goods = $("tax-sheet-goods");
+  goods.replaceChildren();
+  const head = document.createElement("div");
+  head.className = "tax-grid-head";
+  ["Goods Description", "Quantity sold", "Gross Amount", "VAT", "Net profit"].forEach((label) => head.append(taxCell(label)));
+  goods.append(head);
+  let gross = 0n;
+  let vat = 0n;
+  let profit = 0n;
+  (item.lines || []).forEach((line) => {
+    const parts = splitVat(line.revenue, item.vatRate);
+    gross += parts.revenue;
+    vat += parts.vat;
+    profit += parts.profit;
+    const row = document.createElement("div");
+    row.className = "tax-grid-row";
+    row.append(
+      taxCell(line.name, "tax-grid-name"),
+      taxCell(formatFull(line.qty)),
+      taxCell(formatBillions(parts.revenue)),
+      taxCell(formatBillions(parts.vat)),
+      taxCell(formatBillions(parts.profit)),
+    );
+    goods.append(row);
+  });
+  const totalRow = document.createElement("div");
+  totalRow.className = "tax-grid-row is-total";
+  totalRow.append(taxCell("Total", "tax-grid-name"), taxCell(""), taxCell(formatBillions(gross)), taxCell(formatBillions(vat)), taxCell(formatBillions(profit)));
+  goods.append(totalRow);
+  const figures = $("tax-sheet-figures");
+  figures.replaceChildren();
+  [["Total revenue", totals.revenue], ["Expenses", totals.expenses || "0"], ["Profits", totals.profit]].forEach(([label, amount]) => {
+    const line = document.createElement("p");
+    const name = document.createElement("span");
+    name.textContent = label;
+    const value = document.createElement("strong");
+    value.textContent = formatBillions(amount);
+    line.append(name, value);
+    figures.append(line);
+  });
+  const exp = $("tax-sheet-expenses");
+  exp.replaceChildren();
+  if ((item.expenses || []).length) {
+    const table = document.createElement("div");
+    table.className = "tax-exp";
+    item.expenses.forEach((entry) => {
+      const row = document.createElement("div");
+      row.append(taxCell(entry.name), taxCell(formatBillions(entry.amount)));
+      table.append(row);
+    });
+    exp.append(table);
+  }
+  const levy = $("tax-sheet-levy");
+  levy.replaceChildren();
+  const levyHead = document.createElement("div");
+  levyHead.className = "tax-grid-head levy-row";
+  ["Name", "Total", "Tax Rate (%)", "Gross Tax"].forEach((label) => levyHead.append(taxCell(label)));
+  levy.append(levyHead);
+  const taxable = BigInt(totals.profit || "0");
+  const threshold = BigInt(item.threshold || state.settings.profitThreshold || "0");
+  const under = taxable < threshold ? taxable : threshold;
+  const over = taxable > threshold ? taxable - threshold : 0n;
+  const low = BigInt(item.lowRate || state.settings.profitLow || "0");
+  const high = BigInt(item.highRate || state.settings.profitHigh || "0");
+  levy.append(levyRow(`Profits under ${formatBillions(threshold)} threshold`, formatBillions(under), `${low}%`, formatBillions((under * low) / 100n)));
+  if (over > 0n) levy.append(levyRow("Profits over threshold", formatBillions(over), `${high}%`, formatBillions((over * high) / 100n)));
+  levy.append(levyRow("VAT", formatBillions(totals.revenue), `${item.vatRate || state.settings.vatRate || 0}%`, formatBillions(totals.vat)));
+  levy.append(levyRow("Total", "", "", formatBillions((BigInt(totals.tax || "0") + BigInt(totals.vat || "0")).toString())));
+  levy.append(levyRow("Total invoice", "", "", `${formatAmount(totals.invoice)} ₲`));
+}
+
 function renderGovernment() {
   const collected = $("tax-collected");
   if (collected) collected.textContent = `${formatAmount(taxCollected().toString())} ₲`;
@@ -3503,11 +3618,7 @@ function renderGovernment() {
     const money = document.createElement("span");
     money.textContent = `${formatAmount(totals.invoice)} ₲`;
     main.append(business, who, money);
-    main.addEventListener("click", () => {
-      if (taxOpen.has(item.id)) taxOpen.delete(item.id);
-      else taxOpen.add(item.id);
-      renderGovernment();
-    });
+    main.addEventListener("click", () => openTaxSheet(item.id));
     const pen = document.createElement("button");
     pen.type = "button";
     pen.className = "tax-pen";
@@ -3519,64 +3630,9 @@ function renderGovernment() {
     });
     bar.append(main, pen);
     card.append(bar);
-    if (taxOpen.has(item.id)) {
-      const detail = document.createElement("div");
-      detail.className = "tax-fold-detail";
-      const meta = document.createElement("p");
-      meta.className = "quiet";
-      meta.textContent = `Sheet ${item.sheet} · Session ${item.session}`;
-      const grid = document.createElement("div");
-      grid.className = "tax-grid";
-      const head = document.createElement("div");
-      head.className = "tax-grid-head";
-      [["Product", "name"], ["Quantity", "sold"], ["Gross", "amount"], ["VAT", ""], ["Net", "profit"]].forEach(([label, sub]) => {
-        head.append(stackLabel(label, sub));
-      });
-      grid.append(head);
-      (item.lines || []).forEach((line) => {
-        const parts = splitVat(line.revenue, item.vatRate);
-        const row = document.createElement("div");
-        row.className = "tax-grid-row";
-        const name = document.createElement("span");
-        name.className = "tax-grid-name";
-        name.textContent = line.name;
-        const qty = document.createElement("span");
-        qty.textContent = formatFull(line.qty);
-        row.append(name, qty, stackMoney(parts.revenue), stackMoney(parts.vat), stackMoney(parts.profit));
-        grid.append(row);
-      });
-      const sums = document.createElement("div");
-      sums.className = "tax-file-totals";
-      const lead = document.createElement("div");
-      lead.className = "tax-sum";
-      lead.append(
-        sumRow("Gross revenue", totals.revenue),
-        sumRow("Gross profit", totals.profit),
-        sumRow("Gross expenses", totals.expenses || "0"),
-      );
-      const rule = document.createElement("hr");
-      const rest = document.createElement("div");
-      rest.className = "tax-sum";
-      rest.append(sumRow("Gross VAT", totals.vat), sumRow("Tax on gross profit", totals.tax));
-      sums.append(lead, rule, rest, sumRow("Total invoice", totals.invoice, true));
-      const tools = document.createElement("div");
-      tools.className = "tax-fold-tools";
-      const signBtn = document.createElement("button");
-      signBtn.type = "button";
-      signBtn.className = "btn ghost";
-      signBtn.textContent = "Signature";
-      signBtn.addEventListener("click", () => showSignature(item));
-      const trash = document.createElement("button");
-      trash.type = "button";
-      trash.className = "btn danger";
-      trash.textContent = "Remove";
-      trash.addEventListener("click", () => deleteTax(item.id));
-      tools.append(signBtn, trash);
-      detail.append(meta, grid, sums, tools);
-      card.append(detail);
-    }
     list.append(card);
   });
+  if (taxSheetId) fillTaxSheet();
   if (!gamingList) return;
   gamingList.replaceChildren();
   const casino = state.accounts.find((account) => account.id === state.settings.gamingAccountId);
@@ -4285,7 +4341,6 @@ function renderRequests() {
     li.append(time, line, eye);
     list.append(li);
   });
-  $("requests-empty").hidden = requests.some((item) => item.status === "pending") || assetBuys.some((item) => item.status === "pending") || passNotes.length > 0;
   const notify = $("notify-go");
   if (!("Notification" in window) || Notification.permission === "granted") {
     notify.hidden = true;
@@ -5024,6 +5079,8 @@ document.querySelectorAll(".tabs button").forEach((button) => {
 });
 function openArchive(id) {
   closeSessionSides();
+  taxSheetId = "";
+  setSide("tax-sheet", false);
   ["tax-archive", "earnings", "assets-archive", "gaming-archive"].forEach((name) => {
     const node = $(name);
     const on = name === id;
@@ -5041,6 +5098,14 @@ $("view-assets").addEventListener("click", () => {
   openArchive("assets-archive");
 });
 $("tax-archive-back").addEventListener("click", () => openArchive(""));
+$("tax-sheet-back").addEventListener("click", () => {
+  taxSheetId = "";
+  setSide("tax-sheet", false);
+});
+$("tax-sheet-sign").addEventListener("click", () => {
+  const item = taxes.find((entry) => entry.id === taxSheetId);
+  if (item) showSignature(item);
+});
 $("earnings-back").addEventListener("click", () => openArchive(""));
 $("assets-back").addEventListener("click", () => openArchive(""));
 $("view-gaming").addEventListener("click", () => {
