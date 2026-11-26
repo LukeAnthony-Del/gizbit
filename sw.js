@@ -1,4 +1,4 @@
-const CACHE = "gizbit-v44";
+const CACHE = "gizbit-v45";
 const ASSETS = [
   "./",
   "index.html",
@@ -16,6 +16,7 @@ const ASSETS = [
   "ringtone.mp3",
   "tab-dashboard.png",
   "tab-sessions.png",
+  "tab-documents.png",
 ];
 
 self.addEventListener("install", (event) => {

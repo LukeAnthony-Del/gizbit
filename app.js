@@ -31,7 +31,7 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.32.000";
+const VERSION = "2.33.000";
 const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
 const DEFAULT_LOAN_BANDS = [
   { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
@@ -315,9 +315,15 @@ function formatBillions(value) {
     amount = 0n;
   }
   const neg = amount < 0n;
-  const whole = (neg ? -amount : amount) / 100000000n;
-  const text = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${neg && whole !== 0n ? "-" : ""}${text}*`;
+  const abs = neg ? -amount : amount;
+  const whole = abs / BILLION;
+  const frac = abs % BILLION;
+  let text = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  if (frac !== 0n) {
+    const milli = (frac * 1000n) / BILLION;
+    text += `.${milli.toString().padStart(3, "0").replace(/0+$/, "")}`;
+  }
+  return `${neg && abs !== 0n ? "-" : ""}${text}*`;
 }
 
 function formatLoose(value) {
@@ -3461,6 +3467,8 @@ function renderTaxBar() {
   }
   bar.hidden = false;
   key.hidden = false;
+  const table = document.createElement("table");
+  table.className = "tax-key";
   parts.forEach(([label, amount, color, kind]) => {
     const seg = document.createElement("button");
     seg.type = "button";
@@ -3470,27 +3478,53 @@ function renderTaxBar() {
     seg.setAttribute("aria-label", label);
     seg.addEventListener("click", () => openTaxSplit(kind));
     bar.append(seg);
-    const item = document.createElement("button");
-    item.type = "button";
+    const row = document.createElement("tr");
+    const name = document.createElement("td");
     const swatch = document.createElement("i");
     swatch.style.background = color;
-    item.append(swatch, document.createTextNode(`${label} · ${formatAmount(amount.toString())} ₲`));
-    item.addEventListener("click", () => openTaxSplit(kind));
-    key.append(item);
+    name.append(swatch, document.createTextNode(label));
+    const money = document.createElement("td");
+    money.textContent = `${formatAmount(amount.toString())} ₲`;
+    row.append(name, money);
+    row.addEventListener("click", () => openTaxSplit(kind));
+    table.append(row);
   });
+  key.append(table);
 }
 
-function taxCell(text, className) {
-  const span = document.createElement("span");
-  if (className) span.className = className;
-  span.textContent = text;
-  return span;
+function sheetTable(headers, widths) {
+  const table = document.createElement("table");
+  table.className = "tax-sheet-table";
+  const cols = document.createElement("colgroup");
+  widths.forEach((width) => {
+    const col = document.createElement("col");
+    col.style.width = width;
+    cols.append(col);
+  });
+  const head = document.createElement("thead");
+  const row = document.createElement("tr");
+  headers.forEach((label, index) => {
+    const cell = document.createElement("th");
+    cell.textContent = label;
+    if (index > 0) cell.className = "num";
+    row.append(cell);
+  });
+  head.append(row);
+  table.append(cols, head);
+  const body = document.createElement("tbody");
+  table.append(body);
+  return { table, body };
 }
 
-function levyRow(name, total, rate, tax) {
-  const row = document.createElement("div");
-  row.className = "tax-grid-row levy-row";
-  row.append(taxCell(name, "tax-grid-name"), taxCell(total), taxCell(rate), taxCell(tax));
+function sheetRow(cells, total) {
+  const row = document.createElement("tr");
+  if (total) row.className = "is-total";
+  cells.forEach((value, index) => {
+    const cell = document.createElement("td");
+    cell.textContent = value;
+    if (index > 0) cell.className = "num";
+    row.append(cell);
+  });
   return row;
 }
 
@@ -3512,10 +3546,10 @@ function fillTaxSheet() {
   $("tax-sheet-date").textContent = sessionDateLong(item.ts || Date.now());
   const goods = $("tax-sheet-goods");
   goods.replaceChildren();
-  const head = document.createElement("div");
-  head.className = "tax-grid-head";
-  ["Goods Description", "Quantity sold", "Gross Amount", "VAT", "Net profit"].forEach((label) => head.append(taxCell(label)));
-  goods.append(head);
+  const goodsTable = sheetTable(
+    ["Goods Description", "Quantity sold", "Gross Amount", "VAT", "Net profit"],
+    ["30%", "14%", "20%", "16%", "20%"],
+  );
   let gross = 0n;
   let vat = 0n;
   let profit = 0n;
@@ -3524,21 +3558,16 @@ function fillTaxSheet() {
     gross += parts.revenue;
     vat += parts.vat;
     profit += parts.profit;
-    const row = document.createElement("div");
-    row.className = "tax-grid-row";
-    row.append(
-      taxCell(line.name, "tax-grid-name"),
-      taxCell(formatFull(line.qty)),
-      taxCell(formatBillions(parts.revenue)),
-      taxCell(formatBillions(parts.vat)),
-      taxCell(formatBillions(parts.profit)),
-    );
-    goods.append(row);
+    goodsTable.body.append(sheetRow([
+      line.name,
+      formatFull(line.qty),
+      formatBillions(parts.revenue),
+      formatBillions(parts.vat),
+      formatBillions(parts.profit),
+    ]));
   });
-  const totalRow = document.createElement("div");
-  totalRow.className = "tax-grid-row is-total";
-  totalRow.append(taxCell("Total", "tax-grid-name"), taxCell(""), taxCell(formatBillions(gross)), taxCell(formatBillions(vat)), taxCell(formatBillions(profit)));
-  goods.append(totalRow);
+  goodsTable.body.append(sheetRow(["Total", "", formatBillions(gross), formatBillions(vat), formatBillions(profit)], true));
+  goods.append(goodsTable.table);
   const figures = $("tax-sheet-figures");
   figures.replaceChildren();
   [["Total revenue", totals.revenue], ["Expenses", totals.expenses || "0"], ["Profits", totals.profit]].forEach(([label, amount]) => {
@@ -3553,32 +3582,50 @@ function fillTaxSheet() {
   const exp = $("tax-sheet-expenses");
   exp.replaceChildren();
   if ((item.expenses || []).length) {
-    const table = document.createElement("div");
-    table.className = "tax-exp";
+    const expenseTable = sheetTable(["Expense", "Amount"], ["70%", "30%"]);
     item.expenses.forEach((entry) => {
-      const row = document.createElement("div");
-      row.append(taxCell(entry.name), taxCell(formatBillions(entry.amount)));
-      table.append(row);
+      expenseTable.body.append(sheetRow([entry.name, formatBillions(entry.amount)]));
     });
-    exp.append(table);
+    exp.append(expenseTable.table);
   }
   const levy = $("tax-sheet-levy");
   levy.replaceChildren();
-  const levyHead = document.createElement("div");
-  levyHead.className = "tax-grid-head levy-row";
-  ["Name", "Total", "Tax Rate (%)", "Gross Tax"].forEach((label) => levyHead.append(taxCell(label)));
-  levy.append(levyHead);
+  const levyTable = sheetTable(["Name", "Total", "Tax Rate (%)", "Gross Tax"], ["40%", "22%", "16%", "22%"]);
   const taxable = BigInt(totals.profit || "0");
   const threshold = BigInt(item.threshold || state.settings.profitThreshold || "0");
   const under = taxable < threshold ? taxable : threshold;
   const over = taxable > threshold ? taxable - threshold : 0n;
   const low = BigInt(item.lowRate || state.settings.profitLow || "0");
   const high = BigInt(item.highRate || state.settings.profitHigh || "0");
-  levy.append(levyRow(`Profits under ${formatBillions(threshold)} threshold`, formatBillions(under), `${low}%`, formatBillions((under * low) / 100n)));
-  if (over > 0n) levy.append(levyRow("Profits over threshold", formatBillions(over), `${high}%`, formatBillions((over * high) / 100n)));
-  levy.append(levyRow("VAT", formatBillions(totals.revenue), `${item.vatRate || state.settings.vatRate || 0}%`, formatBillions(totals.vat)));
-  levy.append(levyRow("Total", "", "", formatBillions((BigInt(totals.tax || "0") + BigInt(totals.vat || "0")).toString())));
-  levy.append(levyRow("Total invoice", "", "", `${formatAmount(totals.invoice)} ₲`));
+  const officialTax = BigInt(totals.tax || "0");
+  let underTax = floorBillion((under * low) / 100n);
+  let overTax = floorBillion((over * high) / 100n);
+  const drift = officialTax - (underTax + overTax);
+  if (over > 0n) overTax += drift;
+  else underTax += drift;
+  levyTable.body.append(sheetRow([
+    `Profits under ${formatBillions(threshold)} threshold`,
+    formatBillions(under),
+    `${low}%`,
+    formatBillions(underTax),
+  ]));
+  if (over > 0n) {
+    levyTable.body.append(sheetRow([
+      "Profits over threshold",
+      formatBillions(over),
+      `${high}%`,
+      formatBillions(overTax),
+    ]));
+  }
+  levyTable.body.append(sheetRow([
+    "VAT",
+    formatBillions(totals.revenue),
+    `${item.vatRate || state.settings.vatRate || 0}%`,
+    formatBillions(totals.vat),
+  ]));
+  levyTable.body.append(sheetRow(["Total", "", "", formatBillions(officialTax + BigInt(totals.vat || "0"))], true));
+  levy.append(levyTable.table);
+  $("tax-sheet-invoice").textContent = `${formatAmount(totals.invoice)} ₲`;
 }
 
 function renderGovernment() {
@@ -3619,16 +3666,7 @@ function renderGovernment() {
     money.textContent = `${formatAmount(totals.invoice)} ₲`;
     main.append(business, who, money);
     main.addEventListener("click", () => openTaxSheet(item.id));
-    const pen = document.createElement("button");
-    pen.type = "button";
-    pen.className = "tax-pen";
-    pen.setAttribute("aria-label", `Edit ${item.business || "tax return"}`);
-    pen.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 20l4.5-1.2L19 8.3 15.7 5 5.2 15.5 4 20z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.8 6.8l3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>`;
-    pen.addEventListener("click", (event) => {
-      event.stopPropagation();
-      openTaxReview(item.id);
-    });
-    bar.append(main, pen);
+    bar.append(main);
     card.append(bar);
     list.append(card);
   });
@@ -5102,6 +5140,9 @@ $("tax-sheet-back").addEventListener("click", () => {
   taxSheetId = "";
   setSide("tax-sheet", false);
 });
+$("tax-sheet-edit").addEventListener("click", () => {
+  if (taxSheetId) openTaxReview(taxSheetId);
+});
 $("tax-sheet-sign").addEventListener("click", () => {
   const item = taxes.find((entry) => entry.id === taxSheetId);
   if (item) showSignature(item);
@@ -5185,7 +5226,10 @@ function paintLock() {
   const button = $("lock-go");
   if (!button) return;
   button.classList.toggle("is-locked", terminalLocked);
-  button.setAttribute("aria-label", terminalLocked ? "Unlock terminal" : "Lock terminal");
+  const label = terminalLocked ? "Unlock terminal" : "Lock terminal";
+  button.setAttribute("aria-label", label);
+  const text = $("lock-label");
+  if (text) text.textContent = label;
 }
 
 const CALL_ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
