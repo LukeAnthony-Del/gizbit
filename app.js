@@ -31,7 +31,7 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.33.001";
+const VERSION = "2.34.000";
 const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
 const DEFAULT_LOAN_BANDS = [
   { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
@@ -1686,7 +1686,8 @@ function sessionLength(record) {
   return `Length ${formatMinutes(end - record.started)}`;
 }
 
-function clockMarkup() {
+function clockMarkup(live) {
+  if (live) return `<img class="session-clock-icon session-live-clock" src="session-live.png" alt="" />`;
   return `<svg class="session-clock-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
 }
 
@@ -1698,7 +1699,7 @@ function sessionListing(item) {
   const main = document.createElement("button");
   main.type = "button";
   main.className = "session-main";
-  main.insertAdjacentHTML("beforeend", `<span class="session-icon">${clockMarkup()}</span>`);
+  main.insertAdjacentHTML("beforeend", `<span class="session-icon">${clockMarkup(item.live)}</span>`);
   const copy = document.createElement("span");
   copy.className = "session-copy";
   const name = document.createElement("strong");
@@ -3410,7 +3411,7 @@ function openTaxSplit(kind) {
     const swatch = document.createElement("i");
     swatch.style.background = color;
     const label = document.createElement("span");
-    label.textContent = slice.name;
+    label.textContent = withColon(slice.name);
     const share = document.createElement("strong");
     share.textContent = `${percents[index]}%`;
     row.append(swatch, label, share);
@@ -3439,7 +3440,7 @@ function renderEarnings() {
     const row = document.createElement("div");
     row.className = "earn-row";
     const name = document.createElement("span");
-    name.textContent = label;
+    name.textContent = withColon(label);
     const money = document.createElement("strong");
     money.textContent = `${formatAmount(amount.toString())} ₲`;
     row.append(name, money);
@@ -3482,7 +3483,7 @@ function renderTaxBar() {
     const name = document.createElement("td");
     const swatch = document.createElement("i");
     swatch.style.background = color;
-    name.append(swatch, document.createTextNode(label));
+    name.append(swatch, document.createTextNode(withColon(label)));
     const money = document.createElement("td");
     money.textContent = `${formatAmount(amount.toString())} ₲`;
     row.append(name, money);
@@ -3516,12 +3517,18 @@ function sheetTable(headers, widths) {
   return { table, body };
 }
 
+function withColon(label) {
+  const text = String(label ?? "");
+  if (!text || text.endsWith(":")) return text;
+  return `${text}:`;
+}
+
 function sheetRow(cells, total) {
   const row = document.createElement("tr");
   if (total) row.className = "is-total";
   cells.forEach((value, index) => {
     const cell = document.createElement("td");
-    cell.textContent = value;
+    cell.textContent = index === 0 ? withColon(value) : value;
     if (index > 0) cell.className = "num";
     row.append(cell);
   });
@@ -3573,7 +3580,7 @@ function fillTaxSheet() {
   [["Total revenue", totals.revenue], ["Expenses", totals.expenses || "0"], ["Profits", totals.profit]].forEach(([label, amount]) => {
     const line = document.createElement("p");
     const name = document.createElement("span");
-    name.textContent = label;
+    name.textContent = withColon(label);
     const value = document.createElement("strong");
     value.textContent = formatBillions(amount);
     line.append(name, value);

@@ -1283,7 +1283,7 @@ textarea {
 .session-stats td:last-child { text-align: right; }
 .session-rule { height: 0; margin: 0 0 12px; border: 0; border-top: 1px solid #c5d0db; }
 .session-icon { width: 42px; height: 42px; display: grid; place-items: center; color: var(--navy); background: #e7eef5; border-radius: 12px; flex: none; }
-.session-icon svg { width: 26px; height: 26px; }
+.session-icon svg, .session-icon img { width: 26px; height: 26px; object-fit: contain; }
 .attend-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .attend-panel strong { margin-left: 6px; }
 .reason-line { grid-column: 1 / -1; display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 4px; }

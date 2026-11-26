@@ -1,4 +1,4 @@
-const CACHE = "gizbit-v46";
+const CACHE = "gizbit-v47";
 const ASSETS = [
   "./",
   "index.html",
@@ -17,6 +17,7 @@ const ASSETS = [
   "tab-dashboard.png",
   "tab-sessions.png",
   "tab-documents.png",
+  "session-live.png",
 ];
 
 self.addEventListener("install", (event) => {
@@ -52,7 +53,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin || event.request.method !== "GET") return;
   const freshUrl = new URL(event.request.url);
-  freshUrl.searchParams.set("gv", "46");
+  freshUrl.searchParams.set("gv", "47");
   event.respondWith(
     fetch(new Request(freshUrl, { cache: "no-store" }))
       .then((response) => {
