@@ -576,9 +576,10 @@ body.gov-theme .tabs { background: #3a3a3a; border-top-color: #111; }
 body.gov-theme .tabs button { background: #3a3a3a; color: #f4f4f4; }
 body.gov-theme .tabs button.is-active { background: #3a3a3a; color: #fff; box-shadow: none; }
 body.gov-theme .tabs button.is-active::before {
-  background: rgba(255, 255, 255, 0.18);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.35);
+  background: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0, 0, 0, 0.28);
 }
+body.gov-theme .tab-clock { stroke: #3a3a3a; }
 body.gov-theme .page-head { background: #3a3a3a; }
 #balances.page.is-active { min-height: 100%; }
 #balances.is-over { background: #c0392b; }
@@ -1008,12 +1009,13 @@ textarea {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 52px;
-  height: 34px;
+  width: 44px;
+  height: 36px;
   transform: translate(-50%, -50%);
-  border-radius: 999px;
-  background: rgba(31, 77, 118, 0.12);
-  box-shadow: 0 8px 16px rgba(31, 77, 118, 0.28);
+  border-radius: 50%;
+  background: rgba(31, 77, 118, 0.16);
+  box-shadow: 0 0 0 7px rgba(31, 77, 118, 0.08), 0 2px 6px rgba(31, 77, 118, 0.2);
+  pointer-events: none;
 }
 .tab-mark { position: relative; z-index: 1; font-size: 28px; line-height: 1; display: grid; place-items: center; height: 32px; }
 .tabs button.is-active {
