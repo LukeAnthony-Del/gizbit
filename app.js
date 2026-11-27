@@ -31,7 +31,7 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.34.000";
+const VERSION = "2.35.000";
 const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
 const DEFAULT_LOAN_BANDS = [
   { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
@@ -58,6 +58,7 @@ let viewingSession = "";
 let terminalLocked = localStorage.getItem(TERM_LOCK) === "1";
 let taxPane = "income";
 let taxSheetId = "";
+let taxEditing = false;
 let attendEdit = false;
 let interest = loadInterest();
 const seen = new Set(loadList(SEEN));
@@ -326,6 +327,22 @@ function formatBillions(value) {
   return `${neg && abs !== 0n ? "-" : ""}${text}*`;
 }
 
+function billionsInputValue(value) {
+  return formatBillions(value).replace(/\*$/, "");
+}
+
+function rawFromBillions(text) {
+  const clean = String(text || "").replace(/[*\s,]/g, "");
+  if (!/^\d+(\.\d{0,9})?$/.test(clean)) return null;
+  const [whole, frac = ""] = clean.split(".");
+  const padded = (frac + "000000000").slice(0, 9);
+  try {
+    return (BigInt(whole || "0") * BILLION + BigInt(padded)).toString();
+  } catch {
+    return null;
+  }
+}
+
 function formatLoose(value) {
   let amount = 0n;
   try {
@@ -444,6 +461,7 @@ function publishLedger(applied, answered) {
     })),
     settings: state.settings,
     locked: terminalLocked,
+    sessionNo: currentSessionLabel(),
     ts: Date.now(),
   };
   const requestRows = requests.filter((item) => item.op !== "interest").slice(0, 8).map((item) => {
@@ -1604,6 +1622,12 @@ function sessionChrono() {
 function sessionNumber(id) {
   const index = sessionChrono().findIndex((item) => item.id === id);
   return index < 0 ? 1 : index + 1;
+}
+
+function currentSessionLabel() {
+  const all = sessionChrono();
+  if (!all.length) return "1";
+  return String(sessionNumber(all[all.length - 1].id));
 }
 
 function sessionDate(ts) {
@@ -3070,21 +3094,19 @@ function sanitizeTaxLines(value) {
 }
 
 function takeTax(body) {
-  if (!body || typeof body.id !== "string" || !remember(body.id)) return false;
+  if (!body || typeof body.id !== "string") return false;
+  if (taxes.some((item) => item.id === body.id)) return false;
   const account = state.accounts.find((item) => item.id === body.accountId);
   if (!account || body.ph !== account.ph) {
-    publishReject(body.id, "The password did not match.");
+    if (remember(`tax-bad:${body.id}`)) publishReject(body.id, "The password did not match.");
     return false;
   }
   const business = String(body.business || "").trim().slice(0, 60);
-  const owner = String(body.owner || "").trim().slice(0, 40);
   const sheet = String(body.sheet || "").replace(/\D/g, "").replace(/^0+/, "");
   const lines = sanitizeTaxLines(body.lines);
   const expenses = sanitizeExpenses(body.expenses);
-  if (!business || owner !== account.name || !sheet || !lines.length) {
-    publishReject(body.id, "That tax return could not be filed.");
-    return false;
-  }
+  if (!business || !sheet || !lines.length) return false;
+  if (!remember(body.id)) return false;
   const rates = {
     vat: percentText(body.vatRate, state.settings.vatRate),
     low: percentText(body.lowRate, state.settings.profitLow),
@@ -3097,7 +3119,7 @@ function takeTax(body) {
     accountId: account.id,
     owner: account.name,
     business,
-    session: "1",
+    session: String(body.session || "").replace(/\D/g, "").replace(/^0+/, "") || currentSessionLabel(),
     sheet,
     vatRate: rates.vat,
     lowRate: rates.low,
@@ -3535,66 +3557,69 @@ function sheetRow(cells, total) {
   return row;
 }
 
-function openTaxSheet(id) {
-  taxSheetId = id;
-  fillTaxSheet();
-  setSide("tax-sheet", true);
+function taxRatesOf(item) {
+  return {
+    vat: item.vatRate || state.settings.vatRate || "0",
+    low: item.lowRate || state.settings.profitLow || "0",
+    high: item.highRate || state.settings.profitHigh || "0",
+    threshold: item.threshold || state.settings.profitThreshold || "0",
+  };
 }
 
-function fillTaxSheet() {
-  const item = taxes.find((entry) => entry.id === taxSheetId);
-  if (!item || !$("tax-sheet")) {
-    taxSheetId = "";
-    setSide("tax-sheet", false);
-    return;
-  }
-  const totals = item.totals || { revenue: "0", vat: "0", profit: "0", expenses: "0", tax: "0", invoice: "0" };
-  $("tax-sheet-name").textContent = `${item.business || "Tax return"} tax return`;
-  $("tax-sheet-date").textContent = sessionDateLong(item.ts || Date.now());
-  const goods = $("tax-sheet-goods");
-  goods.replaceChildren();
-  const goodsTable = sheetTable(
-    ["Goods Description", "Quantity sold", "Gross Amount", "VAT", "Net profit"],
-    ["30%", "14%", "20%", "16%", "20%"],
-  );
-  let gross = 0n;
-  let vat = 0n;
-  let profit = 0n;
-  (item.lines || []).forEach((line) => {
-    const parts = splitVat(line.revenue, item.vatRate);
-    gross += parts.revenue;
-    vat += parts.vat;
-    profit += parts.profit;
-    goodsTable.body.append(sheetRow([
-      line.name,
-      formatFull(line.qty),
-      formatBillions(parts.revenue),
-      formatBillions(parts.vat),
-      formatBillions(parts.profit),
-    ]));
+function editField(value, field, numeric) {
+  const input = document.createElement("input");
+  input.className = "tax-edit";
+  input.dataset.field = field;
+  input.value = value;
+  input.inputMode = numeric ? "decimal" : "text";
+  input.addEventListener("input", refreshTaxEdit);
+  return input;
+}
+
+function linesFromSheet(item) {
+  const rows = [...$("tax-sheet-goods").querySelectorAll("tr[data-line]")];
+  if (!rows.length) return item.lines || [];
+  return rows.map((row, index) => {
+    const previous = (item.lines || [])[index] || {};
+    const name = row.querySelector("[data-field='name']").value.trim().slice(0, 60);
+    const qty = row.querySelector("[data-field='qty']").value.replace(/\D/g, "") || previous.qty || "0";
+    const revenue = rawFromBillions(row.querySelector("[data-field='revenue']").value);
+    return {
+      name: name || previous.name || "Item",
+      qty,
+      revenue: revenue || previous.revenue || "0",
+    };
   });
-  goodsTable.body.append(sheetRow(["Total", "", formatBillions(gross), formatBillions(vat), formatBillions(profit)], true));
-  goods.append(goodsTable.table);
+}
+
+function expensesFromSheet(item) {
+  const rows = [...$("tax-sheet-expenses").querySelectorAll("tr[data-expense]")];
+  if (!rows.length) return item.expenses || [];
+  return rows.map((row, index) => {
+    const previous = (item.expenses || [])[index] || {};
+    const name = row.querySelector("[data-field='name']").value.trim().slice(0, 60);
+    const amount = rawFromBillions(row.querySelector("[data-field='amount']").value);
+    return {
+      name: name || previous.name || "Expense",
+      note: previous.note || "",
+      amount: amount || previous.amount || "0",
+    };
+  });
+}
+
+function paintFigures(totals) {
   const figures = $("tax-sheet-figures");
   figures.replaceChildren();
-  [["Total revenue", totals.revenue], ["Expenses", totals.expenses || "0"], ["Profits", totals.profit]].forEach(([label, amount]) => {
-    const line = document.createElement("p");
-    const name = document.createElement("span");
-    name.textContent = withColon(label);
-    const value = document.createElement("strong");
-    value.textContent = formatBillions(amount);
-    line.append(name, value);
-    figures.append(line);
-  });
-  const exp = $("tax-sheet-expenses");
-  exp.replaceChildren();
-  if ((item.expenses || []).length) {
-    const expenseTable = sheetTable(["Expense", "Amount"], ["70%", "30%"]);
-    item.expenses.forEach((entry) => {
-      expenseTable.body.append(sheetRow([entry.name, formatBillions(entry.amount)]));
-    });
-    exp.append(expenseTable.table);
-  }
+  const table = sheetTable(["Name", "Amount"], ["62%", "38%"]);
+  [
+    ["Total revenue", totals.revenue],
+    ["Expenses", totals.expenses || "0"],
+    ["Profits", totals.profit],
+  ].forEach(([label, amount]) => table.body.append(sheetRow([label, formatBillions(amount)])));
+  figures.append(table.table);
+}
+
+function paintLevy(item, totals) {
   const levy = $("tax-sheet-levy");
   levy.replaceChildren();
   const levyTable = sheetTable(["Name", "Total", "Tax Rate (%)", "Gross Tax"], ["40%", "22%", "16%", "22%"]);
@@ -3635,6 +3660,155 @@ function fillTaxSheet() {
   $("tax-sheet-invoice").textContent = `${formatAmount(totals.invoice)} ₲`;
 }
 
+function refreshTaxEdit() {
+  const item = taxes.find((entry) => entry.id === taxSheetId);
+  if (!item || !taxEditing) return;
+  const lines = linesFromSheet(item);
+  const expenses = expensesFromSheet(item);
+  const totals = taxTotals(lines, taxRatesOf(item), expenses);
+  const rate = item.vatRate || state.settings.vatRate || "0";
+  let gross = 0n;
+  let vat = 0n;
+  let profit = 0n;
+  $("tax-sheet-goods").querySelectorAll("tr[data-line]").forEach((row, index) => {
+    const parts = splitVat(lines[index].revenue, rate);
+    gross += parts.revenue;
+    vat += parts.vat;
+    profit += parts.profit;
+    row.querySelector("[data-calc='vat']").textContent = formatBillions(parts.vat);
+    row.querySelector("[data-calc='profit']").textContent = formatBillions(parts.profit);
+  });
+  const total = $("tax-sheet-goods").querySelector("tr.is-total");
+  if (total) {
+    const cells = total.querySelectorAll("td");
+    cells[2].textContent = formatBillions(gross);
+    cells[3].textContent = formatBillions(vat);
+    cells[4].textContent = formatBillions(profit);
+  }
+  paintFigures(totals);
+  paintLevy(item, totals);
+}
+
+function commitTaxEdit() {
+  const item = taxes.find((entry) => entry.id === taxSheetId);
+  if (!item) return false;
+  const lines = linesFromSheet(item);
+  const expenses = expensesFromSheet(item);
+  const totals = taxTotals(lines, taxRatesOf(item), expenses);
+  const previousLines = item.lines;
+  const previousExpenses = item.expenses;
+  const changed = JSON.stringify(lines) !== JSON.stringify(previousLines) || JSON.stringify(expenses) !== JSON.stringify(previousExpenses);
+  if (!changed) return true;
+  item.lines = lines;
+  item.expenses = expenses;
+  const problem = payTax(item, totals);
+  const msg = $("tax-sheet-msg");
+  if (problem) {
+    item.lines = previousLines;
+    item.expenses = previousExpenses;
+    if (msg) msg.textContent = problem;
+    return false;
+  }
+  if (msg) msg.textContent = "";
+  return true;
+}
+
+function openTaxSheet(id) {
+  if (taxSheetId !== id) taxEditing = false;
+  taxSheetId = id;
+  const button = $("tax-sheet-edit");
+  if (button) {
+    button.classList.remove("is-on");
+    button.setAttribute("aria-pressed", "false");
+  }
+  fillTaxSheet();
+  setSide("tax-sheet", true);
+}
+
+function fillTaxSheet() {
+  const item = taxes.find((entry) => entry.id === taxSheetId);
+  if (!item || !$("tax-sheet")) {
+    taxSheetId = "";
+    setSide("tax-sheet", false);
+    return;
+  }
+  const totals = taxEditing
+    ? taxTotals(item.lines || [], taxRatesOf(item), item.expenses || [])
+    : (item.totals || { revenue: "0", vat: "0", profit: "0", expenses: "0", tax: "0", invoice: "0" });
+  $("tax-sheet-name").textContent = `${item.business || "Tax return"} tax return`;
+  $("tax-sheet-date").textContent = sessionDateLong(item.ts || Date.now());
+  const goods = $("tax-sheet-goods");
+  goods.replaceChildren();
+  const goodsTable = sheetTable(
+    ["Goods Description", "Quantity sold", "Gross Amount", "VAT", "Net profit"],
+    ["30%", "14%", "20%", "16%", "20%"],
+  );
+  let gross = 0n;
+  let vat = 0n;
+  let profit = 0n;
+  (item.lines || []).forEach((line, index) => {
+    const parts = splitVat(line.revenue, item.vatRate);
+    gross += parts.revenue;
+    vat += parts.vat;
+    profit += parts.profit;
+    if (!taxEditing) {
+      goodsTable.body.append(sheetRow([
+        line.name,
+        formatFull(line.qty),
+        formatBillions(parts.revenue),
+        formatBillions(parts.vat),
+        formatBillions(parts.profit),
+      ]));
+      return;
+    }
+    const row = document.createElement("tr");
+    row.dataset.line = String(index);
+    const name = document.createElement("td");
+    name.append(editField(line.name, "name", false));
+    const qty = document.createElement("td");
+    qty.className = "num";
+    qty.append(editField(formatFull(line.qty), "qty", true));
+    const revenue = document.createElement("td");
+    revenue.className = "num";
+    revenue.append(editField(billionsInputValue(parts.revenue), "revenue", true));
+    const vatCell = document.createElement("td");
+    vatCell.className = "num";
+    vatCell.dataset.calc = "vat";
+    vatCell.textContent = formatBillions(parts.vat);
+    const profitCell = document.createElement("td");
+    profitCell.className = "num";
+    profitCell.dataset.calc = "profit";
+    profitCell.textContent = formatBillions(parts.profit);
+    row.append(name, qty, revenue, vatCell, profitCell);
+    goodsTable.body.append(row);
+  });
+  goodsTable.body.append(sheetRow(["Total", "", formatBillions(gross), formatBillions(vat), formatBillions(profit)], true));
+  goods.append(goodsTable.table);
+  paintFigures(totals);
+  const exp = $("tax-sheet-expenses");
+  exp.replaceChildren();
+  if ((item.expenses || []).length) {
+    const expenseTable = sheetTable(["Expense", "Amount"], ["70%", "30%"]);
+    item.expenses.forEach((entry, index) => {
+      if (!taxEditing) {
+        expenseTable.body.append(sheetRow([entry.name, formatBillions(entry.amount)]));
+        return;
+      }
+      const row = document.createElement("tr");
+      row.dataset.expense = String(index);
+      const name = document.createElement("td");
+      name.append(editField(entry.name, "name", false));
+      const amount = document.createElement("td");
+      amount.className = "num";
+      amount.append(editField(billionsInputValue(entry.amount), "amount", true));
+      row.append(name, amount);
+      expenseTable.body.append(row);
+    });
+    exp.append(expenseTable.table);
+  }
+  paintLevy(item, totals);
+}
+
 function renderGovernment() {
   const collected = $("tax-collected");
   if (collected) collected.textContent = `${formatAmount(taxCollected().toString())} ₲`;
@@ -3665,19 +3839,28 @@ function renderGovernment() {
     const main = document.createElement("button");
     main.type = "button";
     main.className = "tax-fold-main";
+    const grid = document.createElement("span");
+    grid.className = "tax-card";
     const business = document.createElement("strong");
+    business.className = "biz";
     business.textContent = item.business || "Tax return";
+    const when = document.createElement("span");
+    when.className = "when";
+    when.textContent = sessionDateLong(item.ts || Date.now());
     const who = document.createElement("span");
+    who.className = "who";
     who.textContent = item.status === "review" ? `${item.owner} · Needs approval` : item.owner;
     const money = document.createElement("span");
+    money.className = "sum";
     money.textContent = `${formatAmount(totals.invoice)} ₲`;
-    main.append(business, who, money);
+    grid.append(business, when, who, money);
+    main.append(grid);
     main.addEventListener("click", () => openTaxSheet(item.id));
     bar.append(main);
     card.append(bar);
     list.append(card);
   });
-  if (taxSheetId) fillTaxSheet();
+  if (taxSheetId && !taxEditing) fillTaxSheet();
   if (!gamingList) return;
   gamingList.replaceChildren();
   const casino = state.accounts.find((account) => account.id === state.settings.gamingAccountId);
@@ -5144,11 +5327,25 @@ $("view-assets").addEventListener("click", () => {
 });
 $("tax-archive-back").addEventListener("click", () => openArchive(""));
 $("tax-sheet-back").addEventListener("click", () => {
+  if (taxEditing && !commitTaxEdit()) return;
+  taxEditing = false;
   taxSheetId = "";
   setSide("tax-sheet", false);
 });
 $("tax-sheet-edit").addEventListener("click", () => {
-  if (taxSheetId) openTaxReview(taxSheetId);
+  if (!taxSheetId) return;
+  if (taxEditing) {
+    if (!commitTaxEdit()) return;
+    taxEditing = false;
+  } else {
+    taxEditing = true;
+  }
+  const button = $("tax-sheet-edit");
+  button.classList.toggle("is-on", taxEditing);
+  button.setAttribute("aria-pressed", taxEditing ? "true" : "false");
+  const msg = $("tax-sheet-msg");
+  if (msg && taxEditing) msg.textContent = "";
+  fillTaxSheet();
 });
 $("tax-sheet-sign").addEventListener("click", () => {
   const item = taxes.find((entry) => entry.id === taxSheetId);

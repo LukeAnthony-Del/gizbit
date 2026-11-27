@@ -518,7 +518,33 @@ main {
   padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
 }
 .tax-foot .btn { width: 100%; }
-.tax-table-wrap { overflow: hidden; }
+.tax-table-wrap { overflow-x: auto; }
+.tax-grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.tax-grid-table th,
+.tax-grid-table td {
+  border: 1px solid #555;
+  padding: 6px 4px;
+  font-size: 12px;
+  line-height: 1.25;
+  color: #f4f4f4;
+  vertical-align: middle;
+}
+.tax-grid-table th { text-align: left; font-weight: 700; color: #d0d0d0; background: #1c1c1c; }
+.tax-grid-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.tax-grid-table .money-stack { align-items: flex-end; }
+.tax-grid-table .tax-remove {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+}
 .tax-line-head, .tax-line-row {
   display: grid;
   grid-template-columns: minmax(88px, 1.8fr) 0.7fr 1fr 0.7fr 1fr;

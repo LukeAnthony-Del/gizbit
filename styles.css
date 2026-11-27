@@ -510,6 +510,8 @@ input, select {
   padding: 12px;
   background: #fff;
   min-height: 100%;
+  border-radius: 18px;
+  overflow: hidden;
 }
 .tax-file.is-open { transform: translateX(56px); }
 .tax-file.is-sign { transform: translateX(-56px); }
@@ -559,6 +561,32 @@ input, select {
 .tax-sheet-actions { display: flex; gap: 8px; align-items: center; }
 .tax-sheet-actions .btn { flex: 1; }
 #tax-sheet-edit { flex: none; width: 48px; min-height: 44px; display: grid; place-items: center; padding: 0; }
+#tax-sheet-edit.is-on { background: #fff; color: #1a1a1a; }
+.tax-edit {
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  border-bottom: 1px solid #888;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  padding: 0 0 1px;
+  min-width: 0;
+}
+.tax-sheet-table .num .tax-edit { text-align: right; }
+.tax-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  row-gap: 2px;
+  width: 100%;
+  text-align: left;
+}
+.tax-card .biz { font-size: 16px; font-weight: 800; color: #fff; }
+.tax-card .who { color: #c8c8c8; font-size: 13px; font-weight: 700; }
+.tax-card .when { text-align: right; color: #d7d7d7; font-size: 13px; font-weight: 700; }
+.tax-card .sum { text-align: right; font-size: 20px; font-weight: 800; color: #fff; }
 .levy-row { grid-template-columns: 1.4fr 0.8fr 0.7fr 0.8fr; }
 .tax-grid-row.is-total { font-weight: 800; }
 .tax-stack, .money-stack { display: flex; flex-direction: column; line-height: 1.1; min-width: 0; }
