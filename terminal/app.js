@@ -18,7 +18,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.32.000";
+const VERSION = "2.32.001";
 const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
 const DEFAULT_LOAN_BANDS = [
   { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
@@ -50,6 +50,7 @@ let taxLines = [];
 let taxExpenses = [];
 let taxSigned = false;
 let taxBusy = false;
+let pendingTaxId = "";
 const waits = new Map();
 const reasons = new Map();
 
@@ -106,9 +107,15 @@ async function flushOutbox() {
   flushingOutbox = true;
   try {
     for (const item of items) {
+      let payload = item.payload;
+      if (payload.kind === "tax") payload = fitTaxPayload(payload);
+      if (payload.kind === "tax" && encode(item.sentence, payload).length > 3500) {
+        dropOutbox(payload.id);
+        continue;
+      }
       try {
-        await publish(item.sentence, item.payload);
-        dropOutbox(item.payload.id);
+        await publish(item.sentence, payload);
+        dropOutbox(payload.id);
       } catch {
         break;
       }
@@ -652,6 +659,7 @@ async function handleMessage(data) {
     }
   }
   if (body.kind === "decision") finishExchange(body.id, body.status);
+  if (body.kind === "tax-ack" && body.id) resolveWait(body.id, "ok");
   if (body.kind === "reject" && body.id) {
     reasons.set(body.id, body.reason || "The main phone refused that.");
     if (body.id === pendingExchangeId) finishExchange(body.id, "denied");
@@ -2987,6 +2995,46 @@ function saveBusiness() {
   paintTaxNav();
 }
 
+function thinStroke(stroke, maxPoints) {
+  if (!Array.isArray(stroke)) return [];
+  const pairs = [];
+  for (let i = 0; i + 1 < stroke.length; i += 2) pairs.push([stroke[i], stroke[i + 1]]);
+  if (pairs.length <= maxPoints) return pairs.flat();
+  const out = [];
+  for (let i = 0; i < maxPoints; i += 1) {
+    const index = Math.round((i * (pairs.length - 1)) / (maxPoints - 1));
+    out.push(pairs[index][0], pairs[index][1]);
+  }
+  return out;
+}
+
+function fitTaxPayload(payload) {
+  const next = {
+    ...payload,
+    lines: (payload.lines || []).slice(0, 12),
+    expenses: (payload.expenses || []).slice(0, 12).map((item) => ({
+      name: String(item.name || "").slice(0, 40),
+      note: String(item.note || "Filed").slice(0, 80),
+      amount: item.amount,
+    })),
+    sign: Array.isArray(payload.sign) ? payload.sign.slice(0, 8) : [],
+  };
+  const sentence = `${next.owner || "Account"} filed a tax return`;
+  const fits = () => encode(sentence, next).length <= 3500;
+  if (fits()) return next;
+  next.expenses = next.expenses.map((item) => ({ ...item, note: String(item.note || "Filed").slice(0, 24) }));
+  let points = 24;
+  while (!fits() && points >= 8) {
+    next.sign = next.sign.slice(0, 6).map((stroke) => thinStroke(stroke, points));
+    points -= 4;
+  }
+  if (!fits()) {
+    next.expenses = next.expenses.map((item) => ({ ...item, note: "Filed" }));
+    next.sign = next.sign.slice(0, 3).map((stroke) => thinStroke(stroke, 8));
+  }
+  return next;
+}
+
 async function commitTax() {
   if (taxBusy || !taxReady() || !$("tax-agree").checked || !taxSigned) return;
   const account = currentAccount();
@@ -3000,7 +3048,7 @@ async function commitTax() {
   const totals = taxTotals(lines, rates, taxExpenses);
   const id = uid();
   const ts = Date.now();
-  const payload = {
+  const payload = fitTaxPayload({
     v: 1,
     kind: "tax",
     id,
@@ -3022,27 +3070,54 @@ async function commitTax() {
     })),
     sign: taxPad.strokes(),
     ts,
-  };
-  if (encode(`${account.name} filed a tax return`, payload).length > 4000) {
-    $("tax-msg").textContent = "That return is too long. Remove a product or use a shorter signature.";
+  });
+  const sentence = `${account.name} filed a tax return`;
+  if (encode(sentence, payload).length > 3500) {
+    $("tax-msg").textContent = "That return is too long. Remove a product or shorten the signature.";
     return;
   }
-  const sentence = `${account.name} filed a tax return`;
   rememberOutbox(sentence, payload);
   taxBusy = true;
   paintTaxCommit();
+  $("tax-msg").textContent = "";
   $("tax-thanks").hidden = false;
   $("tax-wait").hidden = false;
   $("tax-thanks-body").hidden = true;
-  const started = Date.now();
+  pendingTaxId = id;
+  const resultPromise = waitFor(id, 8000);
+  let sent = false;
   try {
     await publish(sentence, payload);
-    dropOutbox(id);
+    sent = true;
   } catch {
-    /* flushOutbox sends the return when the link comes back. */
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    try {
+      await publish(sentence, payload);
+      sent = true;
+    } catch {
+      sent = false;
+    }
   }
-  const wait = 900 - (Date.now() - started);
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  if (!sent) {
+    taxBusy = false;
+    pendingTaxId = "";
+    $("tax-thanks").hidden = true;
+    paintTaxCommit();
+    $("tax-msg").textContent = "The network did not take that return. It will try again while this page is open.";
+    return;
+  }
+  const result = await resultPromise;
+  if (result === "reject") {
+    dropOutbox(id);
+    taxBusy = false;
+    pendingTaxId = "";
+    $("tax-thanks").hidden = true;
+    paintTaxCommit();
+    $("tax-msg").textContent = reasons.get(id) || "The network did not accept that return.";
+    return;
+  }
+  dropOutbox(id);
+  pendingTaxId = "";
   const stored = loadTaxes();
   stored.unshift({
     id,
@@ -3056,6 +3131,7 @@ async function commitTax() {
   });
   localStorage.setItem(LOCAL_TAXES, JSON.stringify(stored.slice(0, 40)));
   taxBusy = false;
+  $("tax-thanks").hidden = false;
   $("tax-wait").hidden = true;
   $("tax-thanks-body").hidden = false;
 }

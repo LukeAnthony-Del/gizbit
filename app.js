@@ -31,7 +31,7 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.35.000";
+const VERSION = "2.35.001";
 const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
 const DEFAULT_LOAN_BANDS = [
   { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
@@ -3082,12 +3082,17 @@ function sanitizeExpenses(value) {
   }).filter(Boolean);
 }
 
+function taxMoney(value) {
+  if (typeof value === "number" && Number.isFinite(value)) value = Math.trunc(value).toString();
+  return moneyText(value, false);
+}
+
 function sanitizeTaxLines(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 12).map((line) => {
     const name = String(line?.name || "").trim().slice(0, 40);
-    const qty = moneyText(line?.qty, false);
-    const revenue = moneyText(line?.revenue, false);
+    const qty = taxMoney(line?.qty);
+    const revenue = taxMoney(line?.revenue);
     if (!name || !qty || qty === "0" || revenue == null) return null;
     return { name, qty, revenue };
   }).filter(Boolean);
@@ -3096,16 +3101,29 @@ function sanitizeTaxLines(value) {
 function takeTax(body) {
   if (!body || typeof body.id !== "string") return false;
   if (taxes.some((item) => item.id === body.id)) return false;
-  const account = state.accounts.find((item) => item.id === body.accountId);
-  if (!account || body.ph !== account.ph) {
-    if (remember(`tax-bad:${body.id}`)) publishReject(body.id, "The password did not match.");
+  let account = state.accounts.find((item) => item.id === body.accountId);
+  const ph = String(body.ph || "").toLowerCase();
+  if (!account && ph) {
+    const same = state.accounts.filter((item) => String(item.ph || "").toLowerCase() === ph);
+    if (same.length === 1) account = same[0];
+  }
+  if (!account || ph !== String(account.ph || "").toLowerCase()) {
+    if (remember(`tax-bad:${body.id}`)) {
+      logActivity("A tax return was not filed. The password did not match.");
+      publishReject(body.id, "The password did not match.");
+    }
     return false;
   }
   const business = String(body.business || "").trim().slice(0, 60);
-  const sheet = String(body.sheet || "").replace(/\D/g, "").replace(/^0+/, "");
+  let sheet = String(body.sheet || "").replace(/\D/g, "").replace(/^0+/, "");
   const lines = sanitizeTaxLines(body.lines);
   const expenses = sanitizeExpenses(body.expenses);
-  if (!business || !sheet || !lines.length) return false;
+  if (!business || !lines.length) {
+    logActivity("A tax return was not filed. It had no business or no products.");
+    publishReject(body.id, "That tax return had no business or no products.");
+    return false;
+  }
+  if (!sheet) sheet = String(taxes.length + 1);
   if (!remember(body.id)) return false;
   const rates = {
     vat: percentText(body.vatRate, state.settings.vatRate),
@@ -3136,6 +3154,7 @@ function takeTax(body) {
   noteSign(account.id, body.id, body.sign);
   renderGovernment();
   toast(`${business} filed a tax return`);
+  publish("Tax return received", { v: 1, kind: "tax-ack", id: body.id, ts: Date.now() }).catch(() => {});
   return true;
 }
 

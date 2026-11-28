@@ -1,4 +1,4 @@
-const CACHE = "gizbit-terminal-v45";
+const CACHE = "gizbit-terminal-v46";
 const ASSETS = [
   "./",
   "index.html",
@@ -29,7 +29,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin || event.request.method !== "GET") return;
   const freshUrl = new URL(event.request.url);
-  freshUrl.searchParams.set("gv", "45");
+  freshUrl.searchParams.set("gv", "46");
   event.respondWith(
     fetch(new Request(freshUrl, { cache: "no-store" }))
       .then((response) => {
