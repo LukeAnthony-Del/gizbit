@@ -167,23 +167,23 @@ h1 {
 }
 .link-panel {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 8px;
   align-items: center;
-  margin: 4px 0 14px;
-  padding: 14px;
-  border-radius: 18px;
+  margin: 2px 0 10px;
+  padding: 7px 10px;
+  border-radius: 14px;
   background: #fff;
   color: var(--navy);
 }
 .link-panel .sat {
-  width: 64px;
-  height: 64px;
-  border-radius: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   background: var(--navy);
 }
-.link-panel strong { display: block; font-size: 16px; }
-.link-panel p { margin: 2px 0 0; font-size: 13px; font-weight: 650; color: var(--muted); }
+.link-panel strong { display: block; font-size: 13px; }
+.link-panel p { margin: 0; font-size: 10px; line-height: 1.2; font-weight: 650; color: var(--muted); }
 .sat.is-on .sat-slash { display: none; }
 .head-tools { display: flex; align-items: center; gap: 2px; flex: none; }
 #lock-go .lock-shut { display: none; }
@@ -1072,7 +1072,7 @@ textarea {
 .request .tag { display: block; margin-top: 6px; font-weight: 800; }
 .tabs {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   background: #fff;
   border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);
@@ -1085,8 +1085,8 @@ textarea {
   font-weight: 700;
   font-size: 0;
   line-height: 1;
-  min-height: 62px;
-  padding: 8px 2px;
+  min-height: 68px;
+  padding: 8px 0;
   display: grid;
   justify-items: center;
   align-items: center;
@@ -1096,17 +1096,17 @@ textarea {
   position: absolute;
   left: 50%;
   top: 46%;
-  width: 52px;
-  height: 34px;
+  width: 62px;
+  height: 42px;
   transform: translate(-50%, -50%);
   border-radius: 999px;
   background: rgba(31, 77, 118, 0.12);
   filter: drop-shadow(0 4px 5px rgba(31, 77, 118, 0.42));
 }
-.tab-mark { position: relative; z-index: 1; font-size: 28px; line-height: 1; display: grid; place-items: center; height: 32px; }
+.tab-mark { position: relative; z-index: 1; font-size: 32px; line-height: 1; display: grid; place-items: center; height: 36px; }
 .tab-img {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   background: currentColor;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
@@ -1122,8 +1122,8 @@ textarea {
   mask-image: url("tab-dashboard.png");
 }
 .tab-sessions {
-  width: 21px;
-  height: 21px;
+  width: 24px;
+  height: 24px;
   -webkit-mask-image: url("tab-sessions.png");
   mask-image: url("tab-sessions.png");
 }
