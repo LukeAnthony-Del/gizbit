@@ -165,6 +165,25 @@ h1 {
   display: grid;
   place-items: center;
 }
+.link-panel {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin: 4px 0 14px;
+  padding: 14px;
+  border-radius: 18px;
+  background: #fff;
+  color: var(--navy);
+}
+.link-panel .sat {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: var(--navy);
+}
+.link-panel strong { display: block; font-size: 16px; }
+.link-panel p { margin: 2px 0 0; font-size: 13px; font-weight: 650; color: var(--muted); }
 .sat.is-on .sat-slash { display: none; }
 .head-tools { display: flex; align-items: center; gap: 2px; flex: none; }
 #lock-go .lock-shut { display: none; }
@@ -564,23 +583,28 @@ input, select {
 .review-expense p { display: flex; justify-content: space-between; gap: 12px; margin: 0; }
 .review-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
 .review-actions .btn { min-height: 36px; }
-.archive-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.archive-title-row { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
 .archive-title-row h1 { margin: 4px 0 0; }
 .head-bin { border: 0; background: transparent; color: inherit; padding: 8px; }
 .game-swipe { display: grid; }
 .game-swipe .game-bin {
   grid-area: 1 / 1;
-  justify-self: end;
+  justify-self: start;
   align-self: stretch;
-  width: 64px;
+  width: 0;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
   border: 0;
   border-radius: 12px;
   background: #a33b3b;
   color: #fff;
 }
-.game-swipe .game-card { grid-area: 1 / 1; margin-top: 0; transition: transform 0.18s ease; }
+.game-swipe .game-card { grid-area: 1 / 1; margin-top: 0; z-index: 1; background: #161616; transition: transform 0.18s ease; }
 #gaming-list { display: grid; gap: 10px; }
-#gaming-list.is-bin .game-card { transform: translateX(-72px); }
+#gaming-list.is-bin .game-bin { width: 64px; opacity: 1; pointer-events: auto; }
+#gaming-list.is-bin .game-card { transform: translateX(72px); }
 .game-open { display: block; width: 100%; border: 0; background: transparent; color: inherit; padding: 0; text-align: left; }
 .tax-invoice { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 4px 0 16px; }
 .tax-invoice span { font-size: 14px; font-weight: 700; }
@@ -1363,7 +1387,7 @@ textarea {
 .tax-table th, .tax-table td { border-bottom: 1px solid var(--line); padding: 8px 0; text-align: left; vertical-align: middle; }
 .tax-table th { font-size: 14px; padding-right: 10px; }
 .tax-table input { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
-.mark-head, .mark-row { display: grid; grid-template-columns: minmax(0, 1fr) 52px 72px 78px; gap: 6px; align-items: center; }
+.mark-head, .mark-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px 78px; gap: 6px; align-items: center; }
 .mark-head { font-size: 11px; font-weight: 800; color: var(--muted); line-height: 1.15; }
 .mark-head span:not(:first-child), .mark-row input { justify-self: center; text-align: center; }
 .mark-row { padding: 8px 0; border-bottom: 1px solid var(--line); }

@@ -296,9 +296,11 @@ main {
 .home-btn svg { flex: none; }
 .pane-exchange button { touch-action: pan-y; }
 #send-terms-step { margin-top: 28px; }
+.home-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.home-gear { border: 0; background: transparent; color: var(--navy); padding: 2px; }
 .app-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
   padding-top: 2px;
   justify-items: center;

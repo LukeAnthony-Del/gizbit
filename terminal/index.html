@@ -68,7 +68,14 @@
         <section id="bank" class="bank" hidden>
           <div class="stage" id="stage">
             <div class="pane-home">
-              <h1 id="welcome">Welcome</h1>
+              <div class="home-top">
+                <h1 id="welcome">Welcome</h1>
+                <button type="button" id="open-prefs" class="home-gear" aria-label="Settings">
+                  <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+                    <path fill="currentColor" fill-rule="evenodd" d="M19.4 13.5a7.7 7.7 0 0 0 .1-1.5 7.7 7.7 0 0 0-.1-1.5l2-1.6a.5.5 0 0 0 .1-.6l-1.9-3.3a.5.5 0 0 0-.6-.2l-2.4 1a7.4 7.4 0 0 0-2.6-1.5l-.4-2.5a.5.5 0 0 0-.5-.4h-3.8a.5.5 0 0 0-.5.4l-.4 2.5a7.4 7.4 0 0 0-2.6 1.5l-2.4-1a.5.5 0 0 0-.6.2L2.4 8.3a.5.5 0 0 0 .1.6l2 1.6a7.7 7.7 0 0 0-.1 1.5 7.7 7.7 0 0 0 .1 1.5l-2 1.6a.5.5 0 0 0-.1.6l1.9 3.3a.5.5 0 0 0 .6.2l2.4-1a7.4 7.4 0 0 0 2.6 1.5l.4 2.5a.5.5 0 0 0 .5.4h3.8a.5.5 0 0 0 .5-.4l.4-2.5a7.4 7.4 0 0 0 2.6-1.5l2.4 1a.5.5 0 0 0 .6-.2l1.9-3.3a.5.5 0 0 0-.1-.6l-2-1.6zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/>
+                  </svg>
+                </button>
+              </div>
               <label class="field" id="account-pick-wrap" hidden>
                 <span>Account</span>
                 <select id="account-pick" hidden></select>
@@ -95,14 +102,6 @@
               </button>
               </div>
               <div class="app-row">
-                <button type="button" id="open-prefs" class="app-tile grey" aria-label="Settings">
-                  <span class="app-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="28" height="28">
-                      <path fill="currentColor" fill-rule="evenodd" d="M19.4 13.5a7.7 7.7 0 0 0 .1-1.5 7.7 7.7 0 0 0-.1-1.5l2-1.6a.5.5 0 0 0 .1-.6l-1.9-3.3a.5.5 0 0 0-.6-.2l-2.4 1a7.4 7.4 0 0 0-2.6-1.5l-.4-2.5a.5.5 0 0 0-.5-.4h-3.8a.5.5 0 0 0-.5.4l-.4 2.5a7.4 7.4 0 0 0-2.6 1.5l-2.4-1a.5.5 0 0 0-.6.2L2.4 8.3a.5.5 0 0 0 .1.6l2 1.6a7.7 7.7 0 0 0-.1 1.5 7.7 7.7 0 0 0 .1 1.5l-2 1.6a.5.5 0 0 0-.1.6l1.9 3.3a.5.5 0 0 0 .6.2l2.4-1a7.4 7.4 0 0 0 2.6 1.5l.4 2.5a.5.5 0 0 0 .5.4h3.8a.5.5 0 0 0 .5-.4l.4-2.5a7.4 7.4 0 0 0 2.6-1.5l2.4 1a.5.5 0 0 0 .6-.2l1.9-3.3a.5.5 0 0 0-.1-.6l-2-1.6zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/>
-                    </svg>
-                  </span>
-                  <span>Settings</span>
-                </button>
                 <button type="button" id="open-calc" class="app-tile" aria-label="Calculator">
                   <span class="app-icon" aria-hidden="true">€₲</span>
                   <span>Calculator</span>
@@ -137,14 +136,6 @@
                     </svg>
                   </span>
                   <span>Gaming Center</span>
-                </button>
-                <button type="button" id="open-gfg" class="app-tile" aria-label="Gizbit Financial Group">
-                  <span class="app-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="28" height="28">
-                      <path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5.2v-5.2H10.2V21H5a1 1 0 0 1-1-1v-9.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
-                    </svg>
-                  </span>
-                  <span>Gizbit Financial Group</span>
                 </button>
               </div>
             </div>
@@ -274,39 +265,6 @@
                 </div>
                 <p id="send-msg" class="error" role="status"></p>
                 <button type="button" id="send-go" class="btn" hidden disabled>Transfer</button>
-              </div>
-            </div>
-            <div class="pane-gfg" id="gfg-pane">
-              <button type="button" id="gfg-back" class="back">
-                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                  <path d="M15 5 L8 12 L15 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-                Back
-              </button>
-              <h1>Gizbit Financial Group</h1>
-              <div class="gfg-tabs">
-                <button type="button" id="gfg-tab-apply" class="is-on">Apply</button>
-                <button type="button" id="gfg-tab-interest">Interest earned</button>
-              </div>
-              <div id="gfg-apply">
-                <p id="gfg-terms" class="quiet"></p>
-                <p id="gfg-wait" class="quiet" hidden>Waiting for approval.</p>
-                <div id="gfg-pay" hidden>
-                  <div class="loan-bar"><span id="gfg-fill"></span></div>
-                  <p id="gfg-due" class="quiet"></p>
-                  <label class="field"><span>Pay (₲)</span><input id="gfg-pay-amount" inputmode="numeric" autocomplete="off" /></label>
-                  <button type="button" id="gfg-pay-go" class="btn">Pay</button>
-                </div>
-                <div id="gfg-form">
-                  <label class="field"><span>Amount (₲)</span><input id="gfg-amount" inputmode="numeric" autocomplete="off" /></label>
-                  <label class="check"><input id="gfg-agree" type="checkbox" /> I agree to the terms and conditions</label>
-                  <button type="button" id="gfg-go" class="btn">Apply</button>
-                </div>
-                <p id="gfg-msg" class="error" role="status"></p>
-              </div>
-              <div id="gfg-interest" hidden>
-                <p id="gfg-earned" class="quiet"></p>
-                <ul id="gfg-earned-list" class="history"></ul>
               </div>
             </div>
             <div class="pane-activity" id="activity-pane">

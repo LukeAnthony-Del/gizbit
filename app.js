@@ -31,7 +31,7 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.36.001";
+const VERSION = "2.37.000";
 const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
 const DEFAULT_LOAN_BANDS = [
   { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
@@ -75,6 +75,7 @@ let announced = false;
 let lastSend = 0;
 let lastHear = 0;
 let linkBroken = false;
+let connectedSince = 0;
 let postChain = Promise.resolve();
 let toastTimer = 0;
 
@@ -109,6 +110,8 @@ function defaultSettings() {
     taxAccountId: "",
     gamingAccountId: "",
     gamingTax: DEFAULT_GAMING_TAX,
+    casinoCut: "0",
+    casinoCutAccountId: "",
     interestAccountId: "",
     loanAccountId: "",
     loanTerms: DEFAULT_LOAN_TERMS,
@@ -160,6 +163,8 @@ function normalizeSettings(value) {
     taxAccountId: typeof value?.taxAccountId === "string" && /^[\w-]{8,}$/.test(value.taxAccountId) ? value.taxAccountId : "",
     gamingAccountId: typeof value?.gamingAccountId === "string" && /^[\w-]{8,}$/.test(value.gamingAccountId) ? value.gamingAccountId : "",
     gamingTax: percentText(value?.gamingTax, DEFAULT_GAMING_TAX),
+    casinoCut: percentText(value?.casinoCut, "0"),
+    casinoCutAccountId: typeof value?.casinoCutAccountId === "string" && /^[\w-]{8,}$/.test(value.casinoCutAccountId) ? value.casinoCutAccountId : "",
     interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
     loanAccountId: typeof value?.loanAccountId === "string" && /^[\w-]{8,}$/.test(value.loanAccountId) ? value.loanAccountId : "",
     loanTerms: String(value?.loanTerms || DEFAULT_LOAN_TERMS).slice(0, 400),
@@ -600,14 +605,29 @@ function setStatus(text) {
   if (node) node.textContent = text;
 }
 
+function linkStamp(ts) {
+  if (!ts) return "—";
+  return `${sessionDateLong(ts)}, ${sessionClockTime(ts)}`;
+}
+
 function paintLink() {
   const now = Date.now();
   const on = streamOpen && !linkBroken && lastSend > 0 && now - lastSend < 50000 && lastHear > 0 && now - lastHear < 50000;
+  if (on && !connectedSince) connectedSince = now;
+  if (!on) connectedSince = 0;
   const mark = $("link-mark");
   if (mark) {
     mark.classList.toggle("is-on", on);
     mark.setAttribute("aria-label", on ? "Connected" : "Not connected");
   }
+  const words = $("link-words");
+  if (words) words.textContent = on ? "Connected" : "Not connected";
+  const ledger = $("link-ledger");
+  if (ledger) ledger.textContent = `Ledger sent: ${linkStamp(lastAnnounce)}`;
+  const held = $("link-for");
+  if (held) held.textContent = on && connectedSince ? `Connected for: ${sessionSpanText(now - connectedSince)}` : "Connected for: —";
+  const heard = $("link-heard");
+  if (heard) heard.textContent = `Last message: ${linkStamp(lastHear)}`;
   const meta = document.querySelector('meta[name="theme-color"]');
   if (!meta) return;
   const balances = $("balances");
@@ -1511,6 +1531,7 @@ function settleInterest() {
 }
 
 function catchInterest() {
+  return;
   if (!interest.joined || !sessionLive) {
     if (interest.mark) {
       interest.mark = 0;
@@ -2725,6 +2746,8 @@ function approveLoan(id, raw) {
 
 function takeLoanApply(body) {
   if (!body || !body.id || !remember(body.id)) return;
+  publishReject(body.id, "Loans are no longer available.");
+  return;
   const account = state.accounts.find((item) => item.id === body.accountId);
   const amount = moneyText(body.amount, false);
   if (!account || body.ph !== account.ph || !amount) {
@@ -2752,6 +2775,8 @@ function takeLoanApply(body) {
 
 function takeLoanPay(body) {
   if (!body || !body.id || !remember(body.id)) return;
+  publishReject(body.id, "Loans are no longer available.");
+  return;
   const loan = loans.find((item) => item.id === body.loanId && item.status === "active");
   const borrower = loan && state.accounts.find((item) => item.id === loan.accountId);
   const lender = state.accounts.find((item) => item.id === state.settings.loanAccountId);
@@ -4711,7 +4736,33 @@ function cashOutPlay(id) {
       ts: Date.now(),
     });
   }
-  if (net > 0n || tax > 0n) {
+  const house = stake > gross ? stake - gross : 0n;
+  const cutRate = BigInt(state.settings.casinoCut || "0");
+  const cutAccount = state.accounts.find((item) => item.id === state.settings.casinoCutAccountId);
+  let cut = 0n;
+  if (house > 0n && cutRate > 0n && cutAccount && cutAccount.id !== sink.id && cutAccount.id !== player.id) {
+    cut = floorBillion(house * cutRate / 100n);
+    if (cut > 0n && BigInt(sink.bal) >= cut && BigInt(cutAccount.bal) + cut <= MAX) {
+      sink.bal = (BigInt(sink.bal) - cut).toString();
+      cutAccount.bal = (BigInt(cutAccount.bal) + cut).toString();
+      play.cut = cut.toString();
+      play.cutName = cutAccount.name;
+      requests.unshift({
+        id: `${play.id}-cut`,
+        accountId: sink.id,
+        name: sink.name,
+        op: "transfer",
+        amount: cut.toString(),
+        status: "done",
+        applied: cut.toString(),
+        toId: cutAccount.id,
+        toName: cutAccount.name,
+        memo: "Casino profit share",
+        ts: Date.now(),
+      });
+    }
+  }
+  if (net > 0n || tax > 0n || cut > 0n) {
     requests.splice(80);
     saveRequests();
   }
@@ -4779,6 +4830,10 @@ function fillPlaySheet(id) {
     figBody.append(moneyRow("Cashed out", out.toString()));
     figBody.append(moneyRow("Profit", profit.toString()));
     figBody.append(sheetRow(["Tax", `${formatAmount(tax.toString())} ₲`], true));
+    if (BigInt(play.cut || "0") > 0n) {
+      figBody.append(moneyRow("Profit share", play.cut));
+      if (play.cutName) figBody.append(sheetRow(["Share paid to", play.cutName]));
+    }
   }
   figures.append(figBody);
   body.append(figures);
@@ -5229,11 +5284,6 @@ function fillMarkRows(fromSaved) {
     row.className = "mark-row";
     const name = document.createElement("span");
     name.textContent = account.name;
-    const skipBox = document.createElement("input");
-    skipBox.type = "checkbox";
-    skipBox.dataset.skip = "1";
-    skipBox.value = account.id;
-    skipBox.checked = skip.has(account.id);
     const boardBox = document.createElement("input");
     boardBox.type = "checkbox";
     boardBox.dataset.board = "1";
@@ -5244,10 +5294,9 @@ function fillMarkRows(fromSaved) {
     attendBox.dataset.attend = "1";
     attendBox.value = account.id;
     attendBox.checked = attend.has(account.id);
-    skipBox.addEventListener("change", commitSettings);
     boardBox.addEventListener("change", commitSettings);
     attendBox.addEventListener("change", commitSettings);
-    row.append(name, skipBox, boardBox, attendBox);
+    row.append(name, boardBox, attendBox);
     box.append(row);
   });
 }
@@ -5335,6 +5384,9 @@ function commitSettings() {
     next.profitHigh = profitHigh;
     next.gamingTax = gamingTax;
   }
+  if ($("casino-cut")) {
+    next.casinoCut = readPercent("casino-cut") || "0";
+  }
   if ($("profit-threshold")) {
     const profitThreshold = parseAmount($("profit-threshold").value);
     if (!profitThreshold) {
@@ -5363,7 +5415,9 @@ function commitSettings() {
     next.bankLimit = bankLimit;
   }
   if ($("mark-rows") && $("mark-rows").childElementCount) {
-    next.skipInterest = [...document.querySelectorAll("[data-skip]:checked")].map((input) => input.value);
+    if (document.querySelector("[data-skip]")) {
+      next.skipInterest = [...document.querySelectorAll("[data-skip]:checked")].map((input) => input.value);
+    }
     next.boardSkip = [...document.querySelectorAll("[data-board]:checked")].map((input) => input.value);
     next.skipAttend = [...document.querySelectorAll("[data-attend]:checked")].map((input) => input.value);
   }
@@ -5380,6 +5434,7 @@ function fillSettings() {
   setGrouped("euro-rate", state.settings.euroRate);
   setGrouped("vat-rate", state.settings.vatRate);
   setGrouped("gaming-tax", state.settings.gamingTax);
+  setGrouped("casino-cut", state.settings.casinoCut || "0");
   setGrouped("profit-low", state.settings.profitLow);
   setGrouped("profit-high", state.settings.profitHigh);
   setGrouped("profit-threshold", state.settings.profitThreshold);
@@ -5392,6 +5447,7 @@ function fillSettings() {
   if (loanTerms && document.activeElement !== loanTerms) loanTerms.value = state.settings.loanTerms;
   fillTaxAccount();
   fillGamingAccount();
+  fillRole("casino-cut-account", state.settings.casinoCutAccountId, "casinoCutAccountId");
   fillInterestAccount();
   fillLoanAccount();
   fillMarkRows(true);
@@ -5720,7 +5776,7 @@ $("preset-add").addEventListener("click", () => {
   $("preset-fields").append(presetRow(state.settings.minAmount || DEFAULT_MIN));
   queueSettings();
 });
-["min-amount", "euro-rate", "vat-rate", "profit-low", "profit-high", "profit-threshold", "gaming-tax", "bank-limit"].forEach((id) => {
+["min-amount", "euro-rate", "vat-rate", "profit-low", "profit-high", "profit-threshold", "gaming-tax", "casino-cut", "bank-limit"].forEach((id) => {
   const node = $(id);
   if (!node) return;
   node.addEventListener("input", () => {
@@ -5739,8 +5795,10 @@ document.querySelectorAll(".tabs button").forEach((button) => {
   button.addEventListener("click", () => {
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().then(() => renderRequests());
     ["tax-archive", "tax-split", "earnings", "assets-archive", "gaming-archive", "loans-page", "contracts-page", "set-presets", "set-taxes", "set-terms", "set-roles", "set-marks", "set-bank"].forEach((id) => {
-      $(id).classList.remove("is-open");
-      $(id).setAttribute("aria-hidden", "true");
+      const node = $(id);
+      if (!node) return;
+      node.classList.remove("is-open");
+      node.setAttribute("aria-hidden", "true");
     });
     closeSessionSides();
     showTab(button.dataset.tab);
@@ -5894,15 +5952,6 @@ $("session-menu-delete").addEventListener("click", () => {
   deleteSession(id);
 });
 bindSessionMenu();
-$("open-interest").addEventListener("click", openInterest);
-$("open-loans").addEventListener("click", () => {
-  closeArchives();
-  closeSessionSides();
-  renderLoans();
-  fillLoanFormula();
-  setSide("loans-page", true);
-});
-$("loans-back").addEventListener("click", () => setSide("loans-page", false));
 $("contracts-back").addEventListener("click", () => setSide("contracts-page", false));
 $("contract-make").addEventListener("click", makeContract);
 $("contract-amount").addEventListener("input", () => placeGroupedCaret($("contract-amount")));
@@ -6115,8 +6164,8 @@ $("ring-go").addEventListener("click", async () => {
     button.disabled = false;
   }
 });
-$("loan-formula").addEventListener("click", saveLoanFormula);
-$("loan-add").addEventListener("click", () => {
+if ($("loan-formula")) $("loan-formula").addEventListener("click", saveLoanFormula);
+if ($("loan-add")) $("loan-add").addEventListener("click", () => {
   const box = $("loan-bands");
   const row = document.createElement("div");
   row.className = "loan-band";
@@ -6165,7 +6214,6 @@ $("exchange-filter").addEventListener("click", () => {
     { value: "deposit", label: "Deposit" },
     { value: "withdraw", label: "Withdrawal" },
     { value: "transfer", label: "Transfer" },
-    { value: "interest", label: "Interest" },
   ], exchangeFilter.type, (value) => { exchangeFilter.type = value; });
   const accounts = [{ value: "", label: "Any account" }];
   state.accounts.forEach((account) => accounts.push({ value: account.id, label: account.name }));
@@ -6195,12 +6243,8 @@ $("filter-clear").addEventListener("click", () => {
   $("filter-sheet").hidden = true;
   renderActivity();
 });
-$("interest-back").addEventListener("click", closeInterest);
-$("pay-interest").addEventListener("click", payInterestNow);
 setInterval(() => {
-  catchInterest();
   paintSessionClock();
-  paintInterest();
 }, 1000);
 
 bindViewport();

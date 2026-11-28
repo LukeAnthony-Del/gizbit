@@ -18,7 +18,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.33.001";
+const VERSION = "2.34.000";
 const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
 const DEFAULT_LOAN_BANDS = [
   { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
@@ -177,6 +177,8 @@ function defaultSettings() {
     taxAccountId: "",
     gamingAccountId: "",
     gamingTax: "20",
+    casinoCut: "0",
+    casinoCutAccountId: "",
     interestAccountId: "",
     loanAccountId: "",
     loanTerms: DEFAULT_LOAN_TERMS,
@@ -228,6 +230,8 @@ function normalizeSettings(value) {
     taxAccountId: typeof value?.taxAccountId === "string" && /^[\w-]{8,}$/.test(value.taxAccountId) ? value.taxAccountId : "",
     gamingAccountId: typeof value?.gamingAccountId === "string" && /^[\w-]{8,}$/.test(value.gamingAccountId) ? value.gamingAccountId : "",
     gamingTax: percentText(value?.gamingTax, "20"),
+    casinoCut: percentText(value?.casinoCut, "0"),
+    casinoCutAccountId: typeof value?.casinoCutAccountId === "string" && /^[\w-]{8,}$/.test(value.casinoCutAccountId) ? value.casinoCutAccountId : "",
     interestAccountId: typeof value?.interestAccountId === "string" && /^[\w-]{8,}$/.test(value.interestAccountId) ? value.interestAccountId : "",
     loanAccountId: typeof value?.loanAccountId === "string" && /^[\w-]{8,}$/.test(value.loanAccountId) ? value.loanAccountId : "",
     loanTerms: String(value?.loanTerms || DEFAULT_LOAN_TERMS).slice(0, 400),
@@ -682,10 +686,7 @@ async function handleMessage(data) {
       $("send-msg").textContent = body.reason || "The main phone could not transfer that.";
       revealSend();
     }
-    if (body.id === pendingLoanId) {
-      pendingLoanId = "";
-      $("gfg-msg").textContent = body.reason || "The main phone could not do that.";
-    }
+    if (body.id === pendingLoanId) pendingLoanId = "";
     if (pendingPassword && body.id === pendingPassword.id) {
       pendingPassword = null;
       $("pass-sheet").hidden = false;
@@ -1399,7 +1400,10 @@ function showHome() {
   const stage = $("stage");
   stage.classList.remove("is-side");
   stage.scrollLeft = 0;
-  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board", "game", "gfg"].forEach((name) => $(`${name}-pane`).classList.remove("is-front"));
+  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board", "game"].forEach((name) => {
+    const pane = $(`${name}-pane`);
+    if (pane) pane.classList.remove("is-front");
+  });
   closeTaxForm();
   if (sessionPh) {
     $("logout").hidden = false;
@@ -1409,7 +1413,10 @@ function showHome() {
 
 function showSide(name) {
   const stage = $("stage");
-  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board", "game", "gfg"].forEach((pane) => $(`${pane}-pane`).classList.toggle("is-front", pane === name));
+  ["exchange", "activity", "calc", "prefs", "gov", "tax", "board", "game"].forEach((paneName) => {
+    const pane = $(`${paneName}-pane`);
+    if (pane) pane.classList.toggle("is-front", paneName === name);
+  });
   stage.classList.add("is-side");
   stage.scrollLeft = 0;
   $("logout").hidden = true;
@@ -3933,13 +3940,16 @@ function loanRepayTotal(loan) {
 }
 
 function showGfgTab(name) {
+  if (!$("gfg-tab-apply")) return;
   $("gfg-tab-apply").classList.toggle("is-on", name === "apply");
+  if (!$("gfg-tab-interest")) return;
   $("gfg-tab-interest").classList.toggle("is-on", name === "interest");
   $("gfg-apply").hidden = name !== "apply";
   $("gfg-interest").hidden = name !== "interest";
 }
 
 function renderGfg() {
+  if (!$("gfg-terms")) return;
   const account = currentAccount();
   const terms = ledger?.settings?.loanTerms || DEFAULT_LOAN_TERMS;
   $("gfg-terms").textContent = terms;
@@ -4035,19 +4045,6 @@ async function payLoan() {
   }
 }
 
-$("open-gfg").addEventListener("click", () => {
-  showGfgTab("apply");
-  renderGfg();
-  showSide("gfg");
-});
-$("gfg-back").addEventListener("click", showHome);
-$("gfg-tab-apply").addEventListener("click", () => showGfgTab("apply"));
-$("gfg-tab-interest").addEventListener("click", () => {
-  showGfgTab("interest");
-  renderGfg();
-});
-$("gfg-go").addEventListener("click", applyLoan);
-$("gfg-pay-go").addEventListener("click", payLoan);
 $("call-out-hang").addEventListener("click", () => closeTerminalCall(true));
 $("ring-ok").addEventListener("click", () => {
   $("ring").hidden = true;
