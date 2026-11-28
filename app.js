@@ -31,7 +31,7 @@ const DEFAULT_TERMS = "An exchange is recorded on the main phone. You confirm th
 const DEFAULT_TAX_TERMS = "This tax return is filed with the National Gizbit Government centre. The amounts are correct and the VAT and profit tax are accepted.";
 const DEFAULT_BANK_LIMIT = "30000000000000000";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.35.001";
+const VERSION = "2.36.000";
 const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
 const DEFAULT_LOAN_BANDS = [
   { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
@@ -59,6 +59,11 @@ let terminalLocked = localStorage.getItem(TERM_LOCK) === "1";
 let taxPane = "income";
 let taxSheetId = "";
 let taxEditing = false;
+let taxReviewStep = 0;
+let reviewInk = [];
+let reviewBackup = null;
+let gamingBin = false;
+let playOpenId = "";
 let attendEdit = false;
 let interest = loadInterest();
 const seen = new Set(loadList(SEEN));
@@ -67,6 +72,9 @@ let streamOpen = false;
 let lastStream = 0;
 let lastAnnounce = 0;
 let announced = false;
+let lastSend = 0;
+let lastHear = 0;
+let linkBroken = false;
 let postChain = Promise.resolve();
 let toastTimer = 0;
 
@@ -438,8 +446,17 @@ function publish(sentence, payload) {
       await attempt();
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 700));
-      await attempt();
+      try {
+        await attempt();
+      } catch (err) {
+        linkBroken = true;
+        paintLink();
+        throw err;
+      }
     }
+    linkBroken = false;
+    lastSend = Date.now();
+    paintLink();
   });
   postChain = job.catch(() => {});
   return job;
@@ -504,11 +521,7 @@ function publishLedger(applied, answered) {
   pack("requests", requestRows);
   pack("plays", playRows);
   if (books.length && fits({ ...payload, lastBooks: books })) payload.lastBooks = books;
-  const sent = publish("Balances updated", payload);
-  publishAssets();
-  publishActivity();
-  publishLoans();
-  return sent;
+  return publish("Balances updated", payload);
 }
 
 function publishActivity() {
@@ -586,10 +599,12 @@ function setStatus(text) {
 }
 
 function paintLink() {
+  const now = Date.now();
+  const on = streamOpen && !linkBroken && lastSend > 0 && now - lastSend < 50000 && lastHear > 0 && now - lastHear < 50000;
   const mark = $("link-mark");
   if (mark) {
-    mark.classList.toggle("is-on", streamOpen);
-    mark.setAttribute("aria-label", streamOpen ? "Connected" : "Not connected");
+    mark.classList.toggle("is-on", on);
+    mark.setAttribute("aria-label", on ? "Connected" : "Not connected");
   }
   const meta = document.querySelector('meta[name="theme-color"]');
   if (!meta) return;
@@ -1488,6 +1503,7 @@ function settleInterest() {
     saveRequests();
     render();
     publishLedger([]).catch(() => setStatus("Interest saved on this phone. The terminal will catch up when the connection is back."));
+    publishActivity();
   }
   return result;
 }
@@ -2279,7 +2295,7 @@ function renderAssetList() {
     note.textContent = item.note || "";
     const price = document.createElement("p");
     if (item.claimed) {
-      price.textContent = `Claimed · ${formatAmount(item.paid || item.price)} ₲`;
+      price.textContent = `Owned by ${item.owner || "someone"} · ${formatAmount(item.paid || item.price)} ₲`;
     } else {
       price.textContent = `${formatAmount(item.price)} ₲`;
     }
@@ -2434,7 +2450,19 @@ function confirmAssetBuy() {
   closeAssetBuy();
   clearNotification(buy.id);
   publishLedger([buy.id]).catch(() => setStatus("Saved on this phone. The terminal will catch up when the connection is back."));
+  publishAssets();
   toast("Asset sold");
+}
+
+function denyAssetBuy() {
+  const buy = assetBuys.find((item) => item.id === assetBuyId && item.status === "pending");
+  if (!buy) return;
+  buy.status = "denied";
+  saveAssetBuys();
+  publishReject(buy.id, "The asset request was refused.");
+  closeAssetBuy();
+  clearNotification(buy.id);
+  toast("Asset refused");
 }
 
 function saveLoans() {
@@ -2980,6 +3008,10 @@ async function handleMessage(data, bucket) {
   if (data.event && data.event !== "message") return;
   const body = decode(await messageText(data));
   if (!body || body.v !== 1) return;
+  if (["ping", "request", "gaming", "transfer", "tax", "tax-delete", "tax-clear", "password", "asset-buy", "call", "loan-apply", "loan-pay", "tx"].includes(body.kind)) {
+    lastHear = Date.now();
+    paintLink();
+  }
   if (body.kind === "ping") {
     if (!state.accounts.length) return;
     if (!body.id || !body.ts || Date.now() - body.ts > 120000) return;
@@ -3732,7 +3764,291 @@ function commitTaxEdit() {
   return true;
 }
 
+function identityTable(item, editable) {
+  const table = document.createElement("table");
+  table.className = "tax-sheet-table";
+  const body = document.createElement("tbody");
+  [
+    ["business", "Business name", item.business || ""],
+    ["owner", "Full name", item.owner || ""],
+    ["session", "Session number", item.session || ""],
+    ["sheet", "Invoice number", item.sheet || ""],
+  ].forEach(([key, label, value]) => {
+    const row = document.createElement("tr");
+    const name = document.createElement("td");
+    name.textContent = withColon(label);
+    const cell = document.createElement("td");
+    if (editable) {
+      const input = document.createElement("input");
+      input.className = "tax-edit";
+      input.dataset.ident = key;
+      input.value = value;
+      cell.append(input);
+    } else {
+      cell.textContent = value;
+    }
+    row.append(name, cell);
+    body.append(row);
+  });
+  table.append(body);
+  return table;
+}
+
+function paintIdentity(item) {
+  const box = $("tax-sheet-meta");
+  if (!box) return;
+  box.replaceChildren(identityTable(item, taxReviewStep === 1));
+}
+
+function paintReviewDots() {
+  const box = $("tax-review-dots");
+  if (!box) return;
+  box.hidden = taxReviewStep < 1;
+  box.replaceChildren();
+  for (let step = 1; step <= 5; step += 1) {
+    const dot = document.createElement("span");
+    if (step === taxReviewStep) dot.className = "is-on";
+    else if (step < taxReviewStep) dot.className = "is-done";
+    box.append(dot);
+  }
+}
+
+function paintReviewExpenses() {
+  const item = taxes.find((entry) => entry.id === taxSheetId);
+  const exp = $("tax-sheet-expenses");
+  if (!item || !exp) return;
+  exp.replaceChildren();
+  if (!(item.expenses || []).length) {
+    const note = document.createElement("p");
+    note.className = "quiet";
+    note.textContent = "No expenses on this return.";
+    exp.append(note);
+    return;
+  }
+  item.expenses.forEach((entry, index) => {
+    const card = document.createElement("article");
+    card.className = "review-expense";
+    if (entry.editing) {
+      const name = document.createElement("input");
+      name.className = "tax-edit";
+      name.value = entry.name;
+      name.addEventListener("input", () => {
+        entry.name = name.value.trim().slice(0, 40);
+      });
+      const amount = document.createElement("input");
+      amount.className = "tax-edit";
+      amount.inputMode = "decimal";
+      amount.value = billionsInputValue(entry.amount);
+      amount.addEventListener("change", () => {
+        const raw = rawFromBillions(amount.value);
+        const floored = floorBillion(raw || "0");
+        if (floored > 0n) entry.amount = floored.toString();
+      });
+      card.append(name, amount);
+    } else {
+      const line = document.createElement("p");
+      const label = document.createElement("span");
+      label.textContent = entry.name;
+      const money = document.createElement("strong");
+      money.textContent = `${formatAmount(entry.amount)} ₲`;
+      line.append(label, money);
+      card.append(line);
+    }
+    const actions = document.createElement("div");
+    actions.className = "review-actions";
+    const approve = document.createElement("button");
+    approve.type = "button";
+    approve.className = "btn";
+    approve.textContent = entry.decision === "yes" ? "Approved" : "Approve";
+    approve.addEventListener("click", () => {
+      entry.decision = "yes";
+      entry.editing = false;
+      item.totals = taxTotals(item.lines || [], taxRatesOf(item), item.expenses || []);
+      saveTaxes();
+      paintReviewExpenses();
+    });
+    const deny = document.createElement("button");
+    deny.type = "button";
+    deny.className = "btn ghost";
+    deny.textContent = "Deny";
+    deny.addEventListener("click", () => {
+      item.expenses.splice(index, 1);
+      item.totals = taxTotals(item.lines || [], taxRatesOf(item), item.expenses || []);
+      saveTaxes();
+      paintReviewExpenses();
+    });
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "btn ghost";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => {
+      entry.editing = true;
+      entry.decision = "";
+      paintReviewExpenses();
+    });
+    actions.append(approve, deny, edit);
+    card.append(actions);
+    exp.append(card);
+  });
+}
+
+function paintFilerSign() {
+  const item = taxes.find((entry) => entry.id === taxSheetId);
+  const canvas = $("tax-review-view");
+  const empty = $("tax-review-sign-empty");
+  if (!item || !canvas) return;
+  const strokes = item.sign || [];
+  if (empty) empty.hidden = strokes.length > 0;
+  canvas.hidden = !strokes.length;
+  if (strokes.length) drawSignature(canvas, strokes);
+}
+
+function bindReviewPad() {
+  const canvas = $("tax-review-pad");
+  if (!canvas || canvas.dataset.bound) return;
+  canvas.dataset.bound = "1";
+  let drawing = false;
+  let stroke = [];
+  const point = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.round(((event.clientX - rect.left) / Math.max(rect.width, 1)) * 999);
+    const y = Math.round(((event.clientY - rect.top) / Math.max(rect.height, 1)) * 999);
+    return [Math.max(0, Math.min(999, x)), Math.max(0, Math.min(999, y))];
+  };
+  canvas.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    canvas.setPointerCapture(event.pointerId);
+    drawing = true;
+    const [x, y] = point(event);
+    stroke = [x, y, x, y];
+    reviewInk.push(stroke);
+    drawSignature(canvas, reviewInk);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!drawing) return;
+    const [x, y] = point(event);
+    stroke.push(x, y);
+    drawSignature(canvas, reviewInk);
+  });
+  const stop = () => {
+    drawing = false;
+    stroke = [];
+  };
+  canvas.addEventListener("pointerup", stop);
+  canvas.addEventListener("pointercancel", stop);
+}
+
+function paintReviewChrome() {
+  const reviewing = taxReviewStep > 0;
+  paintReviewDots();
+  const star = document.querySelector("#tax-sheet .tax-star-note");
+  if (star) star.hidden = reviewing && taxReviewStep !== 2;
+  const goods = $("tax-sheet-goods");
+  if (goods) goods.hidden = reviewing && taxReviewStep !== 2;
+  const figures = $("tax-sheet-figures");
+  if (figures) figures.hidden = reviewing;
+  const expenses = $("tax-sheet-expenses");
+  if (expenses) expenses.hidden = reviewing && taxReviewStep !== 3;
+  const levy = $("tax-sheet-levy");
+  if (levy) levy.hidden = reviewing;
+  const invoice = document.querySelector("#tax-sheet .tax-invoice");
+  if (invoice) invoice.hidden = reviewing;
+  const actions = document.querySelector("#tax-sheet .tax-sheet-actions");
+  if (actions) actions.hidden = reviewing;
+  const nav = $("tax-review-nav");
+  if (nav) nav.hidden = taxReviewStep < 1 || taxReviewStep > 3;
+  const filed = $("tax-review-sign");
+  if (filed) filed.hidden = taxReviewStep !== 4;
+  const own = $("tax-review-own");
+  if (own) own.hidden = taxReviewStep !== 5;
+  if (taxReviewStep === 4) paintFilerSign();
+  if (taxReviewStep === 5) {
+    bindReviewPad();
+    const pad = $("tax-review-pad");
+    if (pad) drawSignature(pad, reviewInk);
+  }
+}
+
+function readIdentity(item) {
+  document.querySelectorAll("#tax-sheet-meta [data-ident]").forEach((input) => {
+    const key = input.dataset.ident;
+    const limit = key === "session" || key === "sheet" ? 6 : 40;
+    item[key] = input.value.trim().slice(0, limit);
+  });
+  saveTaxes();
+}
+
+function startTaxReview(id) {
+  const item = taxes.find((entry) => entry.id === id);
+  reviewBackup = item ? JSON.parse(JSON.stringify(item)) : null;
+  taxSheetId = id;
+  taxReviewStep = 1;
+  taxEditing = false;
+  reviewInk = [];
+  const msg = $("tax-sheet-msg");
+  if (msg) msg.textContent = "";
+  fillTaxSheet();
+  setSide("tax-sheet", true);
+}
+
+function taxReviewNext() {
+  const item = taxes.find((entry) => entry.id === taxSheetId);
+  const msg = $("tax-sheet-msg");
+  if (!item) return;
+  if (msg) msg.textContent = "";
+  if (taxReviewStep === 1) {
+    readIdentity(item);
+    taxReviewStep = 2;
+    taxEditing = true;
+  } else if (taxReviewStep === 2) {
+    item.lines = linesFromSheet(item);
+    item.totals = taxTotals(item.lines, taxRatesOf(item), item.expenses || []);
+    saveTaxes();
+    taxEditing = false;
+    taxReviewStep = 3;
+  } else if (taxReviewStep === 3) {
+    if ((item.expenses || []).some((entry) => entry.decision !== "yes")) {
+      if (msg) msg.textContent = "Approve or deny each expense.";
+      return;
+    }
+    item.totals = taxTotals(item.lines || [], taxRatesOf(item), item.expenses || []);
+    saveTaxes();
+    taxReviewStep = 4;
+  }
+  fillTaxSheet();
+}
+
+function finishReview() {
+  const item = taxes.find((entry) => entry.id === taxSheetId);
+  const msg = $("tax-sheet-msg");
+  if (!item) return;
+  if (!reviewInk.length) {
+    if (msg) msg.textContent = "Sign to finish the review.";
+    return;
+  }
+  item.reviewSign = cleanSign(reviewInk);
+  const totals = taxTotals(item.lines || [], taxRatesOf(item), item.expenses || []);
+  const problem = payTax(item, totals);
+  if (problem) {
+    if (msg) msg.textContent = problem;
+    return;
+  }
+  reviewBackup = null;
+  taxReviewStep = 0;
+  taxEditing = false;
+  taxSheetId = "";
+  setSide("tax-sheet", false);
+  renderGovernment();
+  toast("Review finished");
+}
+
 function openTaxSheet(id) {
+  const opening = taxes.find((entry) => entry.id === id);
+  if (opening && opening.status === "review") {
+    startTaxReview(id);
+    return;
+  }
+  taxReviewStep = 0;
   if (taxSheetId !== id) taxEditing = false;
   taxSheetId = id;
   const button = $("tax-sheet-edit");
@@ -3754,8 +4070,9 @@ function fillTaxSheet() {
   const totals = taxEditing
     ? taxTotals(item.lines || [], taxRatesOf(item), item.expenses || [])
     : (item.totals || { revenue: "0", vat: "0", profit: "0", expenses: "0", tax: "0", invoice: "0" });
-  $("tax-sheet-name").textContent = `${item.business || "Tax return"} tax return`;
+  $("tax-sheet-name").textContent = taxReviewStep ? "Review tax return" : `${item.business || "Tax return"} tax return`;
   $("tax-sheet-date").textContent = sessionDateLong(item.ts || Date.now());
+  paintIdentity(item);
   const goods = $("tax-sheet-goods");
   goods.replaceChildren();
   const goodsTable = sheetTable(
@@ -3806,7 +4123,9 @@ function fillTaxSheet() {
   paintFigures(totals);
   const exp = $("tax-sheet-expenses");
   exp.replaceChildren();
-  if ((item.expenses || []).length) {
+  if (taxReviewStep === 3) {
+    paintReviewExpenses();
+  } else if ((item.expenses || []).length) {
     const expenseTable = sheetTable(["Expense", "Amount"], ["70%", "30%"]);
     item.expenses.forEach((entry, index) => {
       if (!taxEditing) {
@@ -3826,6 +4145,7 @@ function fillTaxSheet() {
     exp.append(expenseTable.table);
   }
   paintLevy(item, totals);
+  paintReviewChrome();
 }
 
 function renderGovernment() {
@@ -3863,12 +4183,19 @@ function renderGovernment() {
     const business = document.createElement("strong");
     business.className = "biz";
     business.textContent = item.business || "Tax return";
+    if (item.status === "review") {
+      const lock = document.createElement("span");
+      lock.className = "tax-lock";
+      lock.setAttribute("aria-label", "Needs approval");
+      lock.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+      business.append(lock);
+    }
     const when = document.createElement("span");
     when.className = "when";
     when.textContent = sessionDateLong(item.ts || Date.now());
     const who = document.createElement("span");
     who.className = "who";
-    who.textContent = item.status === "review" ? `${item.owner} · Needs approval` : item.owner;
+    who.textContent = item.owner;
     const money = document.createElement("span");
     money.className = "sum";
     money.textContent = `${formatAmount(totals.invoice)} ₲`;
@@ -3879,26 +4206,32 @@ function renderGovernment() {
     card.append(bar);
     list.append(card);
   });
-  if (taxSheetId && !taxEditing) fillTaxSheet();
+  if (taxSheetId && !taxEditing && !taxReviewStep) fillTaxSheet();
   if (!gamingList) return;
   gamingList.replaceChildren();
   const casino = state.accounts.find((account) => account.id === state.settings.gamingAccountId);
   plays.filter((item) => item.status === "out" && BigInt(item.tax || "0") > 0n).forEach((item) => {
     const card = document.createElement("article");
     card.className = "tax-file";
-    const filed = document.createElement("strong");
-    filed.textContent = casino ? casino.name : "Casino";
-    const paid = document.createElement("p");
-    paid.textContent = `Paid by ${item.name}`;
-    const money = document.createElement("p");
-    money.className = "is-invoice";
-    const amount = document.createElement("strong");
-    amount.textContent = `${formatAmount(item.tax)} ₲`;
-    money.append(amount);
-    const note = document.createElement("p");
-    note.className = "quiet";
-    note.textContent = `Cashed out ${formatAmount(item.cashOut || "0")} ₲`;
-    card.append(filed, paid, money, note);
+    const main = document.createElement("button");
+    main.type = "button";
+    main.className = "game-open";
+    const grid = document.createElement("span");
+    grid.className = "tax-card";
+    const business = document.createElement("strong");
+    business.className = "biz";
+    business.textContent = `${casino ? casino.name : "Casino"} (${item.name})`;
+    const when = document.createElement("span");
+    when.className = "when";
+    when.textContent = sessionDateLong(item.ts || Date.now());
+    const money = document.createElement("span");
+    money.className = "sum";
+    money.textContent = `${formatAmount(item.tax)} ₲`;
+    const spacer = document.createElement("span");
+    grid.append(business, when, spacer, money);
+    main.append(grid);
+    main.addEventListener("click", () => openPlayDetail(item.id));
+    card.append(main);
     gamingList.append(card);
   });
 }
@@ -3958,7 +4291,8 @@ function listen() {
       await handleMessage(data, bucket);
       if (!state.accounts.length) return;
       if (bucket.ping) publishPong(bucket.ping);
-      if (!bucket.ping && !bucket.applied.length && !bucket.requests) return;
+      const work = Boolean(bucket.sync || bucket.applied.length || bucket.requests);
+      if (!work && (!bucket.ping || Date.now() - lastAnnounce < 40000)) return;
       if (bucket.sync) showSyncing();
       try {
         await publishLedger(bucket.applied, bucket.ping || "");
@@ -4215,6 +4549,7 @@ function takeGaming(body) {
     cashOut: "",
     status: "review",
     sign: cleanSign(body.sign),
+    session: currentSessionLabel(),
     ts: Date.now(),
   });
   plays.splice(40);
@@ -4287,6 +4622,7 @@ function disburseChips(id) {
   saveRequests();
   savePlays();
   render();
+  if ($("play-sheet") && $("play-sheet").classList.contains("is-open")) fillPlaySheet(id);
   clearNotification(play.id);
   publishLedger([play.id]).catch(() => setStatus("Saved on this phone. The terminal will catch up when the connection is back."));
   publishPlay(play);
@@ -4382,69 +4718,153 @@ function cashOutPlay(id) {
   render();
   publishLedger([]).catch(() => setStatus("Saved on this phone. The terminal will catch up when the connection is back."));
   publishPlay(play);
+  if ($("play-sheet") && $("play-sheet").classList.contains("is-open")) fillPlaySheet(id);
   toast("Cash out saved");
+}
+
+function deletePlay(id) {
+  const index = plays.findIndex((item) => item.id === id);
+  if (index < 0) return;
+  plays.splice(index, 1);
+  savePlays();
+  if (playOpenId === id) {
+    playOpenId = "";
+    setSide("play-sheet", false);
+  }
+  renderGaming();
+  renderGovernment();
+  publish("Play removed", { v: 1, kind: "play-delete", id, ts: Date.now() }).catch(() => {});
+}
+
+function moneyRow(label, value) {
+  return sheetRow([label, `${formatAmount(value)} ₲`]);
+}
+
+function fillPlaySheet(id) {
+  const play = plays.find((item) => item.id === id);
+  const body = $("play-body");
+  if (!play || !body) {
+    playOpenId = "";
+    setSide("play-sheet", false);
+    return;
+  }
+  playOpenId = id;
+  const casino = state.accounts.find((account) => account.id === state.settings.gamingAccountId);
+  $("play-title").textContent = play.name || "Gaming";
+  body.dataset.play = play.id;
+  body.replaceChildren();
+  const who = document.createElement("table");
+  who.className = "tax-sheet-table";
+  const whoBody = document.createElement("tbody");
+  [
+    ["Name", play.name || ""],
+    ["Time", sessionClockTime(play.ts || Date.now())],
+    ["Date", sessionDateLong(play.ts || Date.now())],
+    ["Session number", play.session || ""],
+    ["Account", casino ? casino.name : ""],
+  ].forEach(([label, value]) => whoBody.append(sheetRow([label, value])));
+  who.append(whoBody);
+  body.append(who);
+  const inn = BigInt(play.amount || "0");
+  const out = BigInt(play.cashOut || "0");
+  const tax = BigInt(play.tax || "0");
+  const profit = out > inn ? out - inn : 0n;
+  const figures = document.createElement("table");
+  figures.className = "tax-sheet-table";
+  const figBody = document.createElement("tbody");
+  figBody.append(moneyRow("Cashed in", inn.toString()));
+  if (play.status === "out") {
+    figBody.append(moneyRow("Cashed out", out.toString()));
+    figBody.append(moneyRow("Profit", profit.toString()));
+    figBody.append(sheetRow(["Tax", `${formatAmount(tax.toString())} ₲`], true));
+  }
+  figures.append(figBody);
+  body.append(figures);
+  if (play.status === "review") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn";
+    button.textContent = "Casino cash in";
+    button.addEventListener("click", () => disburseChips(play.id));
+    body.append(button);
+  } else if (play.status === "chips") {
+    const label = document.createElement("label");
+    label.className = "field";
+    const span = document.createElement("span");
+    span.textContent = "Cashing out";
+    const input = document.createElement("input");
+    input.id = "play-cash";
+    input.inputMode = "numeric";
+    input.autocomplete = "off";
+    input.placeholder = "Amount";
+    label.append(span, input);
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "btn";
+    save.textContent = "Save cash out";
+    save.addEventListener("click", () => cashOutPlay(play.id));
+    body.append(label, save);
+  }
+  const error = document.createElement("p");
+  error.className = "game-error error";
+  body.append(error);
+  if (play.sign && play.sign.length) {
+    const sign = document.createElement("button");
+    sign.type = "button";
+    sign.className = "btn ghost";
+    sign.textContent = "Signature";
+    sign.addEventListener("click", () => showSignature(play));
+    body.append(sign);
+  }
+}
+
+function openPlayDetail(id) {
+  fillPlaySheet(id);
+  setSide("play-sheet", true);
 }
 
 function renderGaming() {
   const list = $("gaming-list");
   const empty = $("gaming-empty");
   if (!list || !empty) return;
-  if (document.activeElement && document.activeElement.closest("#gaming-list")) return;
+  list.classList.toggle("is-bin", gamingBin);
   list.replaceChildren();
   empty.hidden = plays.length > 0;
   plays.forEach((play) => {
+    const swipe = document.createElement("div");
+    swipe.className = "game-swipe";
+    const bin = document.createElement("button");
+    bin.type = "button";
+    bin.className = "game-bin";
+    bin.setAttribute("aria-label", `Delete ${play.name}`);
+    bin.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 7h14M9 7V5h6v2M8 7l1 13h6l1-13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    bin.addEventListener("click", () => deletePlay(play.id));
     const card = document.createElement("article");
     card.className = "game-card";
-    card.dataset.play = play.id;
-    const title = document.createElement("p");
-    title.textContent = `${play.name} cashed in ${formatAmount(play.amount)} ₲`;
-    card.append(title);
-    if (play.status === "review") {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "btn";
-      button.textContent = "Casino cash in";
-      button.addEventListener("click", () => disburseChips(play.id));
-      card.append(button);
-    } else if (play.status === "chips") {
-      const label = document.createElement("label");
-      label.className = "field";
-      const span = document.createElement("span");
-      span.textContent = "Cashing out";
-      const input = document.createElement("input");
-      input.inputMode = "numeric";
-      input.autocomplete = "off";
-      input.placeholder = "Amount";
-      label.append(span, input);
-      const save = document.createElement("button");
-      save.type = "button";
-      save.className = "btn";
-      save.textContent = "Save cash out";
-      save.addEventListener("click", () => cashOutPlay(play.id));
-      card.append(label, save);
-    } else {
-      const done = document.createElement("p");
-      const out = BigInt(play.cashOut || "0");
-      const inn = BigInt(play.amount || "0");
-      const tax = BigInt(play.tax || "0");
-      const kept = out > tax ? out - tax : 0n;
-      const word = kept > inn ? `Won ${formatLoose(kept - inn)} ₲` : kept < inn ? `Lost ${formatLoose(inn - kept)} ₲` : "Even";
-      const taxNote = tax > 0n ? ` · Tax ${formatLoose(tax)} ₲` : "";
-      done.textContent = `Cashed out ${formatLoose(out)} ₲${taxNote} · ${word}`;
-      card.append(done);
-    }
-    const error = document.createElement("p");
-    error.className = "game-error error";
-    card.append(error);
-    if (play.sign && play.sign.length) {
-      const sign = document.createElement("button");
-      sign.type = "button";
-      sign.className = "btn ghost";
-      sign.textContent = "Signature";
-      sign.addEventListener("click", () => showSignature(play));
-      card.append(sign);
-    }
-    list.append(card);
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "game-open";
+    const grid = document.createElement("span");
+    grid.className = "tax-card";
+    const person = document.createElement("strong");
+    person.className = "biz";
+    person.textContent = play.name;
+    const when = document.createElement("span");
+    when.className = "when";
+    when.textContent = sessionDateLong(play.ts || Date.now());
+    const money = document.createElement("span");
+    money.className = "sum";
+    money.textContent = `${formatAmount(play.amount)} ₲`;
+    const spacer = document.createElement("span");
+    grid.append(person, when, spacer, money);
+    open.append(grid);
+    open.addEventListener("click", () => {
+      if (gamingBin) return;
+      openPlayDetail(play.id);
+    });
+    card.append(open);
+    swipe.append(bin, card);
+    list.append(swipe);
   });
 }
 
@@ -5327,7 +5747,10 @@ document.querySelectorAll(".tabs button").forEach((button) => {
 function openArchive(id) {
   closeSessionSides();
   taxSheetId = "";
+  taxReviewStep = 0;
+  playOpenId = "";
   setSide("tax-sheet", false);
+  setSide("play-sheet", false);
   ["tax-archive", "earnings", "assets-archive", "gaming-archive"].forEach((name) => {
     const node = $(name);
     const on = name === id;
@@ -5346,6 +5769,20 @@ $("view-assets").addEventListener("click", () => {
 });
 $("tax-archive-back").addEventListener("click", () => openArchive(""));
 $("tax-sheet-back").addEventListener("click", () => {
+  if (taxReviewStep) {
+    if (reviewBackup) {
+      const index = taxes.findIndex((entry) => entry.id === reviewBackup.id);
+      if (index >= 0) taxes[index] = reviewBackup;
+      saveTaxes();
+    }
+    reviewBackup = null;
+    taxReviewStep = 0;
+    taxEditing = false;
+    taxSheetId = "";
+    setSide("tax-sheet", false);
+    renderGovernment();
+    return;
+  }
   if (taxEditing && !commitTaxEdit()) return;
   taxEditing = false;
   taxSheetId = "";
@@ -5377,6 +5814,27 @@ $("view-gaming").addEventListener("click", () => {
   openArchive("gaming-archive");
 });
 $("gaming-back").addEventListener("click", () => openArchive(""));
+$("gaming-bin").addEventListener("click", () => {
+  gamingBin = !gamingBin;
+  $("gaming-bin").classList.toggle("is-on", gamingBin);
+  renderGaming();
+});
+$("play-back").addEventListener("click", () => {
+  playOpenId = "";
+  setSide("play-sheet", false);
+});
+$("tax-review-next").addEventListener("click", taxReviewNext);
+$("tax-review-approve-sign").addEventListener("click", () => {
+  taxReviewStep = 5;
+  fillTaxSheet();
+});
+$("tax-review-done").addEventListener("click", finishReview);
+$("tax-review-clear").addEventListener("click", () => {
+  reviewInk = [];
+  const pad = $("tax-review-pad");
+  if (pad) drawSignature(pad, reviewInk);
+});
+bindReviewPad();
 $("list-asset").addEventListener("click", () => {
   $("asset-error").textContent = "";
   $("asset-sheet").hidden = false;
@@ -5391,6 +5849,7 @@ $("asset-sheet").addEventListener("click", (event) => {
 $("asset-form").addEventListener("submit", listAsset);
 $("asset-buy-close").addEventListener("click", closeAssetBuy);
 $("asset-buy-confirm").addEventListener("click", confirmAssetBuy);
+$("asset-buy-deny").addEventListener("click", denyAssetBuy);
 $("asset-buy").addEventListener("click", (event) => {
   if (event.target === $("asset-buy")) closeAssetBuy();
 });
@@ -5866,21 +6325,18 @@ function bindBalanceColumn() {
 }
 
 function wakeLink() {
-  if (!streamOpen || Date.now() - lastStream > 25000) listen();
+  if (streamOpen && Date.now() - lastStream < 30000) return;
+  listen();
   return catchUp().catch(() => setStatus("Reconnecting…"));
 }
 
 setInterval(() => {
   if (document.visibilityState !== "visible") return;
   wakeLink();
-}, 10000);
+  paintLink();
+}, 25000);
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
-  listen();
-  catchUp()
-    .catch(() => setStatus("Reconnecting…"))
-    .finally(() => {
-      if (state.accounts.length) publishLedger([]).catch(() => setStatus("Saved on this phone. The other phone will catch up when the connection is back."));
-    });
+  wakeLink();
 });

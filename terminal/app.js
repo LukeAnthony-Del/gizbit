@@ -18,7 +18,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.32.001";
+const VERSION = "2.33.000";
 const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
 const DEFAULT_LOAN_BANDS = [
   { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
@@ -42,6 +42,7 @@ let streamOpen = false;
 let lastStream = 0;
 let lastPong = 0;
 let lastPing = 0;
+let linkBroken = false;
 let toastTimer = 0;
 let pendingExchangeId = loadHold(WAIT_EXCHANGE);
 let pendingSendId = loadHold(WAIT_SEND);
@@ -341,14 +342,26 @@ async function publish(sentence, payload) {
   try {
     await attempt();
   } catch (first) {
-    if (payload && payload.id && await posted(payload.id)) return;
+    if (payload && payload.id && await posted(payload.id)) {
+      linkBroken = false;
+      refreshStatus();
+      return;
+    }
     try {
       await attempt();
     } catch (second) {
-      if (payload && payload.id && await posted(payload.id)) return;
+      if (payload && payload.id && await posted(payload.id)) {
+        linkBroken = false;
+        refreshStatus();
+        return;
+      }
+      linkBroken = true;
+      setLink(false);
       throw second || first;
     }
   }
+  linkBroken = false;
+  refreshStatus();
 }
 
 async function posted(id) {
@@ -389,7 +402,7 @@ function toast(text) {
 }
 
 function refreshStatus() {
-  setLink(Date.now() - lastPong < 25000);
+  setLink(!linkBroken && lastPong > 0 && Date.now() - lastPong < 50000);
 }
 
 function matching(ph) {
@@ -629,8 +642,9 @@ async function handleMessage(data) {
     return;
   }
   if (body.kind === "ledger") acceptLedger(body);
-  if (body.kind === "pong" || body.kind === "ledger" || body.kind === "ring" || body.kind === "lock") {
+  if (body.kind === "pong" || body.kind === "ledger") {
     lastPong = Date.now();
+    linkBroken = false;
     refreshStatus();
   }
   if (body.kind === "lock") setTerminalLock(body.locked === true);
@@ -678,6 +692,12 @@ async function handleMessage(data) {
       $("pass-msg").textContent = body.reason || "The main phone could not change that password.";
     }
     resolveWait(body.id, "reject");
+    if (/asset/i.test(body.reason || "")) toast(body.reason);
+  }
+  if (body.kind === "play-delete" && body.id && ledger) {
+    ledger.plays = (ledger.plays || []).filter((item) => item.id !== body.id);
+    localStorage.setItem(LEDGER, JSON.stringify(ledger));
+    if (sessionPh) renderBank();
   }
 }
 
@@ -2339,7 +2359,7 @@ function renderListed() {
     const name = document.createElement("strong");
     name.textContent = item.name;
     const price = document.createElement("span");
-    price.textContent = item.claimed ? `Claimed · ${formatAmount(item.paid || item.price)} ₲` : `${formatAmount(item.price)} ₲`;
+    price.textContent = item.claimed ? `Owned by ${item.owner || "someone"} · ${formatAmount(item.paid || item.price)} ₲` : `${formatAmount(item.price)} ₲`;
     button.append(name, price);
     if (!item.claimed) button.addEventListener("click", () => openListed(item.id));
     panel.append(button);
@@ -2842,43 +2862,62 @@ function addTaxProduct() {
 function renderTaxExpenses() {
   const body = $("tax-expenses");
   body.replaceChildren();
-  const head = document.createElement("div");
-  head.className = "tax-line-head expense-head";
-  head.append(stackLabel("Expense", "name"), stackLabel("Expense", "amount"));
-  body.append(head);
+  const table = document.createElement("table");
+  table.className = "tax-grid-table";
+  const cols = document.createElement("colgroup");
+  ["28%", "34%", "28%", "10%"].forEach((width) => {
+    const col = document.createElement("col");
+    col.style.width = width;
+    cols.append(col);
+  });
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["Expense", "Description", "Amount", ""].forEach((label, index) => {
+    const cell = document.createElement("th");
+    cell.textContent = label;
+    if (index === 2) cell.className = "num";
+    headRow.append(cell);
+  });
+  head.append(headRow);
+  const rows = document.createElement("tbody");
   let spent = 0n;
   taxExpenses.forEach((item, index) => {
     spent += BigInt(item.amount);
-    const swipe = document.createElement("div");
-    swipe.className = "tax-line-swipe";
+    const row = document.createElement("tr");
+    const name = document.createElement("td");
+    name.textContent = item.name;
+    const note = document.createElement("td");
+    note.textContent = item.note || "";
+    const amount = document.createElement("td");
+    amount.className = "num";
+    amount.append(stackMoney(item.amount));
+    const action = document.createElement("td");
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.className = "tax-line-bin";
+    remove.className = "tax-remove";
     remove.setAttribute("aria-label", `Remove ${item.name}`);
-    remove.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 7h14M9 7V5h6v2M8 7l1 13h6l1-13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    remove.textContent = "×";
     remove.addEventListener("click", () => {
       taxExpenses.splice(index, 1);
       markTaxDirty();
       renderTaxExpenses();
     });
-    const row = document.createElement("div");
-    row.className = "tax-line-row expense-row";
-    const name = document.createElement("span");
-    name.className = "tax-line-name";
-    name.textContent = item.name;
-    row.append(name, stackMoney(item.amount));
-    bindTaxLineSwipe(row);
-    swipe.append(remove, row);
-    body.append(swipe);
+    action.append(remove);
+    row.append(name, note, amount, action);
+    rows.append(row);
   });
-  const total = document.createElement("div");
-  total.className = "expense-total";
-  const label = document.createElement("span");
-  label.textContent = "Total";
-  const value = document.createElement("strong");
-  value.textContent = `${formatAmount(spent.toString())} ₲`;
-  total.append(label, value);
-  body.append(total);
+  const total = document.createElement("tr");
+  total.className = "is-total";
+  const totalName = document.createElement("td");
+  totalName.colSpan = 2;
+  totalName.textContent = "Total";
+  const totalAmount = document.createElement("td");
+  totalAmount.className = "num";
+  totalAmount.append(stackMoney(spent.toString()));
+  total.append(totalName, totalAmount, document.createElement("td"));
+  rows.append(total);
+  table.append(cols, head, rows);
+  body.append(table);
   paintTaxNav();
 }
 
@@ -4007,7 +4046,6 @@ $("gfg-tab-interest").addEventListener("click", () => {
 });
 $("gfg-go").addEventListener("click", applyLoan);
 $("gfg-pay-go").addEventListener("click", payLoan);
-$("open-ring").addEventListener("click", startRing);
 $("call-out-hang").addEventListener("click", () => closeTerminalCall(true));
 $("ring-ok").addEventListener("click", () => {
   $("ring").hidden = true;
@@ -4040,8 +4078,14 @@ catchUp().catch(() => refreshStatus()).finally(() => {
 });
 
 function wakeLink() {
-  if (!streamOpen || Date.now() - lastStream > 25000) listen();
   flushOutbox().catch(() => {});
+  if (streamOpen && Date.now() - lastStream < 30000) {
+    checkExchangeResult();
+    checkSendResult();
+    refreshStatus();
+    return;
+  }
+  listen();
   return catchUp().catch(() => refreshStatus()).finally(() => {
     checkExchangeResult();
     checkSendResult();
@@ -4051,16 +4095,16 @@ function wakeLink() {
 setInterval(() => {
   if (document.visibilityState !== "visible") return;
   publishPing().catch(() => {});
-}, 10000);
+  refreshStatus();
+}, 20000);
 setInterval(() => {
   if (document.visibilityState !== "visible") return;
   wakeLink();
-}, 12000);
+}, 25000);
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   checkIdle();
-  listen();
   wakeLink();
   publishPing().catch(() => {});
 });

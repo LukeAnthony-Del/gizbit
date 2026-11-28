@@ -510,7 +510,7 @@ input, select {
   padding: 12px;
   background: #fff;
   min-height: 100%;
-  border-radius: 18px;
+  border-radius: 12px;
   overflow: hidden;
 }
 .tax-file.is-open { transform: translateX(56px); }
@@ -554,7 +554,34 @@ input, select {
 }
 .tax-sheet-table th { font-weight: 700; color: #d0d0d0; text-align: left; }
 .tax-sheet-table .num { text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: normal; }
-.tax-sheet-table tr.is-total td { font-weight: 800; }
+.tax-sheet-table tr.is-total td { font-weight: 800; background: #3a3a3a; }
+.tax-dots { display: flex; justify-content: center; gap: 8px; margin: 2px 0 12px; }
+.tax-dots span { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+.tax-dots span.is-on { background: #fff; }
+.tax-dots span.is-done { background: #9aa; }
+.tax-lock { display: inline-flex; margin-left: 6px; vertical-align: -2px; }
+.review-expense { display: grid; gap: 8px; padding: 10px 0; border-bottom: 1px solid #444; }
+.review-expense p { display: flex; justify-content: space-between; gap: 12px; margin: 0; }
+.review-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+.review-actions .btn { min-height: 36px; }
+.archive-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.archive-title-row h1 { margin: 4px 0 0; }
+.head-bin { border: 0; background: transparent; color: inherit; padding: 8px; }
+.game-swipe { display: grid; }
+.game-swipe .game-bin {
+  grid-area: 1 / 1;
+  justify-self: end;
+  align-self: stretch;
+  width: 64px;
+  border: 0;
+  border-radius: 12px;
+  background: #a33b3b;
+  color: #fff;
+}
+.game-swipe .game-card { grid-area: 1 / 1; margin-top: 0; transition: transform 0.18s ease; }
+#gaming-list { display: grid; gap: 10px; }
+#gaming-list.is-bin .game-card { transform: translateX(-72px); }
+.game-open { display: block; width: 100%; border: 0; background: transparent; color: inherit; padding: 0; text-align: left; }
 .tax-invoice { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 4px 0 16px; }
 .tax-invoice span { font-size: 14px; font-weight: 700; }
 .tax-invoice strong { font-size: 28px; line-height: 1.1; font-weight: 800; }

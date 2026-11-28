@@ -279,11 +279,17 @@ main {
 .type-slider[data-op="withdraw"] #pick-withdraw,
 .type-slider[data-op="deposit"] #pick-deposit,
 .type-slider[data-op="transfer"] #pick-transfer { color: #fff; }
+.home-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
 .home-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  width: 100%;
   min-height: 42px;
   padding: 8px 12px;
 }
@@ -293,8 +299,9 @@ main {
 .app-row {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px 6px;
+  gap: 4px;
   padding-top: 2px;
+  justify-items: center;
 }
 .app-tile {
   width: auto;
@@ -303,17 +310,24 @@ main {
   color: var(--navy);
   display: grid;
   justify-items: center;
-  gap: 6px;
+  gap: 0;
   padding: 0;
   font-size: 12px;
   font-weight: 700;
   line-height: 1.15;
   text-align: center;
 }
+.app-tile > span:not(.app-icon) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
 .app-icon {
-  width: 46px;
-  height: 46px;
-  border-radius: 16px;
+  width: 68px;
+  height: 68px;
+  border-radius: 20px;
   background: var(--navy);
   color: #fff;
   display: grid;
@@ -536,6 +550,7 @@ main {
 .tax-grid-table th { text-align: left; font-weight: 700; color: #d0d0d0; background: #1c1c1c; }
 .tax-grid-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .tax-grid-table .money-stack { align-items: flex-end; }
+.tax-grid-table tr.is-total td { font-weight: 800; background: #2c2c2c; }
 .tax-grid-table .tax-remove {
   width: 100%;
   border: 0;
