@@ -18,7 +18,7 @@ const LOCAL_TAXES = "gizbit-terminal-taxes";
 const LOCAL_BIZ = "gizbit-terminal-businesses";
 const LOCAL_ASSETS = "gizbit-terminal-assets";
 // Versions start at 1.00.000. A small fix adds 0.00.001, a feature adds 0.01.000, and a large change adds 1.00.000.
-const VERSION = "2.33.000";
+const VERSION = "2.33.001";
 const DEFAULT_LOAN_TERMS = "A loan is approved by the Gizbit Financial Group. You agree to the interest rate and the payments for the amount that is approved.";
 const DEFAULT_LOAN_BANDS = [
   { min: "5000000000000", max: "10000000000000", rate: "16", count: "20" },
@@ -1178,6 +1178,7 @@ function saveSign(id, strokes) {
 }
 
 function exchangeMemo(item) {
+  if (item.op === "interest") return "Interest payment";
   const saved = String(item.memo || "").trim();
   if (saved) return saved.slice(0, 40);
   if (String(item.id || "").endsWith("-pay")) return "Income tax invoice";
@@ -1221,7 +1222,8 @@ function renderHistory() {
     const incoming = account && item.toId === account.id && item.accountId !== account.id;
     const kind = document.createElement("p");
     kind.className = "who";
-    if (item.note) kind.textContent = incoming ? `Sold ${item.note}` : `Bought ${item.note}`;
+    if (item.op === "interest") kind.textContent = "Interest";
+    else if (item.note) kind.textContent = incoming ? `Sold ${item.note}` : `Bought ${item.note}`;
     else if (item.op === "send" || item.op === "transfer") kind.textContent = incoming ? `Received from ${item.name}` : `Transferred to ${item.toName || "another account"}`;
     else kind.textContent = item.op === "withdraw" ? "Withdrawal" : "Deposit";
     const money = document.createElement("p");
